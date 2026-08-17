@@ -160,6 +160,8 @@ type Props = {
   onNewFile: (repoPath: string, dir: string) => void;
   onRename: (repoPath: string, relPath: string) => void;
   onNewFolder: (repoPath: string, dir: string) => void;
+  /** Dragged into a folder: dir is "" for the repository root. */
+  onMove: (repoPath: string, relPath: string, dir: string) => void;
   /** Folders that exist on disk but hold no markdown yet, per repository. */
   emptyDirs: Record<string, string[]>;
   /** Open or close a whole subtree at once. */
@@ -194,6 +196,57 @@ function dirKeys(nodes: Node[], repoPath: string, out: string[] = []): string[] 
  */
 export const FileTree = memo(function FileTree(p: Props) {
   const [menu, setMenu] = useState<MenuAt | null>(null);
+  /**
+   * What is being dragged, and where it is hovering.
+   *
+   * The dragged file is held here rather than read back from the drag event:
+   * dataTransfer is not readable during dragover in most browsers, and the drop
+   * target has to know whether it is a valid destination before the drop.
+   */
+  const [dragging, setDragging] = useState<{
+    repo: string;
+    path: string;
+    kind: "file" | "dir";
+  } | null>(null);
+  const [over, setOver] = useState<string | null>(null);
+
+  /**
+   * Whether this folder can take what is being dragged.
+   *
+   * Not across repositories — that is a copy, not a move, and git would see a
+   * deletion and an addition rather than a rename. Not into where it already
+   * is. And not into itself or anything inside it, which would ask the
+   * filesystem to put a folder inside a folder that is about to move.
+   */
+  const canDrop = (repoPath: string, dir: string) => {
+    if (!dragging || dragging.repo !== repoPath) return false;
+    const from = dragging.path.includes("/")
+      ? dragging.path.slice(0, dragging.path.lastIndexOf("/"))
+      : "";
+    if (from === dir) return false;
+    if (dragging.kind === "dir") {
+      if (dir === dragging.path || dir.startsWith(`${dragging.path}/`)) return false;
+    }
+    return true;
+  };
+
+  const dropHandlers = (repoPath: string, dir: string, key: string) => ({
+    onDragOver: (e: React.DragEvent) => {
+      if (!canDrop(repoPath, dir)) return;
+      e.preventDefault();
+      e.dataTransfer.dropEffect = "move";
+      if (over !== key) setOver(key);
+    },
+    onDragLeave: () => setOver((cur) => (cur === key ? null : cur)),
+    onDrop: (e: React.DragEvent) => {
+      if (!canDrop(repoPath, dir)) return;
+      e.preventDefault();
+      const moved = dragging;
+      setOver(null);
+      setDragging(null);
+      if (moved) p.onMove(moved.repo, moved.path, dir);
+    },
+  });
 
   // Any click, scroll, or escape puts the menu away.
   useEffect(() => {
@@ -267,8 +320,22 @@ export const FileTree = memo(function FileTree(p: Props) {
       return (
         <div key={key}>
           <button
-            className={`row dir ${mark}`}
+            className={`row dir ${mark} ${over === key ? "over" : ""} ${
+              dragging?.repo === repo.path && dragging.path === node.path ? "lifted" : ""
+            }`}
             style={pad}
+            draggable
+            onDragStart={(e) => {
+              e.stopPropagation();
+              e.dataTransfer.effectAllowed = "move";
+              e.dataTransfer.setData("text/plain", node.path);
+              setDragging({ repo: repo.path, path: node.path, kind: "dir" });
+            }}
+            onDragEnd={() => {
+              setDragging(null);
+              setOver(null);
+            }}
+            {...dropHandlers(repo.path, node.path, key)}
             onClick={() => p.onToggle(key)}
             onContextMenu={(e) => {
               e.preventDefault();
@@ -297,8 +364,21 @@ export const FileTree = memo(function FileTree(p: Props) {
     return (
       <button
         key={`${repo.path}::${node.path}`}
-        className={`row file ${mark} ${active ? "active" : ""}`}
+        className={`row file ${mark} ${active ? "active" : ""} ${
+          dragging?.repo === repo.path && dragging.path === node.path ? "lifted" : ""
+        }`}
         style={pad}
+        draggable
+        onDragStart={(e) => {
+          e.dataTransfer.effectAllowed = "move";
+          // Carried for other applications; the app itself uses its own state.
+          e.dataTransfer.setData("text/plain", node.path);
+          setDragging({ repo: repo.path, path: node.path, kind: "file" });
+        }}
+        onDragEnd={() => {
+          setDragging(null);
+          setOver(null);
+        }}
         onClick={() => p.onOpen(repo.path, node.path)}
         onContextMenu={(e) => {
           e.preventDefault();
@@ -491,7 +571,10 @@ export const FileTree = memo(function FileTree(p: Props) {
         return (
           <div className="tree-repo" key={r.path}>
             <button
-              className={`row repo ${r.path === p.activeRepoPath ? "current" : ""}`}
+              className={`row repo ${r.path === p.activeRepoPath ? "current" : ""} ${
+                over === `${r.path}::root` ? "over" : ""
+              }`}
+              {...dropHandlers(r.path, "", `${r.path}::root`)}
               onClick={() => p.onToggle(key)}
               aria-expanded={open}
               onContextMenu={(e) => {

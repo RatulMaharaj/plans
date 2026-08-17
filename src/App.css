@@ -1766,3 +1766,13 @@ body.resizing .files-edge { pointer-events: auto; }
 }
 .setting-field:focus { outline: 0; border-bottom-color: var(--ink-3); }
 .setting-field::placeholder { color: var(--ink-3); }
+
+/* --- dragging a file or a folder into another folder --------------------- */
+
+/* What is being carried recedes; what would receive it is ruled. */
+.row.lifted { opacity: 0.45; }
+.row.over {
+  background: var(--shade);
+  box-shadow: inset 2px 0 0 var(--ink);
+}
+.row.over .row-name, .row.over .repo-name { color: var(--ink); }

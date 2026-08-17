@@ -309,3 +309,48 @@ test("a new folder appears, and holds a file", async ({ page }) => {
     )
     .toContain("ideas/first-idea.md");
 });
+
+test("a file can be dragged into a folder", async ({ page }) => {
+  await open(page);
+  const file = page.locator(".row.file", { hasText: "first" }).first();
+  const folder = page.locator(".row.dir", { hasText: "notes" }).first();
+  await file.dragTo(folder);
+
+  await expect
+    .poll(async () =>
+      page.evaluate(() => Object.keys((window as any).__fake.repos[0].files)),
+    )
+    .toContain("notes/first.md");
+});
+
+test("a folder can be dragged into another folder, with everything inside it", async ({
+  page,
+}) => {
+  await open(page);
+  // Make a destination, then move notes/ into it.
+  await page.locator(".row.repo").first().click({ button: "right" });
+  await page.locator(".ctx-item", { hasText: "New folder here" }).click();
+  await page.locator(".name-field").fill("archive");
+  await page.keyboard.press("Enter");
+
+  const notes = page.locator(".row.dir", { hasText: /^notes\/$/ }).first();
+  const archive = page.locator(".row.dir", { hasText: "archive" }).first();
+  await notes.dragTo(archive);
+
+  await expect
+    .poll(async () =>
+      page.evaluate(() => Object.keys((window as any).__fake.repos[0].files)),
+    )
+    .toContain("archive/notes/second.md");
+});
+
+test("a folder cannot be dropped inside itself", async ({ page }) => {
+  await open(page);
+  const notes = page.locator(".row.dir", { hasText: /^notes\/$/ }).first();
+  await notes.dragTo(notes);
+  // Still where it was, rather than notes/notes/second.md.
+  const files = await page.evaluate(() =>
+    Object.keys((window as any).__fake.repos[0].files),
+  );
+  expect(files).toContain("notes/second.md");
+});

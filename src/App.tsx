@@ -984,6 +984,53 @@ export default function App() {
     [fileAction, activeRepoPath, activePath, openFile],
   );
 
+  /**
+   * Move a file or a folder into another folder, by dragging it there.
+   *
+   * A move is a rename, which is what git wants to see: the history follows the
+   * file rather than recording a deletion and an unrelated addition. Anything
+   * open that lived under a moved folder follows it too, tabs included.
+   */
+  const moveTo = useCallback(
+    (repoPath: string, from: string, dir: string) => {
+      const name = from.split("/").pop() ?? from;
+      const to = dir ? `${dir}/${name}` : name;
+      if (to === from) return;
+
+      fileAction(repoPath, "Moved", async () => {
+        await api.renamePlan(repoPath, from, to);
+
+        // Paths under a moved folder move with it.
+        const rewrite = (path: string) =>
+          path === from
+            ? to
+            : path.startsWith(`${from}/`)
+              ? `${to}${path.slice(from.length)}`
+              : path;
+
+        setTabs((prev) =>
+          prev.map((t) =>
+            t.repo === repoPath ? { repo: t.repo, path: rewrite(t.path) } : t,
+          ),
+        );
+        setEmptyDirs((prev) => ({
+          ...prev,
+          [repoPath]: (prev[repoPath] ?? []).map(rewrite),
+        }));
+
+        if (repoPath === activeRepoPath && activePath) {
+          const next = rewrite(activePath);
+          if (next !== activePath) {
+            pending.current = null;
+            if (saveTimer.current) clearTimeout(saveTimer.current);
+            await openFile(repoPath, next);
+          }
+        }
+      });
+    },
+    [fileAction, activeRepoPath, activePath, openFile],
+  );
+
   /** A folder, which the tree then remembers until it has files of its own. */
   const newFolderIn = useCallback(
     (repoPath: string, dir: string) => {
@@ -1352,6 +1399,7 @@ export default function App() {
               onDelete={deleteOne}
               onNewFile={newFileIn}
               onNewFolder={newFolderIn}
+              onMove={moveTo}
               emptyDirs={emptyDirs}
               onRename={renameFile}
               onSetOpen={setOpen}

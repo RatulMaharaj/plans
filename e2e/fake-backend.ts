@@ -99,10 +99,19 @@ export function installFakeBackend(repos: FakeRepo[]) {
       const r = repo(p);
       if (!r) throw new Error("no such repository");
       if (r.files[to] !== undefined) throw new Error(`${to} already exists`);
-      const text = r.files[from];
-      if (text === undefined) throw new Error(`${from} does not exist`);
-      delete r.files[from];
-      r.files[to] = text;
+
+      // A file, or a folder and everything under it — fs::rename does both.
+      if (r.files[from] !== undefined) {
+        r.files[to] = r.files[from];
+        delete r.files[from];
+        return null;
+      }
+      const under = Object.keys(r.files).filter((f) => f.startsWith(`${from}/`));
+      if (!under.length) throw new Error(`${from} does not exist`);
+      for (const f of under) {
+        r.files[`${to}${f.slice(from.length)}`] = r.files[f];
+        delete r.files[f];
+      }
       return null;
     },
     search_plans: ({ repo: p, query, limit }) => {
