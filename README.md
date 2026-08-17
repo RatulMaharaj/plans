@@ -41,7 +41,12 @@ than a general-purpose markdown editor.
   box). It acts on markdown only, and says how much else in the repo it is
   leaving alone.
 - **Command palette.** `⌘P` for files across every open repo, `⌘⇧P` for commands
-  — every setting, and git: branch, pull, push, fetch, commit, switch.
+  — every setting, and git: branch, pull, push, fetch, commit, switch — and
+  `?` to search *inside* files, which is the question notes usually pose.
+- **Files stay where you put them.** New file asks which repository and folder;
+  rename is a path, so typing a folder into it moves the file, and its tab
+  follows. A pasted or dropped image is written beside the document in
+  `assets/` and linked relatively, never inlined as a data URL.
 - **Three papers.** Day, Sepia, and Night, in the manner of an e-reader. Colour
   discipline throughout: chrome is ink at varying opacity, and colour means "this
   differs from what's committed" — with two deliberate exceptions, code blocks
@@ -75,6 +80,26 @@ SSH keys, commit signing, and hooks all apply.
 | `⌘⇧L`          | Zen — the page alone                                            |
 | `⌘+` `⌘−`      | Text size, or tree size when the tree has focus                 |
 | `⌘,`           | Settings                                                        |
+
+## Tests
+
+```sh
+pnpm test          # behaviour and performance, in a real browser
+pnpm test:ui       # the same, watchable
+cd src-tauri && cargo test
+```
+
+`tauri-driver` has no macOS support, so the packaged app cannot be driven.
+It matters less than it sounds: every failure this project has had lived in the
+frontend or at the IPC boundary, and `e2e/fake-backend.ts` answers every Rust
+command in memory — so a test can rewrite a file mid-edit to provoke a conflict,
+or assert exactly which writes the app issued.
+
+`e2e/perf.spec.ts` holds budgets rather than benchmarks. Every slowdown here has
+been a regression — a hidden editor reparsing on each keystroke, a plugin
+dispatching from its own update hook, four repositories walked at once behind
+someone's typing — invisible until measured. The budgets fail when a change
+makes the app worse and stay quiet otherwise.
 
 ## Requirements
 

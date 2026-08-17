@@ -224,3 +224,65 @@ test("pasting a link over a selection makes the selection a link", async ({ page
     )
     .toContain("](https://looped.sh/docs)");
 });
+
+test("a file can be renamed, and moved by typing a path", async ({ page }) => {
+  await open(page);
+  await fileRow(page, "third").click();
+  await page.locator(".row.file", { hasText: "third" }).first().click({ button: "right" });
+  await page.locator(".ctx-item", { hasText: "Rename or move" }).click();
+
+  await page.locator(".name-field, .matter-body").first().fill("notes/moved/fourth.md");
+  await page.keyboard.press("Enter");
+
+  await expect
+    .poll(async () =>
+      page.evaluate(() => Object.keys((window as any).__fake.repos[0].files)),
+    )
+    .toContain("notes/moved/fourth.md");
+
+  const gone = await page.evaluate(() =>
+    Object.keys((window as any).__fake.repos[0].files).includes("notes/third.md"),
+  );
+  expect(gone, "the old path should not be left behind").toBe(false);
+  // The tab follows the file rather than pointing at a path that is gone.
+  await expect(page.locator(".tab.on")).toContainText(/fourth/i);
+});
+
+test("searching inside files finds a line and opens it", async ({ page }) => {
+  await open(page);
+  await page.keyboard.press("Meta+p");
+  await page.locator(".palette-input").fill("?Another file");
+  await expect(page.locator(".palette-row").first()).toContainText(/Another file/i);
+  await expect(page.locator(".palette-foot")).toContainText(/inside files/i);
+  await page.keyboard.press("Enter");
+  await expect(page.locator(".milkdown")).toContainText("Second");
+});
+
+test("a pasted image is written into the repository, not inlined", async ({ page }) => {
+  await open(page);
+  await fileRow(page, "second").click();
+  const editor = page.locator(".milkdown .ProseMirror");
+  await editor.click();
+
+  await editor.evaluate((el) => {
+    const png = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10]);
+    const file = new File([png], "shot.png", { type: "image/png" });
+    const data = new DataTransfer();
+    data.items.add(file);
+    el.dispatchEvent(new ClipboardEvent("paste", { clipboardData: data, bubbles: true, cancelable: true }));
+  });
+
+  // The bytes land beside the document…
+  await expect
+    .poll(async () =>
+      page.evaluate(() => Object.keys((window as any).__fake.repos[0].files)),
+    )
+    .toContain("notes/assets/second.png");
+
+  // …and the markdown gets an ordinary relative link, not a data URL.
+  await expect
+    .poll(async () =>
+      page.evaluate(() => (window as any).__fake.repos[0].files["notes/second.md"] as string),
+    )
+    .toContain("assets/second.png");
+});

@@ -50,9 +50,15 @@ type Props = {
   zen: boolean;
   onZen: () => void;
   onReload: () => void;
+  /** Search inside files, for the "?" mode. */
+  onSearch: (query: string) => Promise<{ relPath: string; line: number; text: string }[]>;
+  onOpenAt: (repoPath: string, relPath: string) => void;
+  searchRepo: string | null;
   onPerf: () => void;
   /** Built in App, since they need the repo, its status and its branches. */
   gitCommands: { id: string; label: string; hint?: string; run: () => void }[];
+  canRename: boolean;
+  onRename: () => void;
   canInsertHtml: boolean;
   onInsertHtml: () => void;
   hasMatter: boolean;
@@ -105,6 +111,15 @@ function buildCommands(p: Props): Command[] {
       group: "Plans",
       label: p.hasMatter ? "Edit frontmatter" : "Add frontmatter",
       run: p.onMatter,
+    });
+  }
+  if (p.canRename) {
+    add({
+      id: "rename",
+      group: "Plans",
+      label: "Rename or move this file…",
+      terms: "move path folder",
+      run: p.onRename,
     });
   }
   if (p.canInsertHtml) {
@@ -316,13 +331,50 @@ export function Palette(props: Props) {
   );
 
   const isCmd = q.startsWith(">");
-  const term = isCmd ? q.slice(1).trim() : q.trim();
+  /** "?" searches inside files, the way ">" searches commands. */
+  const isText = q.startsWith("?");
+  const term = isCmd || isText ? q.slice(1).trim() : q.trim();
+
+  /**
+   * Text search runs in Rust, so it is debounced rather than run per keystroke.
+   */
+  const [hits, setHits] = useState<{ relPath: string; line: number; text: string }[]>([]);
+  const [searching, setSearching] = useState(false);
+  useEffect(() => {
+    if (!isText || term.length < 2) {
+      setHits([]);
+      return;
+    }
+    let live = true;
+    setSearching(true);
+    const t = setTimeout(() => {
+      void props
+        .onSearch(term)
+        .then((found) => live && setHits(found))
+        .catch(() => live && setHits([]))
+        .finally(() => live && setSearching(false));
+    }, 160);
+    return () => {
+      live = false;
+      clearTimeout(t);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isText, term]);
 
   type Row =
     | { kind: "file"; key: string; label: string; sub: string; run: () => void }
     | { kind: "cmd"; key: string; label: string; sub: string; value?: string; run: () => void };
 
   const rows = useMemo<Row[]>(() => {
+    if (isText) {
+      return hits.map((h, i) => ({
+        kind: "file" as const,
+        key: `${h.relPath}:${h.line}:${i}`,
+        label: h.text,
+        sub: `${h.relPath}:${h.line}`,
+        run: () => props.searchRepo && props.onOpenAt(props.searchRepo, h.relPath),
+      }));
+    }
     if (isCmd) {
       return commands
         .map((c) => ({ c, s: score(`${c.group} ${c.label} ${c.terms ?? ""}`, term) }))
@@ -354,7 +406,7 @@ export function Palette(props: Props) {
             : e.file.relPath,
         run: () => props.onOpenFile(e.repoPath, e.file.relPath),
       }));
-  }, [isCmd, term, commands, props.files, props.onOpenFile]);
+  }, [isCmd, isText, hits, term, commands, props.files, props.onOpenFile]);
 
   useEffect(() => setSel(0), [q]);
 
@@ -396,12 +448,20 @@ export function Palette(props: Props) {
           className="palette-input"
           value={q}
           spellCheck={false}
-          placeholder="Search plans, or > for commands"
+          placeholder="Find a file · > commands · ? search inside"
           onChange={(e) => setQ(e.target.value)}
           onKeyDown={onKey}
         />
         <div className="palette-list" ref={listRef}>
-          {rows.length === 0 && <div className="palette-empty">Nothing matches.</div>}
+          {rows.length === 0 && (
+            <div className="palette-empty">
+              {isText && term.length < 2
+                ? "Type at least two characters."
+                : searching
+                  ? "Searching…"
+                  : "Nothing matches."}
+            </div>
+          )}
           {rows.map((r, i) => (
             <button
               key={r.key}
@@ -421,7 +481,7 @@ export function Palette(props: Props) {
           ))}
         </div>
         <div className="palette-foot">
-          <span>{isCmd ? "Commands" : "Plans"}</span>
+          <span>{isCmd ? "Commands" : isText ? "Inside files" : "Files"}</span>
           <span>↑↓ move · ⏎ run · esc close</span>
         </div>
       </div>

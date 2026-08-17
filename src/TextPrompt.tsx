@@ -37,7 +37,13 @@ export function TextPrompt({
   const field = useRef<HTMLInputElement | HTMLTextAreaElement | null>(null);
 
   useEffect(() => {
-    field.current?.focus();
+    const el = field.current;
+    if (!el) return;
+    el.focus();
+    // Select the name but not its extension, the way a file rename should.
+    const dot = el.value.lastIndexOf(".");
+    if (dot > 0) el.setSelectionRange(0, dot);
+    else el.select();
   }, []);
 
   const submit = () => {

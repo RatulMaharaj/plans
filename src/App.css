@@ -1743,3 +1743,6 @@ body.resizing .files-edge { pointer-events: auto; }
   white-space: pre-wrap;
 }
 .fault-acts { display: flex; gap: 8px; }
+
+/* A search hit shows the line, with its file and line number alongside. */
+.palette-row .palette-label { font-variant-numeric: tabular-nums; }

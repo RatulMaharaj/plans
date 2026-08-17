@@ -137,6 +137,8 @@ export default function App() {
     note?: string;
     confirm: string;
     multiline?: boolean;
+    /** Prefilled, for a rename or anything else that edits what exists. */
+    initial?: string;
     run: (value: string) => void;
   }>(null);
   const [branches, setBranches] = useState<string[]>([]);
@@ -907,6 +909,47 @@ export default function App() {
   const deleteOne = useCallback((r: string, f: string) => void deleteFile(r, f), [deleteFile]);
   const openOne = useCallback((r: string, f: string) => void openFile(r, f), [openFile]);
 
+  /**
+   * Rename, which is also how a file moves: the answer is a path, so typing a
+   * folder into it puts the file there. Git follows a rename on its own.
+   */
+  const renameFile = useCallback(
+    (repoPath: string, relPath: string) => {
+      setAsking({
+        title: "Rename",
+        placeholder: relPath,
+        initial: relPath,
+        note: "A path, not just a name — type a folder into it to move the file.",
+        confirm: "Rename",
+        run: (next) => {
+          const to = next.endsWith(".md") || next.endsWith(".markdown") ? next : `${next}.md`;
+          if (to === relPath) return;
+          fileAction(repoPath, "Renamed", async () => {
+            await api.renamePlan(repoPath, relPath, to);
+            if (repoPath === activeRepoPath && relPath === activePath) {
+              // Follow the file, and take its tab with it.
+              pending.current = null;
+              if (saveTimer.current) clearTimeout(saveTimer.current);
+              setTabs((prev) =>
+                prev.map((t) =>
+                  t.repo === repoPath && t.path === relPath ? { repo: repoPath, path: to } : t,
+                ),
+              );
+              await openFile(repoPath, to);
+            } else {
+              setTabs((prev) =>
+                prev.map((t) =>
+                  t.repo === repoPath && t.path === relPath ? { repo: repoPath, path: to } : t,
+                ),
+              );
+            }
+          });
+        },
+      });
+    },
+    [fileAction, activeRepoPath, activePath, openFile],
+  );
+
   /** New file in a given folder, rather than beside whatever is open. */
   const newFileIn = useCallback((repoPath: string, dir: string) => {
     setNaming({ repo: repoPath, dir });
@@ -1254,6 +1297,7 @@ export default function App() {
               onDiscard={discardOne}
               onDelete={deleteOne}
               onNewFile={newFileIn}
+              onRename={renameFile}
               onSetOpen={setOpen}
             />
           </div>
@@ -1547,6 +1591,7 @@ export default function App() {
           note={asking.note}
           confirm={asking.confirm}
           multiline={asking.multiline}
+          initial={asking.initial}
           onCancel={() => setAsking(null)}
           onSubmit={(v) => {
             const run = asking.run;
@@ -1600,6 +1645,8 @@ export default function App() {
         zen={zen}
         onZen={() => setZen((z) => !z)}
         canInsertHtml={view === "write" && !!activePath}
+        canRename={!!activePath && !!activeRepoPath}
+        onRename={() => activeRepoPath && activePath && renameFile(activeRepoPath, activePath)}
         onInsertHtml={() =>
           setAsking({
             title: "Insert HTML",
@@ -1611,6 +1658,13 @@ export default function App() {
           })
         }
         onReload={() => void reloadAll()}
+        searchRepo={activeRepoPath}
+        onSearch={(query) =>
+          activeRepoPath
+            ? api.searchPlans(activeRepoPath, query, settings.showIgnored)
+            : Promise.resolve([])
+        }
+        onOpenAt={(r, f) => void openFile(r, f)}
         onPerf={() => setPerf(true)}
         gitCommands={gitCommands}
         hasMatter={matter !== null}

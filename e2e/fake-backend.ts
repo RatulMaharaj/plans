@@ -86,6 +86,39 @@ export function installFakeBackend(repos: FakeRepo[]) {
       if (r) delete r.files[relPath];
       return null;
     },
+    rename_plan: ({ repo: p, from, to }) => {
+      const r = repo(p);
+      if (!r) throw new Error("no such repository");
+      if (r.files[to] !== undefined) throw new Error(`${to} already exists`);
+      const text = r.files[from];
+      if (text === undefined) throw new Error(`${from} does not exist`);
+      delete r.files[from];
+      r.files[to] = text;
+      return null;
+    },
+    search_plans: ({ repo: p, query, limit }) => {
+      const r = repo(p);
+      const needle = String(query ?? "").trim().toLowerCase();
+      if (!r || !needle) return [];
+      const out: { rel_path: string; line: number; text: string }[] = [];
+      for (const [rel, text] of Object.entries(r.files)) {
+        text.split("\n").forEach((line, i) => {
+          if (out.length >= (limit ?? 60)) return;
+          if (line.toLowerCase().includes(needle)) {
+            out.push({ rel_path: rel, line: i + 1, text: line.trim() });
+          }
+        });
+      }
+      return out;
+    },
+    write_asset: ({ repo: p, relPath, stem, ext }) => {
+      const r = repo(p);
+      const dir = relPath.includes("/") ? relPath.slice(0, relPath.lastIndexOf("/")) : "";
+      const name = `${stem}.${ext}`;
+      const full = dir ? `${dir}/assets/${name}` : `assets/${name}`;
+      if (r) r.files[full] = "<binary>";
+      return `assets/${name}`;
+    },
     git_status: ({ repo: p }) => {
       const r = repo(p);
       return {

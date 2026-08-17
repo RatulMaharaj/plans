@@ -136,6 +136,7 @@ type Props = {
   onDelete: (repoPath: string, relPath: string) => void;
   /** dir is repo-relative, "" for the repo root. */
   onNewFile: (repoPath: string, dir: string) => void;
+  onRename: (repoPath: string, relPath: string) => void;
   /** Open or close a whole subtree at once. */
   onSetOpen: (keys: string[], open: boolean) => void;
 };
@@ -345,6 +346,15 @@ export const FileTree = memo(function FileTree(p: Props) {
               onClick={() => act(() => p.onNewFile(menu.repo, menu.path))}
             >
               New file here
+            </button>
+          )}
+
+          {menu.kind === "file" && (
+            <button
+              className="ctx-item"
+              onClick={() => act(() => p.onRename(menu.repo, menu.path))}
+            >
+              Rename or move…
             </button>
           )}
 

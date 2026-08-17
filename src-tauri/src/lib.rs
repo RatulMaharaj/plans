@@ -234,9 +234,17 @@ fn walk_markdown(root: &Path, include_ignored: bool) -> Vec<PlanFile> {
                 .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
                 .map(|d| d.as_secs())
                 .unwrap_or(0);
-            let dir = rel.rsplit_once('/').map(|(d, _)| d.to_string()).unwrap_or_default();
+            let dir = rel
+                .rsplit_once('/')
+                .map(|(d, _)| d.to_string())
+                .unwrap_or_default();
             if let Ok(mut out) = found.lock() {
-                out.push(PlanFile { rel_path: rel, name, dir, modified });
+                out.push(PlanFile {
+                    rel_path: rel,
+                    name,
+                    dir,
+                    modified,
+                });
             }
             WalkState::Continue
         })
@@ -314,8 +322,7 @@ fn read_plan(repo: String, rel_path: String) -> R<PlanText> {
 fn read_asset(repo: String, rel_path: String) -> R<String> {
     use base64::Engine;
     let p = safe_join(&repo, &rel_path)?;
-    let bytes =
-        std::fs::read(&p).map_err(|e| format!("could not read {rel_path}: {e}"))?;
+    let bytes = std::fs::read(&p).map_err(|e| format!("could not read {rel_path}: {e}"))?;
     // Cap it: a data URL for something enormous would only stall the webview.
     if bytes.len() > 12 * 1024 * 1024 {
         return Err(format!("{rel_path} is too large to inline"));
@@ -338,6 +345,126 @@ fn read_asset(repo: String, rel_path: String) -> R<String> {
     };
     let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
     Ok(format!("data:{mime};base64,{b64}"))
+}
+
+#[derive(Serialize)]
+pub struct Hit {
+    rel_path: String,
+    /// 1-based, so it reads the way an editor counts.
+    line: u32,
+    /// The line itself, trimmed and clipped: enough to recognise, not to read.
+    text: String,
+}
+
+/// Write an image into the repository and return its path, relative to the
+/// file that will link to it.
+///
+/// Pasted screenshots have nowhere to live otherwise, and a data URL in a
+/// markdown file is unreadable in every other tool. The name is taken from the
+/// document so the folder stays legible, and collisions are numbered rather
+/// than overwritten — a pasted image should never replace an earlier one.
+#[tauri::command]
+fn write_asset(
+    repo: String,
+    rel_path: String,
+    stem: String,
+    ext: String,
+    bytes: Vec<u8>,
+) -> R<String> {
+    let root = PathBuf::from(&repo);
+    let dir = rel_path
+        .rsplit_once('/')
+        .map(|(d, _)| d.to_string())
+        .unwrap_or_default();
+    // Alongside the document, in a folder named for it.
+    let folder = if dir.is_empty() {
+        "assets".to_string()
+    } else {
+        format!("{dir}/assets")
+    };
+    let safe_stem: String = stem
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
+        .collect::<String>()
+        .trim_matches('-')
+        .to_lowercase();
+    let safe_stem = if safe_stem.is_empty() {
+        "image".into()
+    } else {
+        safe_stem
+    };
+    let ext = ext.trim_start_matches('.').to_lowercase();
+    let ext = if ext.chars().all(|c| c.is_ascii_alphanumeric()) && !ext.is_empty() {
+        ext
+    } else {
+        "png".to_string()
+    };
+
+    let abs_dir = safe_join(&repo, &folder)?;
+    std::fs::create_dir_all(&abs_dir).map_err(|e| e.to_string())?;
+
+    let mut name = format!("{safe_stem}.{ext}");
+    let mut n = 2;
+    while abs_dir.join(&name).exists() {
+        name = format!("{safe_stem}-{n}.{ext}");
+        n += 1;
+    }
+    std::fs::write(abs_dir.join(&name), &bytes).map_err(|e| e.to_string())?;
+
+    // Relative to the document, which is how the link has to read.
+    let _ = root;
+    Ok(format!("assets/{name}"))
+}
+
+/// Search inside the markdown of a repository.
+///
+/// Filenames answer "which file was that", and are already searchable. This
+/// answers the other question — "where did I write about X" — which for notes
+/// is the one asked more often. Plain substring, case-insensitive: a regular
+/// expression is a different feature, and most searches are neither.
+#[tauri::command]
+fn search_plans(repo: String, query: String, include_ignored: bool, limit: u32) -> R<Vec<Hit>> {
+    let needle = query.trim().to_lowercase();
+    if needle.is_empty() {
+        return Ok(Vec::new());
+    }
+    let root = PathBuf::from(&repo);
+    let files = walk_markdown(&root, include_ignored);
+    let cap = limit.max(1) as usize;
+
+    let mut hits = Vec::new();
+    for f in files {
+        if hits.len() >= cap {
+            break;
+        }
+        let Ok(text) = std::fs::read_to_string(root.join(&f.rel_path)) else {
+            continue;
+        };
+        // Skip the whole file cheaply when it cannot contain the term.
+        if !text.to_lowercase().contains(&needle) {
+            continue;
+        }
+        for (i, line) in text.lines().enumerate() {
+            if hits.len() >= cap {
+                break;
+            }
+            if !line.to_lowercase().contains(&needle) {
+                continue;
+            }
+            let trimmed = line.trim();
+            let text = if trimmed.chars().count() > 160 {
+                trimmed.chars().take(160).collect::<String>() + "…"
+            } else {
+                trimmed.to_string()
+            };
+            hits.push(Hit {
+                rel_path: f.rel_path.clone(),
+                line: i as u32 + 1,
+                text,
+            });
+        }
+    }
+    Ok(hits)
 }
 
 /// Append a line of profiler output to a file.
@@ -426,7 +553,10 @@ fn delete_plan(repo: String, rel_path: String) -> R<()> {
 // ---------------------------------------------------------------------------
 
 fn parse_ahead_behind(repo: &str) -> (u32, u32, bool) {
-    match git(repo, &["rev-list", "--left-right", "--count", "@{upstream}...HEAD"]) {
+    match git(
+        repo,
+        &["rev-list", "--left-right", "--count", "@{upstream}...HEAD"],
+    ) {
         Ok(s) => {
             let mut it = s.split_whitespace();
             let behind = it.next().and_then(|v| v.parse().ok()).unwrap_or(0);
@@ -582,7 +712,11 @@ fn git_branches(repo: String) -> R<BranchList> {
         .to_string();
     Ok(BranchList {
         current,
-        branches: raw.lines().map(|l| l.trim().to_string()).filter(|l| !l.is_empty()).collect(),
+        branches: raw
+            .lines()
+            .map(|l| l.trim().to_string())
+            .filter(|l| !l.is_empty())
+            .collect(),
     })
 }
 
@@ -634,6 +768,8 @@ pub fn run() {
             open_repo,
             list_plans,
             stat_plan,
+            search_plans,
+            write_asset,
             perf_log,
             read_asset,
             read_plan,

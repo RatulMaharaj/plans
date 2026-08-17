@@ -96,6 +96,25 @@ jobs:
           printf '%s' "$API_KEY_BASE64" | base64 --decode > "$RUNNER_TEMP/apple-api-key.p8"
           chmod 600 "$RUNNER_TEMP/apple-api-key.p8"
 
+      # The Command Line Tools linker on recent macOS runners writes proc-macro
+      # dylibs with a mis-aligned LINKEDIT string pool. dyld refuses to load
+      # them and the build fails with "can't find crate for serde_derive",
+      # which says nothing about the real cause. rustup ships lld, which does
+      # not have the bug; scripts/release-linker.mjs finds it in whichever
+      # toolchain is active. Debug builds are unaffected, so this only bites in
+      # release — which is to say, only here.
+      - name: Use a linker that produces loadable proc-macro dylibs
+        run: |
+          set -euo pipefail
+          SYSROOT="$(rustc --print sysroot)"
+          HOST="$(rustc -vV | awk '/^host:/ { print $2 }')"
+          GCC_LD="$SYSROOT/lib/rustlib/$HOST/bin/gcc-ld"
+          if [ -x "$GCC_LD/ld64.lld" ]; then
+            echo "RUSTFLAGS=${RUSTFLAGS:-} -C link-arg=-B$GCC_LD -C link-arg=-fuse-ld=lld" >> "$GITHUB_ENV"
+          else
+            echo "no bundled lld at $GCC_LD; using the system linker" >&2
+          fi
+
       - name: Build, sign, notarize
         uses: tauri-apps/tauri-action@v0
         env:

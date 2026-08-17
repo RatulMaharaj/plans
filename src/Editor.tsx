@@ -11,6 +11,7 @@ import { htmlBridge, htmlContext, htmlView, pictureView } from "./html-view";
 import { editorViewCtx } from "@milkdown/core";
 import { mermaidView } from "./mermaid-view";
 import { pasteLink } from "./paste-link";
+import { imageContext, pasteImage } from "./paste-image";
 import "./editor-theme.css";
 
 type Props = {
@@ -77,6 +78,8 @@ export function Editor({ docKey, repo, relPath, initialValue, spellcheck, onChan
     if (!root) return;
     htmlContext.repo = repo;
     htmlContext.relPath = relPath;
+    imageContext.repo = repo;
+    imageContext.relPath = relPath;
 
     const crepe = new Crepe({
       root,
@@ -148,6 +151,8 @@ export function Editor({ docKey, repo, relPath, initialValue, spellcheck, onChan
     // Render HTML rather than printing its source into the prose.
     // Pasting a link over a selection turns it into one.
     crepe.editor.use(pasteLink);
+    // A pasted or dropped image is written into the repository and linked.
+    crepe.editor.use(pasteImage);
     crepe.editor.use(htmlView);
     // A <picture> is a run of html nodes; this picks one by the app's paper.
     crepe.editor.use(pictureView);
@@ -358,6 +363,8 @@ export function Editor({ docKey, repo, relPath, initialValue, spellcheck, onChan
     }
     htmlContext.repo = repo;
     htmlContext.relPath = relPath;
+    imageContext.repo = repo;
+    imageContext.relPath = relPath;
     swap(initialValue);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [docKey]);

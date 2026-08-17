@@ -65,6 +65,21 @@ export const api = {
   readPlan: (repo: string, relPath: string) =>
     invoke<{ content: string; stamp: string }>("read_plan", { repo, relPath }),
 
+  /** Write an image beside a document; returns the path to link to. */
+  writeAsset: (repo: string, relPath: string, stem: string, ext: string, bytes: number[]) =>
+    invoke<string>("write_asset", { repo, relPath, stem, ext, bytes }),
+
+  /** Lines inside the repository's markdown that contain `query`. */
+  searchPlans: (repo: string, query: string, includeIgnored = false, limit = 60) =>
+    invoke<{ relPath: string; line: number; text: string }[]>("search_plans", {
+      repo,
+      query,
+      includeIgnored,
+      limit,
+    }).then((hits) =>
+      hits.map((h: any) => ({ relPath: h.rel_path, line: h.line, text: h.text })),
+    ),
+
   /** Development only: profiler output, to a file anyone can read. */
   perfLog: (line: string) => rawInvoke<void>("perf_log", { line }),
 
