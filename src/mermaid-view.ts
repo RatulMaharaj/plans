@@ -20,7 +20,13 @@ type MermaidState = { signature: string; set: DecorationSet };
 
 const key = new PluginKey<MermaidState>("plans-mermaid");
 
-/** Rendered SVG by diagram source, so scrolling doesn't re-render the world. */
+/**
+ * Rendered SVG by paper and source, so scrolling doesn't re-render the world.
+ *
+ * The paper is part of the key rather than something the cache is cleared for:
+ * a diagram's colours are baked into its SVG when it is drawn, and an entry
+ * drawn for one paper is simply not an answer for another.
+ */
 const cache = new Map<string, string>();
 let seq = 0;
 let themed = "";
@@ -82,7 +88,8 @@ function fit(host: HTMLElement) {
 
 /** Draw into an existing element; failures show the message, not a blank box. */
 async function draw(host: HTMLElement, source: string) {
-  const hit = cache.get(source);
+  const at = `${paper()}:${source}`;
+  const hit = cache.get(at);
   if (hit) {
     host.innerHTML = hit;
     host.classList.remove("bad");
@@ -92,7 +99,7 @@ async function draw(host: HTMLElement, source: string) {
   applyTheme();
   try {
     const { svg } = await mermaid.render(`plans-mermaid-${seq++}`, source);
-    cache.set(source, svg);
+    cache.set(at, svg);
     host.innerHTML = svg;
     host.classList.remove("bad");
     fit(host);
@@ -111,6 +118,11 @@ function signature(doc: PMNode): string {
   return parts.join("\u0000");
 }
 
+/** The paper a diagram was drawn for, so a change of paper redraws it. */
+function paper(): string {
+  return document.documentElement.dataset.theme ?? "day";
+}
+
 function build(doc: PMNode): DecorationSet {
   const out: Decoration[] = [];
   doc.descendants((node, pos) => {
@@ -127,9 +139,16 @@ function build(doc: PMNode): DecorationSet {
           void draw(host, source);
           return host;
         },
-        // Keyed by source so an unchanged diagram is not rebuilt on every
-        // transaction; editing the block replaces the widget instead.
-        { side: 1, key: `mermaid:${pos}:${source}` },
+        /**
+         * Keyed by source *and* paper.
+         *
+         * ProseMirror reuses a widget whose key has not changed — that is what
+         * the key is for, and it is why editing one diagram does not rebuild
+         * the rest. But it also meant a theme change rebuilt the decoration set
+         * and then reused every widget in it, so the diagrams kept the colours
+         * they were drawn with until the file was closed and opened again.
+         */
+        { side: 1, key: `mermaid:${pos}:${paper()}:${source}` },
       ),
     );
   });

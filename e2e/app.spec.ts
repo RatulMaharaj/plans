@@ -455,3 +455,34 @@ test("frontmatter survives when it is left in the editor", async ({ page }) => {
   expect(text, "the closing fence must stay a fence").not.toContain("-----");
   expect(faults, faults.join("\n")).toEqual([]);
 });
+
+test("a diagram is redrawn when the paper changes", async ({ page }) => {
+  await open(page, [
+    {
+      path: "/repo/one",
+      name: "one",
+      branch: "main",
+      files: { "chart.md": "# Chart\n\n```mermaid\nflowchart LR\n  A --> B\n```\n" },
+    },
+  ]);
+  await fileRow(page, "chart").click();
+
+  const figure = page.locator(".mermaid-figure svg");
+  await expect(figure).toBeVisible({ timeout: 20000 });
+  const before = await figure.innerHTML();
+
+  await page.keyboard.press("Meta+Shift+p");
+  await page.locator(".palette-input").fill(">night");
+  await expect(page.locator(".palette-row").first()).toContainText(/night/i);
+  await page.keyboard.press("Enter");
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "night");
+
+  /**
+   * The diagram's own colours are baked into its SVG when it is drawn, so a
+   * change of paper has to redraw it. It used to keep the old colours until
+   * the file was closed and opened again.
+   */
+  await expect
+    .poll(async () => figure.innerHTML(), { timeout: 20000 })
+    .not.toBe(before);
+});
