@@ -13,7 +13,7 @@ import { NameSheet } from "./NameSheet";
 import { TextPrompt } from "./TextPrompt";
 import { SourceView } from "./SourceView";
 import { PerfHud } from "./PerfHud";
-import { start, tick } from "./perf";
+import { start, tick, trace } from "./perf";
 import { htmlBridge, type HtmlEdit } from "./html-view";
 import { joinFrontmatter, splitFrontmatter } from "./matter";
 import {
@@ -503,6 +503,18 @@ export default function App() {
       void refreshStatusFor(p.repo);
     } catch (e) {
       if (String(e).includes("STALE")) {
+        /**
+         * Unless the file is simply not there any more. Nothing can be
+         * overwritten in that case, so refusing the write only strands the
+         * text — the buffer is the last copy of it.
+         */
+        const now = await api.statPlan(p.repo, p.path).catch(() => null);
+        if (now === "absent") {
+          stamp.current = await api.writePlan(p.repo, p.path, p.text).catch(() => null);
+          setDirty(false);
+          void refreshFiles();
+          return;
+        }
         // Put the edit back so no keystroke is lost while the reader decides.
         pending.current = p;
         const theirs = await api.readPlan(p.repo, p.path).then(
@@ -700,6 +712,7 @@ export default function App() {
           await refreshFiles();
           return openFileRef.current?.(repoPath, relPath, true);
         }
+        trace("open failed", { relPath, error: String(e) });
         notify(`Could not open ${relPath}: ${String(e).replace(/^Error:\s*/, "")}`, "error");
       }
     },
@@ -718,6 +731,17 @@ export default function App() {
       if (busy || conflict || writing.current || pending.current) return;
       const at = await api.statPlan(activeRepoPath, activePath).catch(() => null);
       if (!at || at === stamp.current) return;
+      /**
+       * A file that is gone is not a file that changed.
+       *
+       * "absent" is a stamp like any other as far as the comparison goes, so
+       * without this a renamed, moved or deleted file reads as an edit by
+       * someone else: a clean buffer tries to reload a path that no longer
+       * exists, and a dirty one raises a conflict against nothing. Both leave
+       * the document unwritable, which is what "cannot edit after renaming"
+       * turned out to be.
+       */
+      if (at === "absent") return;
       if (dirty || pending.current) {
         const theirs = await api
           .readPlan(activeRepoPath, activePath)

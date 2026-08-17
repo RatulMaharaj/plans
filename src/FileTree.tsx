@@ -6,6 +6,7 @@
  * carries state ambiently and the git panel is only needed to *act*.
  */
 import { memo, useEffect, useMemo, useRef, useState } from "react";
+import { trace } from "./perf";
 import type { PlanFile, RepoInfo } from "./api";
 
 export type Mark = "clean" | "new" | "mod" | "staged";
@@ -227,6 +228,7 @@ export const FileTree = memo(function FileTree(p: Props) {
     depth.current = 0;
     e.dataTransfer.effectAllowed = "move";
     e.dataTransfer.setData(MIME, [repo, path, kind].join("\n"));
+    trace("drag start", { path, kind });
     // Something usable by other applications, too.
     e.dataTransfer.setData("text/plain", path);
   };
@@ -295,6 +297,7 @@ export const FileTree = memo(function FileTree(p: Props) {
             })()
           : null);
       endDrag();
+      trace("drop", { onto: dir || "<root>", carrying: it?.path ?? null });
       if (allowed(it, repoPath, dir) && it) p.onMove(it.repo, it.path, dir);
     },
   });

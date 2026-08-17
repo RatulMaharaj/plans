@@ -95,3 +95,17 @@ export function watchLongTasks() {
     return () => {};
   }
 }
+
+/**
+ * A line in the log, for things that happen once and matter.
+ *
+ * Not a profiler sample — a note. Used where behaviour differs between a
+ * browser and the packaged app, which is exactly where guessing has cost the
+ * most time on this project.
+ */
+export function trace(what: string, detail?: unknown) {
+  const line = detail === undefined ? what : `${what} ${JSON.stringify(detail)}`;
+  void import("./api").then(({ api }) =>
+    api.perfLog(`[trace ${new Date().toLocaleTimeString()}] ${line}`).catch(() => {}),
+  );
+}

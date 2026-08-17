@@ -361,3 +361,60 @@ test("a folder cannot be dropped inside itself", async ({ page }) => {
   );
   expect(files).toContain("notes/second.md");
 });
+
+test("a renamed file can still be edited", async ({ page }) => {
+  const faults = await open(page);
+  await fileRow(page, "third").click();
+  await page.locator(".row.file", { hasText: "third" }).first().click({ button: "right" });
+  await page.locator(".ctx-item", { hasText: "Rename or move" }).click();
+  await page.locator(".name-field").fill("renamed.md");
+  await page.keyboard.press("Enter");
+
+  await expect(page.locator(".milkdown")).toContainText("Third");
+
+  // The watcher polls the open file; a rename must not leave it chasing the
+  // old path, and typing must still reach disk under the new one.
+  await page.waitForTimeout(5000);
+  await page.locator(".milkdown .ProseMirror").click();
+  await page.keyboard.type(" edited after rename");
+
+  await expect
+    .poll(
+      async () =>
+        page.evaluate(
+          () => (window as any).__fake.repos[0].files["renamed.md"] as string | undefined,
+        ),
+      { timeout: 15000 },
+    )
+    .toContain("edited after rename");
+
+  expect(faults, faults.join("\n")).toEqual([]);
+});
+
+test("a file that vanishes underneath an edit is not treated as a conflict", async ({
+  page,
+}) => {
+  await open(page);
+  await fileRow(page, "third").click();
+  await page.locator(".milkdown .ProseMirror").click();
+  await page.keyboard.type("still mine");
+
+  // Something removes it — a rename elsewhere, a delete, a branch switch.
+  await page.evaluate(() => {
+    delete (window as any).__fake.repos[0].files["notes/third.md"];
+  });
+
+  // The buffer is the only copy left, so it is written rather than refused,
+  // and no conflict is raised against a file that is not there.
+  await expect
+    .poll(
+      async () =>
+        page.evaluate(
+          () =>
+            (window as any).__fake.repos[0].files["notes/third.md"] as string | undefined,
+        ),
+      { timeout: 15000 },
+    )
+    .toContain("still mine");
+  await expect(page.locator(".conflict")).toHaveCount(0);
+});

@@ -1,4 +1,4 @@
-# split-panes
+# Split Panes
 
 We need to add support for split windows / panes.
 
