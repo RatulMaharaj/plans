@@ -246,6 +246,13 @@ test("a file can be renamed, and moved by typing a path", async ({ page }) => {
   expect(gone, "the old path should not be left behind").toBe(false);
   // The tab follows the file rather than pointing at a path that is gone.
   await expect(page.locator(".tab.on")).toContainText(/fourth/i);
+
+  // And the renamed file still opens — from the tree, and from the tab.
+  await expect(page.locator(".milkdown")).toContainText("Third");
+  await fileRow(page, "first").click();
+  await expect(page.locator(".milkdown")).toContainText("First");
+  await page.locator(".row.file", { hasText: "fourth" }).first().click();
+  await expect(page.locator(".milkdown")).toContainText("Third");
 });
 
 test("searching inside files finds a line and opens it", async ({ page }) => {

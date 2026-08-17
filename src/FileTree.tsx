@@ -5,7 +5,7 @@
  * it in its real folder structure. The git mark rides on each row, so the tree
  * carries state ambiently and the git panel is only needed to *act*.
  */
-import { memo, useEffect, useMemo, useState } from "react";
+import { memo, useEffect, useMemo, useRef, useState } from "react";
 import type { PlanFile, RepoInfo } from "./api";
 
 export type Mark = "clean" | "new" | "mod" | "staged";
@@ -199,16 +199,44 @@ export const FileTree = memo(function FileTree(p: Props) {
   /**
    * What is being dragged, and where it is hovering.
    *
-   * The dragged file is held here rather than read back from the drag event:
-   * dataTransfer is not readable during dragover in most browsers, and the drop
-   * target has to know whether it is a valid destination before the drop.
+   * Held in a ref as well as in state: a dragover fires long before React has
+   * re-rendered with new state, and the highlight has to answer immediately.
+   * The state exists only to redraw.
+   *
+   * The drag also carries a private MIME type, so a drop can be identified as
+   * ours even if the ref has been lost — WebKit will not let a dragover handler
+   * read the value being dragged, but it will say which types are present.
    */
-  const [dragging, setDragging] = useState<{
-    repo: string;
-    path: string;
-    kind: "file" | "dir";
-  } | null>(null);
+  const carried = useRef<{ repo: string; path: string; kind: "file" | "dir" } | null>(null);
+  const [dragging, setDragging] = useState<{ repo: string; path: string } | null>(null);
   const [over, setOver] = useState<string | null>(null);
+  /** dragleave fires when the pointer crosses a child, so leaves are counted. */
+  const depth = useRef(0);
+
+  const MIME = "application/x-plans-move";
+
+  const startDrag = (
+    e: React.DragEvent,
+    repo: string,
+    path: string,
+    kind: "file" | "dir",
+  ) => {
+    e.stopPropagation();
+    carried.current = { repo, path, kind };
+    setDragging({ repo, path });
+    depth.current = 0;
+    e.dataTransfer.effectAllowed = "move";
+    e.dataTransfer.setData(MIME, [repo, path, kind].join("\n"));
+    // Something usable by other applications, too.
+    e.dataTransfer.setData("text/plain", path);
+  };
+
+  const endDrag = () => {
+    carried.current = null;
+    depth.current = 0;
+    setDragging(null);
+    setOver(null);
+  };
 
   /**
    * Whether this folder can take what is being dragged.
@@ -218,35 +246,59 @@ export const FileTree = memo(function FileTree(p: Props) {
    * is. And not into itself or anything inside it, which would ask the
    * filesystem to put a folder inside a folder that is about to move.
    */
-  const canDrop = (repoPath: string, dir: string) => {
-    if (!dragging || dragging.repo !== repoPath) return false;
-    const from = dragging.path.includes("/")
-      ? dragging.path.slice(0, dragging.path.lastIndexOf("/"))
-      : "";
+  const allowed = (
+    it: { repo: string; path: string; kind: "file" | "dir" } | null,
+    repoPath: string,
+    dir: string,
+  ) => {
+    if (!it || it.repo !== repoPath) return false;
+    const from = it.path.includes("/") ? it.path.slice(0, it.path.lastIndexOf("/")) : "";
     if (from === dir) return false;
-    if (dragging.kind === "dir") {
-      if (dir === dragging.path || dir.startsWith(`${dragging.path}/`)) return false;
-    }
+    if (it.kind === "dir" && (dir === it.path || dir.startsWith(`${it.path}/`))) return false;
     return true;
   };
 
   const dropHandlers = (repoPath: string, dir: string, key: string) => ({
-    onDragOver: (e: React.DragEvent) => {
-      if (!canDrop(repoPath, dir)) return;
+    onDragEnter: (e: React.DragEvent) => {
+      if (!allowed(carried.current, repoPath, dir)) return;
       e.preventDefault();
+      e.stopPropagation();
+      depth.current += 1;
+      setOver(key);
+    },
+    onDragOver: (e: React.DragEvent) => {
+      if (!allowed(carried.current, repoPath, dir)) return;
+      // Both the preventDefault and the dropEffect: without either, WebKit
+      // shows a "no drop" cursor and never fires a drop at all.
+      e.preventDefault();
+      e.stopPropagation();
       e.dataTransfer.dropEffect = "move";
       if (over !== key) setOver(key);
     },
-    onDragLeave: () => setOver((cur) => (cur === key ? null : cur)),
+    onDragLeave: () => {
+      depth.current -= 1;
+      if (depth.current <= 0) {
+        depth.current = 0;
+        setOver((cur) => (cur === key ? null : cur));
+      }
+    },
     onDrop: (e: React.DragEvent) => {
-      if (!canDrop(repoPath, dir)) return;
       e.preventDefault();
-      const moved = dragging;
-      setOver(null);
-      setDragging(null);
-      if (moved) p.onMove(moved.repo, moved.path, dir);
+      e.stopPropagation();
+      const raw = e.dataTransfer.getData(MIME);
+      const it =
+        carried.current ??
+        (raw
+          ? (() => {
+              const [repo, path, kind] = raw.split("\n");
+              return { repo, path, kind: kind as "file" | "dir" };
+            })()
+          : null);
+      endDrag();
+      if (allowed(it, repoPath, dir) && it) p.onMove(it.repo, it.path, dir);
     },
   });
+
 
   // Any click, scroll, or escape puts the menu away.
   useEffect(() => {
@@ -325,16 +377,8 @@ export const FileTree = memo(function FileTree(p: Props) {
             }`}
             style={pad}
             draggable
-            onDragStart={(e) => {
-              e.stopPropagation();
-              e.dataTransfer.effectAllowed = "move";
-              e.dataTransfer.setData("text/plain", node.path);
-              setDragging({ repo: repo.path, path: node.path, kind: "dir" });
-            }}
-            onDragEnd={() => {
-              setDragging(null);
-              setOver(null);
-            }}
+            onDragStart={(e) => startDrag(e, repo.path, node.path, "dir")}
+            onDragEnd={endDrag}
             {...dropHandlers(repo.path, node.path, key)}
             onClick={() => p.onToggle(key)}
             onContextMenu={(e) => {
@@ -369,16 +413,8 @@ export const FileTree = memo(function FileTree(p: Props) {
         }`}
         style={pad}
         draggable
-        onDragStart={(e) => {
-          e.dataTransfer.effectAllowed = "move";
-          // Carried for other applications; the app itself uses its own state.
-          e.dataTransfer.setData("text/plain", node.path);
-          setDragging({ repo: repo.path, path: node.path, kind: "file" });
-        }}
-        onDragEnd={() => {
-          setDragging(null);
-          setOver(null);
-        }}
+        onDragStart={(e) => startDrag(e, repo.path, node.path, "file")}
+        onDragEnd={endDrag}
         onClick={() => p.onOpen(repo.path, node.path)}
         onContextMenu={(e) => {
           e.preventDefault();

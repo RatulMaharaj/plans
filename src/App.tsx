@@ -119,6 +119,11 @@ export default function App() {
   const [view, setView] = useState<View>("write");
   const [epoch, setEpoch] = useState(0);
   const [palette, setPalette] = useState<null | { commands: boolean }>(null);
+  /** So the open path can call itself once after refreshing a stale tree. */
+  const openFileRef = useRef<
+    ((repo: string, path: string, retrying?: boolean) => Promise<void>) | null
+  >(null);
+
   /** Zen: the page alone. Deliberately not persisted — it's a mood, not a setting. */
   const [zen, setZen] = useState(false);
   const [perf, setPerf] = useState(false);
@@ -643,7 +648,7 @@ export default function App() {
 
   /** Opening a file in another repository makes that repository the active one. */
   const openFile = useCallback(
-    async (repoPath: string, relPath: string) => {
+    async (repoPath: string, relPath: string, retrying = false) => {
       if (saveTimer.current) clearTimeout(saveTimer.current);
       await flush();
       try {
@@ -684,10 +689,21 @@ export default function App() {
           return next;
         });
       } catch (e) {
-        notify(String(e), "error");
+        /**
+         * A path that no longer exists is usually a stale tree — something was
+         * renamed or moved and the list has not caught up. Refresh and try
+         * once more before saying it cannot be opened, since the alternative
+         * is a file that is plainly there refusing to open.
+         */
+        const missing = /could not read|No such file/i.test(String(e));
+        if (missing && !retrying) {
+          await refreshFiles();
+          return openFileRef.current?.(repoPath, relPath, true);
+        }
+        notify(`Could not open ${relPath}: ${String(e).replace(/^Error:\s*/, "")}`, "error");
       }
     },
-    [flush, notify, settings.showFrontmatter],
+    [flush, notify, settings.showFrontmatter, refreshFiles],
   );
 
   /**
@@ -723,6 +739,8 @@ export default function App() {
     openFile,
     notify,
   ]);
+
+  openFileRef.current = openFile;
 
   /** Close a buffer and step to whichever tab was next to it. */
   const closeTab = useCallback(
@@ -960,6 +978,8 @@ export default function App() {
           if (to === relPath) return;
           fileAction(repoPath, "Renamed", async () => {
             await api.renamePlan(repoPath, relPath, to);
+            // Before anything tries to open the new path.
+            await refreshFiles();
             if (repoPath === activeRepoPath && relPath === activePath) {
               // Follow the file, and take its tab with it.
               pending.current = null;
@@ -999,6 +1019,7 @@ export default function App() {
 
       fileAction(repoPath, "Moved", async () => {
         await api.renamePlan(repoPath, from, to);
+        await refreshFiles();
 
         // Paths under a moved folder move with it.
         const rewrite = (path: string) =>
@@ -1028,7 +1049,7 @@ export default function App() {
         }
       });
     },
-    [fileAction, activeRepoPath, activePath, openFile],
+    [fileAction, refreshFiles, activeRepoPath, activePath, openFile],
   );
 
   /** A folder, which the tree then remembers until it has files of its own. */

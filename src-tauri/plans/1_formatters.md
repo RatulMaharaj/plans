@@ -155,4 +155,5 @@ felt.
 - [ ] Trust prompt and per-repo persistence
 - [ ] UI indicator for unmanaged files with an explicit format action
 - [ ] Extend detection to dprint and markdownlint
+- [ ] <br />
 
