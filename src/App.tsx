@@ -955,20 +955,6 @@ export default function App() {
     setNaming({ repo: repoPath, dir });
   }, []);
 
-  const deleteActive = async () => {
-    if (!activeRepo || !activePath) return;
-    if (!window.confirm(`Delete ${activePath} from disk?`)) return;
-    try {
-      await api.deletePlan(activeRepo.path, activePath);
-      setActivePath(null);
-      setContent("");
-      setMatter(null);
-      await refreshFiles();
-      void refreshStatus();
-    } catch (e) {
-      notify(String(e), "error");
-    }
-  };
 
   const onRun = useCallback(
     (label: string, fn: () => Promise<unknown>) => {
@@ -1417,9 +1403,6 @@ export default function App() {
                         Frontmatter
                       </button>
                     )}
-                    <button className="rail-btn" onClick={deleteActive}>
-                      Delete
-                    </button>
                   </span>
                 )}
               </div>

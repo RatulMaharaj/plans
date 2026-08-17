@@ -171,7 +171,7 @@ export function SettingsPage({
           <Slider
             label="Code size"
             value={s.codeSize}
-            display={`${s.codeSize}px · code blocks and inline code`}
+            display={`${s.codeSize}px · code blocks, inline code, the source view`}
             {...RANGES.codeSize}
             onChange={(codeSize) => onChange({ codeSize })}
             fallback={DEFAULTS.codeSize}

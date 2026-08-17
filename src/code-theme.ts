@@ -64,7 +64,12 @@ const highlight = HighlightStyle.define([
 /** Code sits a little smaller than the prose it interrupts. */
 const chrome = EditorView.theme({
   "&": {
-    background: "var(--code-bg, var(--paper))",
+    /**
+     * The surface is a variable so a host can say what it should be, rather
+     * than each host fighting this theme's specificity. A fenced block wants
+     * the code ground; the source view is the document itself and wants paper.
+     */
+    background: "var(--cm-surface, var(--code-bg, var(--paper)))",
     color: "var(--code-name)",
     fontFamily: "var(--mono)",
     fontSize: "var(--code-size, 12px)",
@@ -78,7 +83,7 @@ const chrome = EditorView.theme({
   ".cm-line": { padding: "0 8px 0 6px" },
   ".cm-cursor, .cm-dropCursor": { borderLeftColor: "var(--ink)" },
   ".cm-gutters": {
-    background: "var(--code-bg, var(--paper))",
+    background: "var(--cm-surface, var(--code-bg, var(--paper)))",
     color: "var(--ink-3)",
     border: "none",
     fontFamily: "var(--mono)",

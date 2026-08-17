@@ -27,36 +27,41 @@ type Props = {
   active: boolean;
 };
 
-/** Source has its own scale, set apart from both the page and code blocks. */
+/**
+ * The source takes the code size, not a fraction of the reading size.
+ *
+ * They coincided at 12px, but by accident: one followed the text size setting
+ * and the other did not, so changing the page's type moved one and left the
+ * other. Both are mono, both are the file rather than the page, and one setting
+ * should govern them.
+ */
 const surface = EditorView.theme({
   "&": {
     height: "100%",
-    fontSize: "calc(var(--doc-size) * 0.72)",
+    fontSize: "var(--code-size, 12px)",
     /**
-     * Paper, not the code block's ground.
-     *
-     * codeTheme is shared with fenced blocks, where a distinct surface sets the
-     * code apart from the prose around it. Here the source *is* the document,
-     * with nothing to be set apart from — so it takes the page's own colour and
-     * overrides what the shared theme brings.
+     * Paper, not the code block's ground: the source is the document itself,
+     * with nothing to be set apart from. Said through --cm-surface, which the
+     * shared theme reads, so the two never disagree.
      */
-    background: "var(--paper)",
+    background: "var(--cm-surface)",
   },
-  ".cm-scroller, .cm-gutters": { background: "var(--paper)" },
   ".cm-scroller": {
     fontFamily: "var(--mono)",
     lineHeight: "1.75",
     padding: "26px 0",
   },
-  ".cm-content": { caretColor: "var(--ink)" },
+  ".cm-content": { caretColor: "var(--ink)", paddingLeft: "0" },
   ".cm-gutters": {
     background: "var(--paper)",
     color: "var(--ink-3)",
     border: "none",
-    paddingRight: "10px",
+    // Off the window's edge, but not by much: this is a margin, not a column.
+    paddingLeft: "14px",
+    paddingRight: "12px",
   },
   ".cm-activeLineGutter": { background: "transparent", color: "var(--ink-2)" },
-  ".cm-lineNumbers .cm-gutterElement": { minWidth: "3ch" },
+  ".cm-lineNumbers .cm-gutterElement": { minWidth: "3ch", textAlign: "right" },
 });
 
 export function SourceView({ value, onChange, settings, docKey, active }: Props) {
@@ -172,5 +177,12 @@ export function SourceView({ value, onChange, settings, docKey, active }: Props)
     v.scrollDOM.scrollTop = top;
   }, [value, active]);
 
-  return <div className={`source ${settings.sourceWrap ? "" : "nowrap"}`} ref={host} />;
+  return (
+    <div
+      className={`source ${settings.sourceWrap ? "" : "nowrap"} ${
+        settings.sourceLineNumbers ? "" : "no-numbers"
+      }`}
+      ref={host}
+    />
+  );
 }
