@@ -12,9 +12,13 @@
  * The markdown itself is untouched either way — the node still serialises back
  * to exactly the source it came from.
  */
-import { $view } from "@milkdown/utils";
+import { $prose, $view } from "@milkdown/utils";
+import { Plugin, PluginKey } from "@milkdown/kit/prose/state";
+import { Decoration, DecorationSet } from "@milkdown/kit/prose/view";
+import type { EditorView } from "@milkdown/kit/prose/view";
+import type { Node as PMNode } from "@milkdown/kit/prose/model";
 import { htmlSchema } from "@milkdown/preset-commonmark";
-import { convertFileSrc } from "@tauri-apps/api/core";
+import { api } from "./api";
 
 const COMMENT = /^\s*<!--([\s\S]*?)-->\s*$/;
 
@@ -43,19 +47,70 @@ function sanitize(html: string): string {
   return doc.body.innerHTML;
 }
 
-/** Point relative sources at the repository, through Tauri's asset protocol. */
+/**
+ * Block HTML arrives as one node per line, not one per element, so a <picture>
+ * block is split into "<picture>", "<source …>", "<img …>", "</picture>" —
+ * each parsed on its own. A lone <source> is meaningless to the DOM parser and
+ * an unclosed <picture> is empty, which is why a remote <img> renders and a
+ * <picture> cover does not. Fragments that cannot stand alone are unwrapped:
+ * the <source> becomes an <img> so the picture still shows something.
+ */
+function standalone(html: string): string {
+  const t = html.trim();
+  // An opening or closing wrapper on its own contributes nothing to render.
+  if (/^<\/?(picture|figure|div|p|a|span)\b[^>]*>$/i.test(t)) return "";
+  // A <source> outside its <picture>: promote it, so the image is not lost.
+  const src = t.match(/^<source\b[^>]*\bsrcset=["']([^"']+)["'][^>]*>$/i);
+  if (src) return `<img src="${src[1].split(/[ ,]/)[0]}" />`;
+  return html;
+}
+
+/**
+ * Point relative sources at the repository.
+ *
+ * Read through Rust as a data URL rather than the asset protocol: that route
+ * needs scope configuration and a custom scheme, and in the dev webview the
+ * request simply never resolves. These files are already ours to read.
+ */
+const assets = new Map<string, string>();
+
 function resolveAssets(root: HTMLElement, repo: string, relPath: string) {
   const dir = relPath.includes("/") ? relPath.slice(0, relPath.lastIndexOf("/")) : "";
+
   const fix = (el: Element, attr: string) => {
     const raw = el.getAttribute(attr);
-    if (!raw || /^(https?:|data:|asset:|blob:|\/\/)/i.test(raw)) return;
+    if (!raw || /^(https?:|data:|blob:|\/\/)/i.test(raw)) return;
+
+    /**
+     * Take the attribute off before the browser can act on it. A relative path
+     * resolves against the dev server, fails within the same tick, and the
+     * error handler below would report a miss before the real bytes arrived.
+     */
+    el.removeAttribute(attr);
     const rel = raw.startsWith("/") ? raw.slice(1) : dir ? `${dir}/${raw}` : raw;
-    try {
-      el.setAttribute(attr, convertFileSrc(`${repo}/${rel}`));
-    } catch {
-      /* leave it alone rather than break the render */
-    }
+    const key = `${repo}::${rel}`;
+
+    const miss = (why: string) => {
+      const note = document.createElement("span");
+      note.className = "md-html-missing";
+      note.textContent = `image did not load — ${rel} (${why})`;
+      el.replaceWith(note);
+    };
+
+    if (!repo) return miss("no repository");
+
+    const hit = assets.get(key);
+    if (hit) return el.setAttribute(attr, hit);
+
+    void api.readAsset(repo, rel).then(
+      (url) => {
+        assets.set(key, url);
+        el.setAttribute(attr, url);
+      },
+      (e) => miss(String(e).replace(/^Error:\s*/, "")),
+    );
   };
+
   root.querySelectorAll("img").forEach((el) => fix(el, "src"));
   root.querySelectorAll("source").forEach((el) => fix(el, "srcset"));
 }
@@ -66,7 +121,32 @@ function resolveAssets(root: HTMLElement, repo: string, relPath: string) {
  */
 export const htmlContext = { repo: "", relPath: "" };
 
-export const htmlView = $view(htmlSchema.node, () => (node) => {
+/**
+ * The bridge between rendered HTML and the app.
+ *
+ * A node view cannot open a React sheet, and React cannot dispatch a ProseMirror
+ * transaction, so each side registers what it can do: App opens the editor,
+ * Editor applies the result. Everything HTML — a picture, a div, a comment —
+ * goes through the same two calls, rather than growing its own affordance.
+ */
+export type HtmlEdit = { from: number; to: number; value: string };
+
+export const htmlBridge: {
+  /** Set by App: show the raw fragment for editing. */
+  request: ((edit: HtmlEdit) => void) | null;
+  /** Set by Editor: write the fragment back into the document. */
+  apply: ((edit: HtmlEdit) => void) | null;
+  /** Set by Editor: put a new fragment in at the cursor. */
+  insert: ((value: string) => void) | null;
+} = { request: null, apply: null, insert: null };
+
+export const htmlView = $view(htmlSchema.node, () => (node, _view, getPos) => {
+  const edit = () =>
+    htmlBridge.request?.({
+      from: getPos() ?? 0,
+      to: (getPos() ?? 0) + node.nodeSize,
+      value: String(node.attrs.value ?? ""),
+    });
   const value = String(node.attrs.value ?? "");
   const comment = value.match(COMMENT);
 
@@ -94,20 +174,291 @@ export const htmlView = $view(htmlSchema.node, () => (node) => {
     text.textContent = body;
     card.append(meta, text);
 
+    // One card open at a time, and any click elsewhere puts it away.
+    const away = (e: MouseEvent) => {
+      if (!dom.contains(e.target as Node)) close();
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") close();
+    };
+    function close() {
+      dom.classList.remove("open");
+      document.removeEventListener("mousedown", away, true);
+      document.removeEventListener("keydown", onKey, true);
+    }
+
     mark.addEventListener("mousedown", (e) => {
       e.preventDefault();
       e.stopPropagation();
-      dom.classList.toggle("open");
+      if (dom.classList.contains("open")) return close();
+      document
+        .querySelectorAll(".md-comment.open")
+        .forEach((el) => el.classList.remove("open"));
+      dom.classList.add("open");
+      document.addEventListener("mousedown", away, true);
+      document.addEventListener("keydown", onKey, true);
     });
     dom.append(mark, card);
-    return { dom, ignoreMutation: () => true, stopEvent: () => true };
+    return {
+      dom,
+      ignoreMutation: () => true,
+      stopEvent: () => true,
+      destroy: () => {
+        document.removeEventListener("mousedown", away, true);
+        document.removeEventListener("keydown", onKey, true);
+      },
+    };
   }
 
   const dom = document.createElement("span");
   dom.className = "md-html";
   dom.setAttribute("data-type", "html");
   dom.setAttribute("data-value", value);
-  dom.innerHTML = sanitize(value);
+  dom.innerHTML = sanitize(standalone(value));
   resolveAssets(dom, htmlContext.repo, htmlContext.relPath);
+  dom.title = "Double-click to edit the HTML";
+  dom.addEventListener("dblclick", (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    edit();
+  });
   return { dom, ignoreMutation: () => true, stopEvent: () => true };
 });
+
+/* ===========================================================================
+   <picture>, chosen by the app's paper rather than the system.
+   ---------------------------------------------------------------------------
+   Block HTML arrives as one node per line, so a picture is a run of nodes:
+   the opening tag, its sources, a fallback img, the closing tag. Rendering
+   them separately gives one image per source — and the media queries would be
+   answered by macOS's appearance anyway, not by the paper in this app.
+
+   So the run is collected, hidden, and replaced by a single widget holding
+   whichever source matches the current theme.
+   =========================================================================== */
+
+const pictureKey = new PluginKey("plans-picture");
+
+/**
+ * Night is the only dark paper. Sepia is warm, not dark — it answers "light",
+ * as Day does, so a README cover picks its light artwork on both.
+ */
+const DARK_PAPERS = new Set(["night"]);
+
+function prefersDark(): boolean {
+  return DARK_PAPERS.has(document.documentElement.dataset.theme ?? "");
+}
+
+/** The source a browser would pick, decided against the app's paper instead. */
+function chooseSource(fragment: string): string | null {
+  const dark = prefersDark();
+  const doc = new DOMParser().parseFromString(
+    fragment.includes("<picture") ? fragment : `<picture>${fragment}</picture>`,
+    "text/html",
+  );
+  const sources = [...doc.querySelectorAll("source")];
+  const matching = sources.find((el) => {
+    const media = (el.getAttribute("media") ?? "").toLowerCase();
+    if (!media.includes("prefers-color-scheme")) return false;
+    return media.includes("dark") === dark;
+  });
+  const pick =
+    matching?.getAttribute("srcset") ??
+    // No media queries: first source wins, as a browser would do.
+    sources.find((el) => !el.getAttribute("media"))?.getAttribute("srcset") ??
+    doc.querySelector("img")?.getAttribute("src") ??
+    null;
+  return pick ? pick.split(/[ ,]/)[0] : null;
+}
+
+type Run = { from: number; to: number; html: string; blocks: [number, number][] };
+
+/** One html node's worth of text, wherever it sits in the document. */
+type Chunk = { value: string; from: number; to: number; block: [number, number] };
+
+/**
+ * Every html node in document order, with the block that holds it.
+ *
+ * A <picture> written across several lines may arrive as several inline nodes
+ * in one paragraph, or as one node per block — remark decides, and it varies
+ * with the surrounding blank lines. Collecting them flat means the run is found
+ * either way; the earlier version only looked inside a single paragraph and so
+ * never matched the common case.
+ */
+function htmlChunks(doc: PMNode): Chunk[] {
+  const out: Chunk[] = [];
+  doc.descendants((node, pos, parent, index) => {
+    if (node.type.name !== "html") return;
+    let block: [number, number] = [pos, pos + node.nodeSize];
+    if (parent?.isTextblock) {
+      // The enclosing block, so a line of its own can be hidden whole.
+      const before = pos - 1 - (index > 0 ? 0 : 0);
+      block = [before, before + parent.nodeSize];
+    }
+    out.push({
+      value: String(node.attrs.value ?? ""),
+      from: pos,
+      to: pos + node.nodeSize,
+      block,
+    });
+  });
+  return out;
+}
+
+function pictureRuns(doc: PMNode): Run[] {
+  const runs: Run[] = [];
+  let open: { from: number; parts: string[]; blocks: [number, number][] } | null = null;
+  for (const c of htmlChunks(doc)) {
+    if (/<picture\b/i.test(c.value)) {
+      open = { from: c.from, parts: [c.value], blocks: [c.block] };
+    } else if (open) {
+      open.parts.push(c.value);
+      open.blocks.push(c.block);
+    }
+    if (open && /<\/picture>/i.test(c.value)) {
+      runs.push({
+        from: open.from,
+        to: c.to,
+        html: open.parts.join("\n"),
+        blocks: open.blocks,
+      });
+      open = null;
+    }
+  }
+  return runs;
+}
+
+/**
+ * Wrapper tags and the content between them.
+ *
+ * `<div align="center">`, `<sub>`, `<b>` and friends arrive as their own nodes,
+ * separate from what they wrap — the text between is ordinary markdown. Alone
+ * each tag parses to an empty element, so the wrapping is simply lost. Pairing
+ * them and decorating the range restores the intent without touching the file.
+ */
+const INLINE_TAGS = new Set([
+  "sub", "sup", "b", "strong", "i", "em", "u", "s", "small", "kbd", "mark", "cite",
+]);
+const BLOCK_TAGS = new Set(["div", "p", "center", "section", "figure"]);
+
+function wrapperDecorations(doc: PMNode): Decoration[] {
+  const out: Decoration[] = [];
+  const stack: { tag: string; attrs: string; to: number }[] = [];
+
+  for (const c of htmlChunks(doc)) {
+    const v = c.value.trim();
+    if (/^<!--/.test(v) || /<picture\b|<\/picture>/i.test(v)) continue;
+
+    const open = v.match(/^<([a-zA-Z][\w-]*)((?:\s[^>]*)?)>$/);
+    const close = v.match(/^<\/([a-zA-Z][\w-]*)>$/);
+    const selfClosing = /\/>$/.test(v);
+
+    if (open && !selfClosing && (INLINE_TAGS.has(open[1].toLowerCase()) || BLOCK_TAGS.has(open[1].toLowerCase()))) {
+      stack.push({ tag: open[1].toLowerCase(), attrs: open[2] ?? "", to: c.to });
+      out.push(Decoration.inline(c.from, c.to, { class: "md-hidden" }));
+      continue;
+    }
+
+    if (close) {
+      const tag = close[1].toLowerCase();
+      const i = stack.map((s) => s.tag).lastIndexOf(tag);
+      if (i === -1) continue;
+      const opened = stack[i];
+      stack.length = i;
+      out.push(Decoration.inline(c.from, c.to, { class: "md-hidden" }));
+      if (opened.to >= c.from) continue;
+
+      if (INLINE_TAGS.has(tag)) {
+        out.push(Decoration.inline(opened.to, c.from, { class: `md-i md-i-${tag}` }));
+      } else {
+        // Blocks take a class of their own, since alignment is not inheritable
+        // through an inline decoration.
+        const centred =
+          /align\s*=\s*["']?center/i.test(opened.attrs) ||
+          /text-align\s*:\s*center/i.test(opened.attrs);
+        if (!centred) continue;
+        doc.nodesBetween(opened.to, c.from, (node, pos) => {
+          if (!node.isBlock || node.isTextblock === false) return;
+          if (pos < opened.to || pos + node.nodeSize > c.from) return;
+          out.push(Decoration.node(pos, pos + node.nodeSize, { class: "md-center" }));
+          return false;
+        });
+      }
+    }
+  }
+  return out;
+}
+
+function pictureDecorations(doc: PMNode, repo: string, relPath: string): DecorationSet {
+  const out: Decoration[] = wrapperDecorations(doc);
+  for (const run of pictureRuns(doc)) {
+    const src = chooseSource(run.html);
+    // Hide each block the run occupies, so no empty paragraphs are left behind.
+    const seen = new Set<string>();
+    for (const [from, to] of run.blocks) {
+      const key = `${from}:${to}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push(Decoration.inline(from, to, { class: "md-hidden" }));
+    }
+    if (!src) continue;
+    out.push(
+      Decoration.widget(
+        run.to,
+        () => {
+          const host = document.createElement("span");
+          host.className = "md-html";
+          host.setAttribute("contenteditable", "false");
+          const img = document.createElement("img");
+          img.alt = "";
+          // Which paper chose this, so a wrong pick is diagnosable on sight.
+          img.title = `${prefersDark() ? "dark" : "light"} · ${src}`;
+          // Set through resolveAssets, never directly: a relative src would be
+          // attempted against the dev server and fail before the bytes land.
+          img.setAttribute("src", src);
+          host.appendChild(img);
+          resolveAssets(host, repo, relPath);
+          host.addEventListener("dblclick", (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            htmlBridge.request?.({ from: run.from, to: run.to, value: run.html });
+          });
+          return host;
+        },
+        { side: 1, key: `picture:${run.from}:${src}:${prefersDark()}` },
+      ),
+    );
+  }
+  return DecorationSet.create(doc, out);
+}
+
+export const pictureView = $prose(
+  () =>
+    new Plugin({
+      key: pictureKey,
+      state: {
+        init: (_, state) =>
+          pictureDecorations(state.doc, htmlContext.repo, htmlContext.relPath),
+        apply: (tr, old) =>
+          tr.docChanged || tr.getMeta(pictureKey)
+            ? pictureDecorations(tr.doc, htmlContext.repo, htmlContext.relPath)
+            : old,
+      },
+      props: {
+        decorations(this: Plugin, state) {
+          return this.getState(state);
+        },
+      },
+      // The choice depends on the paper, so changing it re-decides.
+      view: (view: EditorView) => {
+        const observer = new MutationObserver(() =>
+          view.dispatch(view.state.tr.setMeta(pictureKey, true)),
+        );
+        observer.observe(document.documentElement, {
+          attributes: true,
+          attributeFilter: ["data-theme"],
+        });
+        return { destroy: () => observer.disconnect() };
+      },
+    }),
+);

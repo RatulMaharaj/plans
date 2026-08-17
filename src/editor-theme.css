@@ -82,7 +82,7 @@
 
 .editor-host .milkdown .ProseMirror code {
   font-family: var(--mono);
-  font-size: 0.82em;
+  font-size: var(--code-size, 12px);
   color: var(--ink-2);
 }
 
@@ -265,4 +265,46 @@
   font-size: 10px;
   letter-spacing: 0.06em;
   color: var(--git-mod);
+}
+
+/* A broken image shows the path it tried, rather than nothing at all. */
+.editor-host .milkdown .ProseMirror .md-html-missing {
+  display: inline-block;
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  color: var(--git-mod);
+  border: 1px dashed var(--rule-strong);
+  border-radius: 3px;
+  padding: 3px 7px;
+}
+
+/* The source lines of a <picture> stay in the document but out of sight —
+   hidden rather than removed, so the markdown is untouched. */
+.editor-host .milkdown .ProseMirror .md-hidden { display: none; }
+
+/* ---------------------------------------------------------------------------
+   HTML wrappers: <div align="center">, <sub>, <b> and friends.
+
+   The tags are separate nodes from what they wrap, so they are hidden and the
+   range between them is decorated instead. The file keeps its markup; the page
+   shows what the markup meant.
+   --------------------------------------------------------------------------- */
+.editor-host .milkdown .ProseMirror .md-center { text-align: center; }
+.editor-host .milkdown .ProseMirror .md-center img { margin: 0 auto; }
+
+.editor-host .milkdown .ProseMirror .md-i-sub { vertical-align: sub; font-size: 0.72em; }
+.editor-host .milkdown .ProseMirror .md-i-sup { vertical-align: super; font-size: 0.72em; }
+.editor-host .milkdown .ProseMirror :is(.md-i-b, .md-i-strong) { font-weight: 700; }
+.editor-host .milkdown .ProseMirror :is(.md-i-i, .md-i-em, .md-i-cite) { font-style: italic; }
+.editor-host .milkdown .ProseMirror .md-i-u { text-decoration: underline; }
+.editor-host .milkdown .ProseMirror .md-i-s { text-decoration: line-through; }
+.editor-host .milkdown .ProseMirror .md-i-small { font-size: 0.85em; color: var(--ink-2); }
+.editor-host .milkdown .ProseMirror .md-i-mark { background: var(--shade); }
+.editor-host .milkdown .ProseMirror .md-i-kbd {
+  font-family: var(--mono);
+  font-size: 0.8em;
+  border: 1px solid var(--rule-strong);
+  border-radius: 3px;
+  padding: 1px 4px;
 }

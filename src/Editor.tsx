@@ -5,7 +5,8 @@ import { languages } from "@codemirror/language-data";
 import { LanguageDescription } from "@codemirror/language";
 import { yaml } from "@codemirror/lang-yaml";
 import { codeTheme } from "./code-theme";
-import { htmlContext, htmlView } from "./html-view";
+import { htmlBridge, htmlContext, htmlView, pictureView } from "./html-view";
+import { editorViewCtx } from "@milkdown/core";
 import { mermaidView } from "./mermaid-view";
 import "./editor-theme.css";
 
@@ -118,8 +119,42 @@ export function Editor({ docKey, repo, relPath, initialValue, spellcheck, onChan
 
     // Render HTML rather than printing its source into the prose.
     crepe.editor.use(htmlView);
+    // A <picture> is a run of html nodes; this picks one by the app's paper.
+    crepe.editor.use(pictureView);
     // ```mermaid blocks keep their source and gain a diagram beneath it.
     crepe.editor.use(mermaidView);
+
+    /**
+     * Writing HTML back into the document. A fragment may be several lines, and
+     * each line is its own html node, so the range is replaced by one node per
+     * line — which is exactly the shape the parser would have produced.
+     */
+    const nodesFor = (value: string, schema: import("@milkdown/kit/prose/model").Schema) =>
+      value
+        .split("\n")
+        .filter((line) => line.trim().length > 0)
+        .map((line) => schema.nodes.html.create({ value: line }));
+
+    htmlBridge.apply = ({ from, to, value }) => {
+      crepe.editor.action((ctx) => {
+        const view = ctx.get(editorViewCtx);
+        const nodes = nodesFor(value, view.state.schema);
+        const tr = view.state.tr;
+        if (nodes.length) tr.replaceWith(from, to, nodes);
+        else tr.delete(from, to);
+        view.dispatch(tr);
+      });
+    };
+
+    htmlBridge.insert = (value) => {
+      crepe.editor.action((ctx) => {
+        const view = ctx.get(editorViewCtx);
+        const nodes = nodesFor(value, view.state.schema);
+        if (!nodes.length) return;
+        const { from, to } = view.state.selection;
+        view.dispatch(view.state.tr.replaceWith(from, to, nodes).scrollIntoView());
+      });
+    };
 
     crepe
       .create()
@@ -132,6 +167,8 @@ export function Editor({ docKey, repo, relPath, initialValue, spellcheck, onChan
       .catch((e) => console.error("editor failed to start", e));
 
     return () => {
+      htmlBridge.apply = null;
+      htmlBridge.insert = null;
       crepe.destroy();
     };
     // initialValue is intentionally excluded: docKey drives remounts.

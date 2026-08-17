@@ -57,14 +57,14 @@ pnpm app:build   # produces a bundled .app / installer under src-tauri/target/re
 
 ## Layout
 
-| Path | What lives there |
-| --- | --- |
-| `src-tauri/src/lib.rs` | All Rust commands: repo discovery, file I/O, git |
-| `src/api.ts` | Typed wrapper over the Rust commands |
-| `src/App.tsx` | Layout, repo/file state, autosave |
-| `src/Editor.tsx` | Milkdown Crepe editor instance |
-| `src/GitPanel.tsx` | Status, diffs, staging, commit, push/pull |
-| `src/fonts.ts`, `scripts/fetch-fonts.mjs` | Typeface registry and the vendoring script |
+| Path                                      | What lives there                                 |
+| ----------------------------------------- | ------------------------------------------------ |
+| `src-tauri/src/lib.rs`                    | All Rust commands: repo discovery, file I/O, git |
+| `src/api.ts`                              | Typed wrapper over the Rust commands             |
+| `src/App.tsx`                             | Layout, repo/file state, autosave                |
+| `src/Editor.tsx`                          | Milkdown Crepe editor instance                   |
+| `src/GitPanel.tsx`                        | Status, diffs, staging, commit, push/pull        |
+| `src/fonts.ts`, `scripts/fetch-fonts.mjs` | Typeface registry and the vendoring script       |
 
 ## Notes
 
@@ -74,3 +74,4 @@ pnpm app:build   # produces a bundled .app / installer under src-tauri/target/re
   disk is touched. Deleting a plan does remove the file.
 - `Pull` uses `--ff-only`, so a diverged branch fails loudly instead of
   auto-merging behind your back.
+

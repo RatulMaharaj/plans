@@ -1433,22 +1433,22 @@ diffs-container {
 
 /* --- source: the file as it actually is ---------------------------------- */
 
+/* Wrapping on: the source keeps the reading measure, like the page. Wrapping
+   off: the measure has nothing to do, so the text runs to the window edge and
+   scrolls sideways instead. */
+/* Wrapping on, the source keeps the reading measure like the page; off, it
+   runs to the window edge, since a measure has nothing to do without wrapping.
+   The padding is on the host so the gutter travels with the column. */
 .source {
   flex: 1;
   min-height: 0;
-  width: 100%;
-  border: 0;
-  resize: none;
-  padding: 26px calc((100% - var(--doc-measure)) / 2);
+  overflow: hidden;
   background: var(--paper);
-  color: var(--ink);
-  font-family: var(--mono);
-  font-size: calc(var(--doc-size) * 0.72);
-  line-height: 1.75;
-  letter-spacing: 0.01em;
-  tab-size: 2;
+  padding: 0 max(28px, calc((100% - var(--doc-measure)) / 2));
 }
-.source:focus { outline: 0; }
+.source.nowrap { padding: 0 28px; }
+.source .cm-editor { height: 100%; }
+.source .cm-editor.cm-focused { outline: none; }
 
 /* --- searching the settings --------------------------------------------- */
 
@@ -1603,3 +1603,8 @@ body.resizing .files-edge { pointer-events: auto; }
    =========================================================================== */
 * { scrollbar-width: none; }
 *::-webkit-scrollbar { width: 0; height: 0; display: none; }
+
+/* The page and the source both stay mounted; the one you are not looking at
+   is set aside rather than torn down, so switching is instant. */
+.surface { display: contents; }
+.surface.aside { display: none; }

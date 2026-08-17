@@ -16,6 +16,8 @@ export type Settings = {
   measure: number;
   /** Line height as a multiple of the font size. */
   leading: number;
+  /** Code block text size in px — code has its own conventions. */
+  codeSize: number;
 
   // Writing
   spellcheck: boolean;
@@ -43,6 +45,12 @@ export type Settings = {
   showExtensions: boolean;
   /** Hold YAML frontmatter apart from the prose, above the page. */
   showFrontmatter: boolean;
+
+  // Source
+  /** Line numbers down the side of the raw markdown. */
+  sourceLineNumbers: boolean;
+  /** Wrap long lines, or run them on and scroll sideways. */
+  sourceWrap: boolean;
   /** Tree text size in px — ⌘+ / ⌘− while the tree has focus. */
   treeSize: number;
   /** Sidebar width in px, dragged by its edge. */
@@ -64,6 +72,7 @@ export const DEFAULTS: Settings = {
   size: 16,
   measure: 70,
   leading: 1.5,
+  codeSize: 12,
   spellcheck: true,
   autosave: "afterDelay",
   autosaveDelay: 2,
@@ -75,6 +84,8 @@ export const DEFAULTS: Settings = {
   showIgnored: false,
   showExtensions: true,
   showFrontmatter: true,
+  sourceLineNumbers: true,
+  sourceWrap: true,
   treeSize: 12.5,
   treeWidth: 232,
   showIndex: true,
@@ -87,6 +98,7 @@ export const RANGES = {
   size: { min: 15, max: 23, step: 1 },
   measure: { min: 52, max: 88, step: 2 },
   leading: { min: 1.35, max: 2, step: 0.01 },
+  codeSize: { min: 9, max: 18, step: 0.5 },
   watchSeconds: { min: 0, max: 30, step: 1 },
   autosaveDelay: { min: 0.5, max: 10, step: 0.5 },
   treeSize: { min: 9, max: 16, step: 0.5 },
@@ -118,6 +130,7 @@ export function applySettings(s: Settings) {
   root.setProperty("--doc-measure", `${s.measure}ch`);
   root.setProperty("--doc-leading", String(s.leading));
   root.setProperty("--tree-size", `${s.treeSize}px`);
+  root.setProperty("--code-size", `${s.codeSize}px`);
   root.setProperty("--files-w", `${s.treeWidth}px`);
   const mono = MONO_FONTS.find((m) => m.id === s.monoId) ?? MONO_FONTS[0];
   root.setProperty("--mono", mono.stack);

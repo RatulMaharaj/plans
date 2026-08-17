@@ -12,8 +12,12 @@ type Props = {
   /** Shown under the field: what will happen, in the ledger voice. */
   note?: string;
   confirm: string;
-  /** Multi-line for a commit message, single for a name. */
+  /** Multi-line for a commit message or a fragment of HTML. */
   multiline?: boolean;
+  /** Prefilled, when editing something that already exists. */
+  initial?: string;
+  /** Allow submitting nothing, to mean "remove it". */
+  allowEmpty?: boolean;
   onCancel: () => void;
   onSubmit: (value: string) => void;
 };
@@ -24,10 +28,12 @@ export function TextPrompt({
   note,
   confirm,
   multiline,
+  initial,
+  allowEmpty,
   onCancel,
   onSubmit,
 }: Props) {
-  const [value, setValue] = useState("");
+  const [value, setValue] = useState(initial ?? "");
   const field = useRef<HTMLInputElement | HTMLTextAreaElement | null>(null);
 
   useEffect(() => {
@@ -35,7 +41,7 @@ export function TextPrompt({
   }, []);
 
   const submit = () => {
-    if (value.trim()) onSubmit(value.trim());
+    if (value.trim() || allowEmpty) onSubmit(value.trim());
   };
 
   const keys = (e: React.KeyboardEvent) => {
@@ -78,7 +84,7 @@ export function TextPrompt({
         {note && <p className="name-path">{note}</p>}
         <div className="matter-foot">
           <span>{multiline ? "⌘⏎ confirm" : "⏎ confirm"} · esc cancel</span>
-          <button className="act" onClick={submit} disabled={!value.trim()}>
+          <button className="act" onClick={submit} disabled={!value.trim() && !allowEmpty}>
             {confirm}
           </button>
         </div>

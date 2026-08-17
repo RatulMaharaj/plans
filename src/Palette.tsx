@@ -46,6 +46,8 @@ type Props = {
   onReload: () => void;
   /** Built in App, since they need the repo, its status and its branches. */
   gitCommands: { id: string; label: string; hint?: string; run: () => void }[];
+  canInsertHtml: boolean;
+  onInsertHtml: () => void;
   hasMatter: boolean;
   canEdit: boolean;
   onMatter: () => void;
@@ -96,6 +98,15 @@ function buildCommands(p: Props): Command[] {
       group: "Plans",
       label: p.hasMatter ? "Edit frontmatter" : "Add frontmatter",
       run: p.onMatter,
+    });
+  }
+  if (p.canInsertHtml) {
+    add({
+      id: "html",
+      group: "Plans",
+      label: "Insert HTML…",
+      hint: "at the cursor",
+      run: p.onInsertHtml,
     });
   }
   add({
@@ -174,7 +185,7 @@ function buildCommands(p: Props): Command[] {
   // Sliders become a nudge in each direction, clamped to the same ranges the
   // Settings page uses.
   const nudge = (
-    key: "size" | "measure" | "leading" | "watchSeconds" | "treeSize",
+    key: "size" | "measure" | "leading" | "watchSeconds" | "treeSize" | "codeSize",
     group: string,
     label: string,
     unit = "",
@@ -200,6 +211,7 @@ function buildCommands(p: Props): Command[] {
   nudge("size", "Typeface", "Size", "px");
   nudge("measure", "Typeface", "Line length", "ch");
   nudge("leading", "Typeface", "Line height");
+  nudge("codeSize", "Typeface", "Code size", "px");
   nudge("watchSeconds", "Panels", "Outside-edit check", "s");
   nudge("treeSize", "Files", "Tree text size", "px");
 
@@ -214,6 +226,8 @@ function buildCommands(p: Props): Command[] {
       | "showIgnored"
       | "showExtensions"
       | "showFrontmatter"
+      | "sourceLineNumbers"
+      | "sourceWrap"
       | "showIndex"
       | "showGit"
       | "showStatusBar",
@@ -238,6 +252,8 @@ function buildCommands(p: Props): Command[] {
   toggle("showIgnored", "Files", "Gitignored files");
   toggle("showExtensions", "Files", "File extensions");
   toggle("showFrontmatter", "Files", "Frontmatter block");
+  toggle("sourceLineNumbers", "Source", "Line numbers");
+  toggle("sourceWrap", "Source", "Wrap long lines");
   toggle("showIndex", "Panels", "File tree", "⌘B");
   toggle("showGit", "Panels", "Git panel", "⌘G");
   toggle("showStatusBar", "Panels", "Status bar");

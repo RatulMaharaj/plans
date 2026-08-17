@@ -59,6 +59,10 @@ export const api = {
   readPlan: (repo: string, relPath: string) =>
     invoke<{ content: string; stamp: string }>("read_plan", { repo, relPath }),
 
+  /** An image from the repository, inlined as a data URL. */
+  readAsset: (repo: string, relPath: string) =>
+    invoke<string>("read_asset", { repo, relPath }),
+
   /** The current fingerprint, without reading the file back. */
   statPlan: (repo: string, relPath: string) =>
     invoke<string>("stat_plan", { repo, relPath }),

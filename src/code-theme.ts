@@ -67,7 +67,7 @@ const chrome = EditorView.theme({
     background: "var(--paper)",
     color: "var(--code-name)",
     fontFamily: "var(--mono)",
-    fontSize: "calc(var(--doc-size) * 0.72)",
+    fontSize: "var(--code-size, 12px)",
   },
   "&.cm-focused": { outline: "none" },
   ".cm-content": {

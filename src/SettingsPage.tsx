@@ -165,6 +165,14 @@ export function SettingsPage({
             onChange={(leading) => onChange({ leading })}
             fallback={DEFAULTS.leading}
           />
+          <Slider
+            label="Code size"
+            value={s.codeSize}
+            display={`${s.codeSize}px · code blocks and inline code`}
+            {...RANGES.codeSize}
+            onChange={(codeSize) => onChange({ codeSize })}
+            fallback={DEFAULTS.codeSize}
+          />
           <div className="specimen-block">
             A plan is mostly prose. Set it so a paragraph reads without effort,
             then leave it alone.
@@ -245,6 +253,21 @@ export function SettingsPage({
             hint="Keeps YAML out of the page, behind a header button. Off leaves it in the editor."
             on={s.showFrontmatter}
             onChange={(showFrontmatter) => onChange({ showFrontmatter })}
+          />
+        </Group>
+
+        {/* ---- source ---------------------------------------------------- */}
+        <Group name="Source" hint="The raw markdown, behind ⌘2.">
+          <Toggle
+            label="Line numbers"
+            on={s.sourceLineNumbers}
+            onChange={(sourceLineNumbers) => onChange({ sourceLineNumbers })}
+          />
+          <Toggle
+            label="Wrap long lines"
+            hint="Off runs lines to the window edge and scrolls sideways, ignoring the line length."
+            on={s.sourceWrap}
+            onChange={(sourceWrap) => onChange({ sourceWrap })}
           />
         </Group>
 

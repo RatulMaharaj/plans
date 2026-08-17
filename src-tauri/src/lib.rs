@@ -310,6 +310,42 @@ fn read_plan(repo: String, rel_path: String) -> R<PlanText> {
     })
 }
 
+/// An image (or any small asset) from the repository, as a data URL.
+///
+/// The asset protocol is the usual route for this, but it depends on scope
+/// configuration and a custom scheme that the dev webview would not load. The
+/// files are already ours to read, so this returns the bytes directly and
+/// removes the protocol from the picture entirely.
+#[tauri::command]
+fn read_asset(repo: String, rel_path: String) -> R<String> {
+    use base64::Engine;
+    let p = safe_join(&repo, &rel_path)?;
+    let bytes =
+        std::fs::read(&p).map_err(|e| format!("could not read {rel_path}: {e}"))?;
+    // Cap it: a data URL for something enormous would only stall the webview.
+    if bytes.len() > 12 * 1024 * 1024 {
+        return Err(format!("{rel_path} is too large to inline"));
+    }
+    let mime = match p
+        .extension()
+        .map(|s| s.to_string_lossy().to_ascii_lowercase())
+        .unwrap_or_default()
+        .as_str()
+    {
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "svg" => "image/svg+xml",
+        "webp" => "image/webp",
+        "avif" => "image/avif",
+        "bmp" => "image/bmp",
+        "ico" => "image/x-icon",
+        _ => "application/octet-stream",
+    };
+    let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
+    Ok(format!("data:{mime};base64,{b64}"))
+}
+
 /// The current fingerprint without paying to send the contents back.
 #[tauri::command]
 fn stat_plan(repo: String, rel_path: String) -> R<String> {
@@ -585,6 +621,7 @@ pub fn run() {
             open_repo,
             list_plans,
             stat_plan,
+            read_asset,
             read_plan,
             write_plan,
             create_plan,

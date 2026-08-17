@@ -11,6 +11,8 @@ import { FileTree, displayName, MARK_WORD, type Mark } from "./FileTree";
 import { FrontmatterSheet } from "./Frontmatter";
 import { NameSheet } from "./NameSheet";
 import { TextPrompt } from "./TextPrompt";
+import { SourceView } from "./SourceView";
+import { htmlBridge, type HtmlEdit } from "./html-view";
 import { joinFrontmatter, splitFrontmatter } from "./matter";
 import {
   applySettings,
@@ -91,6 +93,8 @@ export default function App() {
     run: (value: string) => void;
   }>(null);
   const [branches, setBranches] = useState<string[]>([]);
+  /** A fragment of HTML open for editing, or null. */
+  const [htmlEdit, setHtmlEdit] = useState<HtmlEdit | null>(null);
   /**
    * The buffer model, in the manner of vim: the file is never locked, and what
    * we hold is a copy taken at `stamp`. Anything else — an agent in a terminal,
@@ -132,6 +136,14 @@ export default function App() {
     applySettings(settings);
     saveSettings(settings);
   }, [settings]);
+
+  // Double-clicking any rendered HTML asks to edit its source.
+  useEffect(() => {
+    htmlBridge.request = setHtmlEdit;
+    return () => {
+      htmlBridge.request = null;
+    };
+  }, []);
 
   // --- boot ----------------------------------------------------------------
   useEffect(() => {
@@ -409,19 +421,28 @@ export default function App() {
   );
 
   /**
-   * Switching views. Coming back to the rich editor rebuilds it, since the text
-   * may have been rewritten wholesale in Source.
+   * Switching views.
+   *
+   * Coming back from Source only rebuilds the rich editor if the text actually
+   * changed there. Rebuilding is expensive — the document is reparsed, every
+   * code block gets a fresh CodeMirror, every diagram re-renders — and doing it
+   * on a glance at the source made switching feel slow for no reason.
    */
+  const sourceOnEntry = useRef<string | null>(null);
+
   const goto = useCallback(
     (next: View) => {
       setView((prev) => {
+        if (next === "source" && prev !== "source") sourceOnEntry.current = source;
         if (next === "write" && prev === "source" && activePath) {
-          setDocKey(`${activeRepoPath}::${activePath}::${Date.now()}`);
+          const changed = sourceOnEntry.current !== null && sourceOnEntry.current !== source;
+          if (changed) setDocKey(`${activeRepoPath}::${activePath}::${Date.now()}`);
+          sourceOnEntry.current = null;
         }
         return next;
       });
     },
-    [activePath, activeRepoPath],
+    [activePath, activeRepoPath, source],
   );
 
   /** Editing the metadata block saves on the same terms as editing the prose. */
@@ -1265,22 +1286,33 @@ export default function App() {
                     ))}
                   </dl>
                 </div>
-              ) : view === "source" ? (
-                <textarea
-                  className="source"
-                  value={source}
-                  spellCheck={settings.spellcheck}
-                  onChange={(e) => onSourceChange(e.target.value)}
-                />
-              ) : view === "write" ? (
-                <Editor
-                  docKey={docKey}
-                  repo={activeRepo?.path ?? ""}
-                  relPath={activePath}
-                  initialValue={content}
-                  spellcheck={settings.spellcheck}
-                  onChange={onChange}
-                />
+              ) : view === "source" || view === "write" ? (
+                <>
+                  {/*
+                    Both surfaces stay mounted and the hidden one is put aside
+                    with CSS. Unmounting the page meant rebuilding Milkdown on
+                    every glance at the source, which is what made switching
+                    feel slow; hiding costs a little memory and nothing else.
+                  */}
+                  <div className={`surface ${view === "write" ? "" : "aside"}`}>
+                    <Editor
+                      docKey={docKey}
+                      repo={activeRepo?.path ?? ""}
+                      relPath={activePath}
+                      initialValue={content}
+                      spellcheck={settings.spellcheck}
+                      onChange={onChange}
+                    />
+                  </div>
+                  <div className={`surface ${view === "source" ? "" : "aside"}`}>
+                    <SourceView
+                      value={source}
+                      onChange={onSourceChange}
+                      settings={settings}
+                      docKey={docKey}
+                    />
+                  </div>
+                </>
               ) : (
                 <div className="editor-host">
                   <DiffView
@@ -1341,6 +1373,23 @@ export default function App() {
         </footer>
       )}
 
+      {htmlEdit && (
+        <TextPrompt
+          title="HTML"
+          multiline
+          allowEmpty
+          initial={htmlEdit.value}
+          placeholder={'<div align="center">'}
+          note="Written back as markdown, exactly as typed. Empty removes it."
+          confirm="Apply"
+          onCancel={() => setHtmlEdit(null)}
+          onSubmit={(value) => {
+            htmlBridge.apply?.({ ...htmlEdit, value });
+            setHtmlEdit(null);
+          }}
+        />
+      )}
+
       {asking && (
         <TextPrompt
           title={asking.title}
@@ -1395,6 +1444,17 @@ export default function App() {
         onView={goto}
         zen={zen}
         onZen={() => setZen((z) => !z)}
+        canInsertHtml={view === "write" && !!activePath}
+        onInsertHtml={() =>
+          setAsking({
+            title: "Insert HTML",
+            placeholder: '<div align="center">',
+            note: "Goes in at the cursor, one node per line, exactly as typed.",
+            confirm: "Insert",
+            multiline: true,
+            run: (value) => htmlBridge.insert?.(value),
+          })
+        }
         onReload={() => void reloadAll()}
         gitCommands={gitCommands}
         hasMatter={matter !== null}
