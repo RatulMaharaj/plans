@@ -1446,10 +1446,9 @@ diffs-container {
 /* Wrapping on: the source keeps the reading measure, like the page. Wrapping
    off: the measure has nothing to do, so the text runs to the window edge and
    scrolls sideways instead. */
-/* The source is not a page, and does not pretend to be one: the gutter sits at
-   the window's edge where an editor puts it, rather than floating in the middle
-   of the window with the text column. The text itself still respects the
-   reading measure when it wraps — a line of markdown is still a line to read. */
+/* Centred like the page. The source is still something to read, and a column
+   in the middle of the window reads better than one pinned to its left edge —
+   the gutter travels with the column rather than sitting apart from it. */
 .source {
   /* What the shared CodeMirror theme should paint here — including the
      gutter, which otherwise keeps the code block's ground. */
@@ -1458,12 +1457,10 @@ diffs-container {
   min-height: 0;
   overflow: hidden;
   background: var(--paper);
-  padding: 0;
+  padding: 0 max(28px, calc((100% - var(--doc-measure)) / 2));
 }
-/* Wrapping on: the text is capped at the measure, the gutter stays left. */
-.source:not(.nowrap) .cm-content { max-width: var(--doc-measure); }
-/* With the numbers turned off there is no gutter to stand in for the margin. */
-.source.no-numbers .cm-content { padding-left: 28px; }
+/* Wrapping off: the measure has nothing to do, so lines run to the edge. */
+.source.nowrap { padding: 0 28px; }
 .source .cm-editor { height: 100%; }
 .source .cm-editor.cm-focused { outline: none; }
 

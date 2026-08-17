@@ -51,13 +51,11 @@ const surface = EditorView.theme({
     lineHeight: "1.75",
     padding: "26px 0",
   },
-  ".cm-content": { caretColor: "var(--ink)", paddingLeft: "0" },
+  ".cm-content": { caretColor: "var(--ink)" },
   ".cm-gutters": {
     background: "var(--paper)",
     color: "var(--ink-3)",
     border: "none",
-    // Off the window's edge, but not by much: this is a margin, not a column.
-    paddingLeft: "14px",
     paddingRight: "12px",
   },
   ".cm-activeLineGutter": { background: "transparent", color: "var(--ink-2)" },
@@ -179,9 +177,7 @@ export function SourceView({ value, onChange, settings, docKey, active }: Props)
 
   return (
     <div
-      className={`source ${settings.sourceWrap ? "" : "nowrap"} ${
-        settings.sourceLineNumbers ? "" : "no-numbers"
-      }`}
+      className={`source ${settings.sourceWrap ? "" : "nowrap"}`}
       ref={host}
     />
   );
