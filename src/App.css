@@ -24,6 +24,21 @@
   --git-mod: #9a6b12;
   --git-staged: #3d5ba9;
   --shadow: 0 1px 2px rgb(23 24 27 / 0.06), 0 8px 28px rgb(23 24 27 / 0.1);
+
+  /* Code, and only code, gets hue. Day: printer's inks on warm white —
+     mulberry, indigo, umber, moss, ochre. Held below full saturation so a
+     block reads as a passage of text rather than a light show. */
+  --code-keyword: #8a3a62;
+  --code-fn: #2f5d8c;
+  --code-type: #7a5230;
+  --code-string: #4b7a3f;
+  --code-number: #9a6b12;
+  --code-name: #2c2e33;
+  --code-punct: #8d939b;
+  --code-comment: #a0a6ad;
+  /* The diff's two: moss and oxblood, the same inks at printing strength. */
+  --diff-add: #3f7a45;
+  --diff-del: #a8322c;
 }
 
 :root[data-theme="sepia"] {
@@ -39,33 +54,62 @@
   --git-mod: #8c5a0f;
   --git-staged: #4a5288;
   --shadow: 0 1px 2px rgb(51 41 31 / 0.08), 0 8px 28px rgb(51 41 31 / 0.14);
+
+  /* Sepia: the same five inks, warmed and darkened to sit on aged paper. */
+  --code-keyword: #7b3b57;
+  --code-fn: #2f5570;
+  --code-type: #6b4a22;
+  --code-string: #4e6e33;
+  --code-number: #8c5a0f;
+  --code-name: #403427;
+  --code-punct: #8c7d67;
+  --code-comment: #9c8b72;
+  --diff-add: #46662f;
+  --diff-del: #94322a;
 }
 
 :root[data-theme="night"] {
-  /* Ink is deliberately not white — pure white on near-black halates. */
-  --paper: #121316;
-  --raised: #1a1b1f;
-  --shade: #202126;
-  --ink: #c8c5be;
-  --ink-2: #8b8880;
-  --ink-3: #5c5a55;
-  --rule: #26272b;
-  --rule-strong: #34353a;
-  --git-new: #7fa46a;
-  --git-mod: #c39a4a;
-  --git-staged: #8296cf;
+  /* Ink is deliberately not white — pure white on near-black halates — but it
+     sits well above the old #c8c5be, which was too dim to read at length.
+     Paper drops a shade at the same time, so the gap widens from both ends. */
+  --paper: #0f1013;
+  --raised: #191a1e;
+  --shade: #24252b;
+  --ink: #e6e3dc;
+  --ink-2: #a5a29a;
+  --ink-3: #74716b;
+  --rule: #2c2d32;
+  --rule-strong: #41424a;
+  --git-new: #8fb877;
+  --git-mod: #d8ab52;
+  --git-staged: #93a8e4;
   --shadow: 0 1px 2px rgb(0 0 0 / 0.4), 0 8px 28px rgb(0 0 0 / 0.5);
+
+  /* Night: the same five, lifted to pastels. Nothing reaches white — pure
+     white on near-black halates, which is why the ink doesn't either. */
+  --code-keyword: #e2a3c4;
+  --code-fn: #a2c6ee;
+  --code-type: #e6c090;
+  --code-string: #accf96;
+  --code-number: #eecb86;
+  --code-name: #e6e3dc;
+  --code-punct: #918e87;
+  --code-comment: #7a7770;
+  --diff-add: #8fc47c;
+  --diff-del: #e8776e;
 }
 
 :root {
   --mono: "Space Mono", ui-monospace, SFMono-Regular, monospace;
   /* Overwritten at runtime by applyType(). */
   --doc-font: "Vollkorn", Georgia, serif;
-  --doc-size: 18.36px;
-  --doc-measure: 66ch;
+  --doc-size: 16.32px;
+  --doc-measure: 70ch;
 
   --rail: 46px;
-  --index-w: 268px;
+  --files-w: 232px;
+  /* Overwritten at runtime by applySettings(). */
+  --tree-size: 12.5px;
   --git-w: 316px;
   --bar: 30px;
 
@@ -87,7 +131,13 @@ body {
   transition: background-color 140ms ease, color 140ms ease;
 }
 
+/* Selection is ours, not the system accent colour — WKWebView otherwise paints
+   it in whatever hue the Mac is set to, which is rarely on the paper. */
+::selection { background: var(--shade); color: var(--ink); }
+
 button, input, select, textarea { font: inherit; color: inherit; }
+/* No default button face — chrome is paper unless a rule says otherwise. */
+button { background: transparent; }
 
 :focus-visible {
   outline: 1.5px solid var(--ink);
@@ -126,11 +176,16 @@ button, input, select, textarea { font: inherit; color: inherit; }
 
 .body {
   display: grid;
-  grid-template-columns: var(--index-w) minmax(0, 1fr);
+  grid-template-columns: var(--files-w) minmax(0, 1fr);
   min-height: 0;
   position: relative;
 }
-.body.with-git { grid-template-columns: var(--index-w) minmax(0, 1fr) var(--git-w); }
+.body.with-git { grid-template-columns: var(--files-w) minmax(0, 1fr) var(--git-w); }
+
+/* Index collapsed (⌘⌃B) — the column leaves the grid entirely. */
+.body.no-files { grid-template-columns: minmax(0, 1fr); }
+.body.no-files.with-git { grid-template-columns: minmax(0, 1fr) var(--git-w); }
+.body.no-files > .files { display: none; }
 
 /* --- top rail ------------------------------------------------------------ */
 
@@ -138,7 +193,8 @@ button, input, select, textarea { font: inherit; color: inherit; }
   display: flex;
   align-items: center;
   gap: 14px;
-  padding: 0 14px;
+  /* Left inset clears the traffic lights, which now sit over the rail. */
+  padding: 0 14px 0 82px;
   border-bottom: 1px solid var(--rule);
   background: var(--paper);
 }
@@ -159,30 +215,12 @@ button, input, select, textarea { font: inherit; color: inherit; }
   background: var(--rule);
 }
 
-.repo-select {
-  appearance: none;
-  background: transparent;
-  border: 0;
-  padding: 4px 16px 4px 4px;
-  font-family: var(--mono);
-  font-size: 11px;
-  letter-spacing: 0.06em;
-  color: var(--ink);
-  cursor: pointer;
-  max-width: 220px;
-  /* A typographic caret rather than an icon. */
-  background-image: linear-gradient(transparent, transparent);
-}
-.repo-select:hover { color: var(--ink); }
-.caret { color: var(--ink-3); font-size: 9px; margin-left: -12px; pointer-events: none; }
-
 .branch {
   font-family: var(--mono);
   font-size: 10px;
   letter-spacing: 0.06em;
   color: var(--ink-3);
 }
-.branch::before { content: "⌥ "; opacity: 0.5; }
 
 .rail-spacer { flex: 1; }
 
@@ -215,15 +253,15 @@ button, input, select, textarea { font: inherit; color: inherit; }
 }
 
 /* ===========================================================================
-   Index — the signature element
+   Files — the tree
    ---------------------------------------------------------------------------
-   A manuscript index, not a file tree. Each entry sets its title in the
-   reading face so the index previews the typeface choice, with a monospace
-   sub-line carrying the git mark and the folder it came from. Because state is
-   ambient here, the git panel is only needed to *act*, never to *know*.
+   Repositories at the top level, their markdown nested below in real folder
+   structure. Set small and quiet in the ledger voice so it recedes beside the
+   page; the git mark on each row is the one place colour is allowed, which is
+   why the git panel is only needed to *act*, never to *know*.
    =========================================================================== */
 
-.index {
+.files {
   border-right: 1px solid var(--rule);
   display: flex;
   flex-direction: column;
@@ -231,111 +269,145 @@ button, input, select, textarea { font: inherit; color: inherit; }
   background: var(--paper);
 }
 
-.index-head {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 8px;
-  padding: 16px 16px 10px;
-}
-
+/* Search sits at the very top — it is the way into a big tree. */
 .filter {
-  width: 100%;
   background: transparent;
   border: 0;
   border-bottom: 1px solid var(--rule);
-  padding: 0 0 7px;
-  margin: 0 16px 4px;
-  width: calc(100% - 32px);
+  padding: 0 0 6px;
+  margin: 14px 12px 8px;
+  width: calc(100% - 24px);
   font-family: var(--mono);
-  font-size: 11px;
+  font-size: 10.5px;
   letter-spacing: 0.04em;
   color: var(--ink);
 }
-.filter::placeholder { color: var(--ink-3); letter-spacing: 0.1em; text-transform: uppercase; font-size: 10px; }
-.filter:focus { outline: 0; border-bottom-color: var(--ink); }
+.filter::placeholder { color: var(--ink-3); letter-spacing: 0.1em; text-transform: uppercase; font-size: 9.5px; }
+.filter:focus { outline: 0; border-bottom-color: var(--ink-3); }
 
-.scopes {
+.entries { overflow-y: auto; padding: 2px 0 20px; flex: 1; }
+
+.tree { display: flex; flex-direction: column; }
+.tree-repo { display: flex; flex-direction: column; }
+.tree-repo + .tree-repo { margin-top: 6px; border-top: 1px solid var(--rule); padding-top: 6px; }
+
+/* One row type for repos, folders and files. No disclosure arrows and no
+   status glyphs: a folder is told from a file by its register — tracked
+   uppercase against sentence case — and git state is carried by the colour of
+   the name plus a dot in the margin. Nothing in the tree is punctuation. */
+.row {
+  position: relative;
   display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
-  padding: 10px 16px 2px;
-}
-.scope {
-  background: none;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
   border: 0;
-  padding: 0;
+  padding: 3px 10px 3px 18px;
+  text-align: left;
   cursor: pointer;
   font-family: var(--mono);
-  font-size: 10px;
-  letter-spacing: 0.08em;
+  font-size: var(--tree-size, 12.5px);
+  line-height: 1.5;
+  letter-spacing: 0.02em;
   color: var(--ink-3);
-  border-bottom: 1px solid transparent;
+  white-space: nowrap;
 }
-.scope.on { color: var(--ink-2); border-bottom-color: var(--rule-strong); }
+.row:hover { color: var(--ink-2); }
+.row-name { overflow: hidden; text-overflow: ellipsis; }
 
-.entries { overflow-y: auto; padding: 8px 0 24px; flex: 1; }
-
-.entry {
-  display: block;
-  width: 100%;
-  text-align: left;
+/* The margin dot: the only mark left, and only when something has moved. */
+.row.file::before {
+  content: "";
+  position: absolute;
+  left: 8px;
+  top: 50%;
+  width: 4px;
+  height: 4px;
+  margin-top: -2px;
+  border-radius: 50%;
   background: transparent;
-  border: 0;
-  border-top: 1px solid var(--rule);
-  padding: 11px 16px 11px 16px;
-  cursor: pointer;
-  position: relative;
-  transition: background-color 100ms ease;
 }
-.entry:first-child { border-top: 0; }
-.entry:hover { background: var(--shade); }
+.row.file.new::before { background: var(--git-new); }
+.row.file.mod::before { background: var(--git-mod); }
+.row.file.staged::before { background: var(--git-staged); }
 
-/* Active gets an ink bar in the margin — the ledger's tick mark. */
-.entry.active::before {
+/* Folders take the ledger voice, which is what distinguishes them from files
+   now that there is no arrow. Open ones sit a shade stronger than closed. */
+.row.dir {
+  font-size: calc(var(--tree-size, 12.5px) - 1.5px);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+  padding-top: 7px;
+}
+.row.dir:hover { color: var(--ink-2); }
+.row.dir.new .row-name { color: var(--git-new); }
+.row.dir.mod .row-name { color: var(--git-mod); }
+.row.dir.staged .row-name { color: var(--git-staged); }
+
+.row.file { color: var(--ink-2); }
+.row.file:hover { color: var(--ink); }
+.row.file.active { color: var(--ink); }
+.row.file.new .row-name { color: var(--git-new); }
+.row.file.mod .row-name { color: var(--git-mod); }
+.row.file.staged .row-name { color: var(--git-staged); }
+.row.file.clean .row-name { color: inherit; }
+
+/* Active is a rule in the margin — the ledger's tick, not a highlight. */
+.row.file.active::after {
   content: "";
   position: absolute;
   left: 0;
-  top: -1px;
-  bottom: 0;
+  top: 3px;
+  bottom: 3px;
   width: 2px;
   background: var(--ink);
 }
-.entry.active { background: var(--shade); }
 
-.entry-title {
-  font-family: var(--doc-font);
-  font-size: 15px;
-  line-height: 1.3;
+/* The repo row carries its branch on a second line, the way a header block does. */
+.row.repo { align-items: flex-start; padding: 8px 10px 9px 18px; }
+.repo-id { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.repo-name {
+  font-size: calc(var(--tree-size, 12.5px) - 1px);
+  letter-spacing: 0.13em;
+  text-transform: uppercase;
   color: var(--ink-2);
-  display: block;
   overflow: hidden;
   text-overflow: ellipsis;
-  white-space: nowrap;
 }
-.entry.active .entry-title { color: var(--ink); }
-
-.entry-meta {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  margin-top: 5px;
-  font-family: var(--mono);
-  font-size: 9.5px;
-  letter-spacing: 0.09em;
-  text-transform: uppercase;
+.repo-branch {
+  font-size: calc(var(--tree-size, 12.5px) - 2.5px);
+  letter-spacing: 0.06em;
   color: var(--ink-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
-.entry-folder { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.row.repo.current .repo-name { color: var(--ink); }
 
-/* The git mark: the one place colour is allowed. */
-.mark { font-size: 11px; line-height: 1; width: 7px; flex-shrink: 0; }
-.mark.clean { color: var(--ink-3); }
-.mark.new { color: var(--git-new); }
-.mark.mod { color: var(--git-mod); }
-.mark.staged { color: var(--git-staged); }
+/* A count of what differs from HEAD — so it earns the git colour. */
+.repo-count {
+  margin-left: auto;
+  padding-left: 8px;
+  font-size: calc(var(--tree-size, 12.5px) - 2px);
+  color: var(--git-mod);
+  font-variant-numeric: tabular-nums;
+}
+.row.repo.current .repo-name { color: var(--ink); }
+.none.small { font-size: 10px; padding: 4px 22px; }
 
-.index-foot { padding: 10px 16px; border-top: 1px solid var(--rule); }
+/* The status bar's git dot, matching the tree's margin dots. */
+.bar-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  display: inline-block;
+  background: var(--ink-3);
+}
+.bar-dot.new { background: var(--git-new); }
+.bar-dot.mod { background: var(--git-mod); }
+.bar-dot.staged { background: var(--git-staged); }
+
+.files-foot { padding: 8px 12px; border-top: 1px solid var(--rule); }
 
 .new-plan {
   width: 100%;
@@ -390,25 +462,82 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .page-head .rail-btn:hover { color: var(--git-mod); }
 
 .editor-host { flex: 1; overflow-y: auto; min-height: 0; }
+/* An empty diff has nothing to scroll, so it fills and centres instead. */
+.editor-host:has(> .diff-empty) { display: grid; }
 
 .blank {
   flex: 1;
   display: grid;
   place-items: center;
   align-content: center;
-  gap: 10px;
+  gap: 22px;
   text-align: center;
   padding: 40px;
 }
 .blank-line {
-  font-family: var(--doc-font);
-  font-size: 19px;
+  font-family: var(--mono);
+  font-size: 14.5px;
+  letter-spacing: 0.03em;
   color: var(--ink-2);
-  max-width: 34ch;
-  line-height: 1.5;
+  max-width: 44ch;
+  line-height: 1.6;
+  margin: 0;
 }
 
+/* The way in, for anyone who would rather not reach for the mouse. */
+.blank-keys {
+  display: grid;
+  gap: 5px 0;
+  margin: 0;
+  text-align: left;
+}
+.blank-key {
+  display: grid;
+  grid-template-columns: 5.5em 1fr;
+  align-items: baseline;
+  gap: 14px;
+  font-family: var(--mono);
+  font-size: 12.5px;
+  letter-spacing: 0.03em;
+}
+.blank-key dt {
+  justify-self: end;
+  color: var(--ink-2);
+  font-variant-numeric: tabular-nums;
+}
+.blank-key dd { margin: 0; color: var(--ink-3); }
+
 /* --- live diff ------------------------------------------------------------ */
+
+/* Empty diffs get the same treatment as the empty page: one quiet line, and a
+   sentence explaining what would have to happen for something to appear. */
+/* The host is a scroll container, so the message centres on the height it is
+   given rather than on the flex line. */
+.diff-empty {
+  min-height: 100%;
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: 10px;
+  text-align: center;
+  padding: 40px;
+}
+.diff-empty-line {
+  margin: 0;
+  font-family: var(--mono);
+  font-size: 14.5px;
+  letter-spacing: 0.03em;
+  color: var(--ink-2);
+}
+.diff-empty-hint {
+  margin: 0;
+  max-width: 46ch;
+  font-family: var(--mono);
+  font-size: 11px;
+  line-height: 1.65;
+  letter-spacing: 0.02em;
+  color: var(--ink-3);
+}
 
 .diff-state {
   padding: 34px 28px;
@@ -421,13 +550,13 @@ button, input, select, textarea { font: inherit; color: inherit; }
 
 .diff-surface {
   padding: 20px 24px 45vh;
-  font-size: 12px;
 }
-/* The diff is machine output, so it stays in the ledger's voice rather than
-   inheriting the reading face. */
-.diff-surface :is(pre, code, .diffs, [data-diffs]) {
-  font-family: var(--mono) !important;
-}
+/* The diff stays in the ledger's voice rather than inheriting the reading face,
+   but that is set through --diffs-font-family on diffs-container, never by
+   overriding inner elements: the editor measures character width from the
+   container's font to place the caret and, in split view, the columns. Restyle
+   the text underneath it and the caret lands in the wrong place. */
+
 
 /* ===========================================================================
    Status bar
@@ -467,7 +596,7 @@ button, input, select, textarea { font: inherit; color: inherit; }
   border-bottom: 1px solid var(--rule-strong);
 }
 .settings-title {
-  font-family: var(--doc-font);
+  font-family: var(--mono);
   font-size: 30px;
   font-weight: 600;
   letter-spacing: -0.015em;
@@ -731,20 +860,7 @@ input[type="range"]::-webkit-slider-thumb {
 .git-head { padding: 14px 16px 12px; border-bottom: 1px solid var(--rule); }
 
 .branch-row { display: flex; align-items: center; gap: 8px; margin: 8px 0 12px; }
-.branch-select {
-  flex: 1;
-  min-width: 0;
-  appearance: none;
-  background: transparent;
-  border: 0;
-  border-bottom: 1px solid var(--rule);
-  padding: 0 0 6px;
-  font-family: var(--mono);
-  font-size: 11px;
-  letter-spacing: 0.05em;
-  color: var(--ink);
-  cursor: pointer;
-}
+/* The branch picker itself is .dd.wide — see the dropdown section. */
 
 .sync { display: flex; gap: 8px; }
 .ghost {
@@ -894,11 +1010,11 @@ input[type="range"]::-webkit-slider-thumb {
 .toast.error { color: var(--git-mod); border-color: var(--git-mod); }
 
 /* ===========================================================================
-   Narrow windows: the index and git panel fold away before the page does.
+   Narrow windows: the tree and git panel fold away before the page does.
    =========================================================================== */
 
 @media (max-width: 1100px) {
-  .body.with-git { grid-template-columns: var(--index-w) minmax(0, 1fr); }
+  .body.with-git { grid-template-columns: var(--files-w) minmax(0, 1fr); }
   .body.with-git .git {
     position: absolute;
     right: 0;
@@ -912,14 +1028,578 @@ input[type="range"]::-webkit-slider-thumb {
 
 @media (max-width: 820px) {
   .body, .body.with-git { grid-template-columns: minmax(0, 1fr); }
-  .index {
+  .files {
     position: absolute;
     left: 0;
     top: 0;
     bottom: 0;
-    width: var(--index-w);
+    width: var(--files-w);
     box-shadow: var(--shadow);
     z-index: 21;
   }
-  .index.tucked { display: none; }
+  .files.tucked { display: none; }
 }
+
+/* ===========================================================================
+   Command palette — plans by default, commands behind ">"
+   =========================================================================== */
+
+.palette-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  padding-top: 12vh;
+  background: rgb(0 0 0 / 0.18);
+}
+.palette {
+  width: min(620px, calc(100vw - 64px));
+  display: flex;
+  flex-direction: column;
+  background: var(--raised);
+  border: 1px solid var(--rule-strong);
+  border-radius: 6px;
+  box-shadow: var(--shadow);
+  overflow: hidden;
+}
+.palette-input {
+  border: 0;
+  border-bottom: 1px solid var(--rule);
+  background: transparent;
+  padding: 13px 16px;
+  font-family: var(--mono);
+  font-size: 13px;
+  letter-spacing: 0.02em;
+  color: var(--ink);
+  outline: none;
+}
+.palette-input::placeholder { color: var(--ink-3); }
+
+.palette-list { max-height: 46vh; overflow: auto; padding: 4px 0; }
+.palette-empty {
+  padding: 18px 16px;
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  color: var(--ink-3);
+}
+.palette-row {
+  width: 100%;
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 7px 16px;
+  border: 0;
+  text-align: left;
+  cursor: pointer;
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--ink-2);
+}
+.palette-row.on { background: var(--shade); color: var(--ink); }
+.palette-label { flex: 0 1 auto; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.palette-group {
+  flex: 1 1 auto;
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  color: var(--ink-3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.palette-value {
+  flex: 0 0 auto;
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: lowercase;
+  color: var(--ink-3);
+}
+.palette-foot {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  border-top: 1px solid var(--rule);
+  padding: 7px 16px;
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.11em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+
+/* ===========================================================================
+   Dropdown — the app's own, in place of native <select>
+   =========================================================================== */
+
+.dd { position: relative; display: inline-flex; }
+
+.dd-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  max-width: 240px;
+  border: 1px solid transparent;
+  border-radius: 3px;
+  padding: 4px 8px;
+  cursor: pointer;
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  color: var(--ink);
+  transition: border-color 120ms ease, color 120ms ease;
+}
+.dd-trigger:hover:not(:disabled) { border-color: var(--rule); }
+.dd-trigger:disabled { color: var(--ink-3); cursor: default; }
+.dd.open .dd-trigger { border-color: var(--rule-strong); }
+.dd-value { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dd-caret { font-size: 9px; color: var(--ink-3); }
+
+.dd-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 40;
+  min-width: 100%;
+  max-width: 320px;
+  max-height: 240px;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  padding: 3px 0;
+  background: var(--raised);
+  border: 1px solid var(--rule-strong);
+  border-radius: 4px;
+  box-shadow: var(--shadow);
+}
+.dd-menu.up { top: auto; bottom: calc(100% + 4px); }
+
+.dd-item {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  width: 100%;
+  border: 0;
+  padding: 6px 11px 6px 6px;
+  text-align: left;
+  cursor: pointer;
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  color: var(--ink-2);
+  white-space: nowrap;
+}
+.dd-item.on { background: var(--shade); color: var(--ink); }
+.dd-item.apart { border-top: 1px solid var(--rule); margin-top: 3px; padding-top: 8px; }
+.dd-tick { width: 9px; flex: 0 0 auto; color: var(--ink); text-align: center; }
+.dd-label { flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; }
+.dd-note { flex: 0 0 auto; font-size: 10px; color: var(--ink-3); }
+
+/* The branch picker in the git panel fills its row. */
+.dd.wide, .dd.wide .dd-trigger { display: flex; width: 100%; max-width: none; }
+
+/* ===========================================================================
+   Zen — the page alone (⌘⌃Z)
+   =========================================================================== */
+
+.app.zen { grid-template-rows: var(--rail) minmax(0, 1fr); }
+/* The rail thins to a bare drag strip; its one button appears on approach. */
+.app.zen .rail { border-bottom-color: transparent; background: var(--paper); }
+.app.zen .rail .rail-btn { opacity: 0; transition: opacity 140ms ease; }
+.app.zen .rail:hover .rail-btn { opacity: 1; }
+
+.git-aside {
+  margin: 0;
+  padding: 10px 16px;
+  border-top: 1px solid var(--rule);
+  font-family: var(--mono);
+  font-size: 9.5px;
+  line-height: 1.6;
+  letter-spacing: 0.04em;
+  color: var(--ink-3);
+}
+
+/* --- git panel: open a change, or throw it away -------------------------- */
+
+.change-path { cursor: pointer; text-align: left; }
+.change-path:disabled { cursor: default; }
+/* A deleted file is struck through — there's nothing left to open. */
+.change-name.gone { text-decoration: line-through; opacity: 0.65; }
+
+.change-acts { display: flex; align-items: center; gap: 10px; flex: 0 0 auto; }
+.act.quiet { color: var(--ink-3); }
+.act.quiet:hover:not(:disabled) { color: var(--git-mod); }
+
+/* --- a write that arrived while you were writing ------------------------- */
+
+.conflict {
+  border-bottom: 1px solid var(--git-mod);
+  background: var(--paper);
+  padding: 12px 22px 13px;
+  display: grid;
+  gap: 5px;
+}
+.conflict-line {
+  margin: 0;
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--git-mod);
+}
+.conflict-hint {
+  margin: 0;
+  max-width: 62ch;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  line-height: 1.6;
+  color: var(--ink-3);
+}
+.conflict-acts { display: flex; gap: 8px; margin-top: 5px; }
+.conflict-acts .rail-btn { border-color: var(--rule); }
+
+/* --- right-click menus in the tree --------------------------------------- */
+
+.ctx {
+  position: fixed;
+  z-index: 70;
+  min-width: 178px;
+  display: flex;
+  flex-direction: column;
+  padding: 4px 0;
+  background: var(--raised);
+  border: 1px solid var(--rule-strong);
+  border-radius: 4px;
+  box-shadow: var(--shadow);
+}
+.ctx-path {
+  margin: 0;
+  padding: 5px 12px 7px;
+  max-width: 300px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+.ctx-item {
+  width: 100%;
+  border: 0;
+  padding: 6px 12px;
+  text-align: left;
+  cursor: pointer;
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.03em;
+  color: var(--ink-2);
+  white-space: nowrap;
+}
+.ctx-item:hover { background: var(--shade); color: var(--ink); }
+/* Anything that loses work says so before you click it. */
+.ctx-item.warn:hover { color: var(--git-mod); }
+.ctx-rule { height: 1px; margin: 4px 0; background: var(--rule); }
+
+/* --- frontmatter: a sheet, not part of the page -------------------------- */
+
+.matter-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 55;
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  padding-top: 16vh;
+  background: rgb(0 0 0 / 0.18);
+}
+.matter-sheet {
+  width: min(520px, calc(100vw - 64px));
+  display: flex;
+  flex-direction: column;
+  background: var(--raised);
+  border: 1px solid var(--rule-strong);
+  border-radius: 6px;
+  box-shadow: var(--shadow);
+  overflow: hidden;
+}
+.matter-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  border-bottom: 1px solid var(--rule);
+  padding: 11px 16px;
+}
+.matter-body {
+  display: block;
+  width: 100%;
+  min-height: 180px;
+  border: 0;
+  padding: 14px 16px;
+  background: transparent;
+  resize: vertical;
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.7;
+  letter-spacing: 0.02em;
+  color: var(--ink);
+  white-space: pre;
+}
+.matter-body:focus { outline: 0; }
+.matter-body::placeholder { color: var(--ink-3); }
+.matter-foot {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  border-top: 1px solid var(--rule);
+  padding: 7px 16px;
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.11em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+
+/* --- reset one setting rather than all ----------------------------------- */
+
+.setting-reset {
+  margin-left: 9px;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.11em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+  border-bottom: 1px solid var(--rule-strong);
+}
+.setting-reset:hover { color: var(--ink); border-bottom-color: var(--ink); }
+
+.files:focus { outline: none; }
+
+/* ===========================================================================
+   Diff — @pierre/diffs, wearing the app's paper
+   ---------------------------------------------------------------------------
+   The renderer is a web component: <diffs-container> with a shadow root whose
+   :host block sets --diffs-bg itself, so values inherited from an ancestor lose.
+   Styles from this document targeting the element do win over :host, so the
+   overrides have to land on diffs-container directly.
+
+   It also declares color-scheme: light dark, which makes its light-dark() pairs
+   follow the OS rather than the paper you chose — hence color-scheme here too.
+   =========================================================================== */
+
+.editor-host { background: var(--paper); }
+
+diffs-container {
+  color-scheme: light;
+  background: var(--paper);
+
+  /* Font through the renderer's own token, so what it measures is what it
+     draws. Size and line height are deliberately NOT set: the caret's height
+     comes from them, and a pair that doesn't match the face leaves the caret
+     hanging below the text. Let the library keep its own metrics. */
+  --diffs-font-family: var(--mono);
+  --diffs-bg-caret-override: var(--ink);
+
+  --diffs-bg: var(--paper);
+  --diffs-fg: var(--ink);
+  --diffs-light-bg: var(--paper);
+  --diffs-dark-bg: var(--paper);
+  --diffs-light: var(--ink);
+  --diffs-dark: var(--ink);
+
+  /* Unchanged context and the gutter stay on paper; only changed lines tint. */
+  --diffs-bg-context-override: var(--paper);
+  --diffs-bg-context-gutter-override: var(--paper);
+  --diffs-bg-separator-override: var(--rule);
+
+  /* Additions and deletions stay green and red — in a diff, red means removed,
+     and that reading is worth more than the chrome's colour rule. But they are
+     our green and red, cut for each paper, rather than the renderer's. */
+  --diffs-added-light: var(--diff-add);
+  --diffs-added-dark: var(--diff-add);
+  --diffs-deleted-light: var(--diff-del);
+  --diffs-deleted-dark: var(--diff-del);
+  --diffs-addition-color-override: var(--diff-add);
+  --diffs-deletion-color-override: var(--diff-del);
+}
+
+:root[data-theme="night"] diffs-container { color-scheme: dark; }
+
+/* --- source: the file as it actually is ---------------------------------- */
+
+.source {
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+  border: 0;
+  resize: none;
+  padding: 26px calc((100% - var(--doc-measure)) / 2);
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: calc(var(--doc-size) * 0.72);
+  line-height: 1.75;
+  letter-spacing: 0.01em;
+  tab-size: 2;
+}
+.source:focus { outline: 0; }
+
+/* --- searching the settings --------------------------------------------- */
+
+.settings-filter {
+  width: 100%;
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid var(--rule);
+  padding: 0 0 9px;
+  margin: 0 0 28px;
+  font-family: var(--mono);
+  font-size: 12px;
+  letter-spacing: 0.04em;
+  color: var(--ink);
+}
+.settings-filter:focus { outline: 0; border-bottom-color: var(--ink-3); }
+.settings-filter::placeholder {
+  color: var(--ink-3);
+  text-transform: uppercase;
+  letter-spacing: 0.11em;
+  font-size: 10px;
+}
+
+/* --- asking for a name --------------------------------------------------- */
+
+.name-field {
+  display: block;
+  width: 100%;
+  border: 0;
+  padding: 16px;
+  background: transparent;
+  font-family: var(--mono);
+  font-size: 14px;
+  letter-spacing: 0.02em;
+  color: var(--ink);
+}
+.name-field:focus { outline: 0; }
+.name-field::placeholder { color: var(--ink-3); }
+.name-path {
+  margin: 0;
+  padding: 0 16px 14px;
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  color: var(--ink-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* --- dragging the sidebar's edge ---------------------------------------- */
+
+.files { position: relative; }
+.files-edge {
+  position: absolute;
+  top: 0;
+  right: -3px;
+  bottom: 0;
+  width: 7px;
+  z-index: 12;
+  cursor: col-resize;
+  /* The line under the pointer is the existing border; this only widens the
+     target so the edge is catchable without drawing anything new. */
+  background: transparent;
+}
+.files-edge:hover::after,
+body.resizing .files-edge::after {
+  content: "";
+  position: absolute;
+  left: 3px;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: var(--ink-3);
+}
+/* While dragging, nothing else should take the pointer or select text. */
+body.resizing { cursor: col-resize; user-select: none; }
+body.resizing * { pointer-events: none; }
+body.resizing .files-edge { pointer-events: auto; }
+
+/* ===========================================================================
+   Tabs — the open buffers
+   ---------------------------------------------------------------------------
+   A tab is a bookmark, not a second copy: switching writes what is pending and
+   re-reads from disk, so there is only ever one buffer and it is the file. The
+   dirty dot is the same one the tree uses.
+   =========================================================================== */
+
+.tabs {
+  display: flex;
+  align-items: stretch;
+  gap: 0;
+  overflow-x: auto;
+  border-bottom: 1px solid var(--rule);
+  background: var(--paper);
+  flex: 0 0 auto;
+}
+.tab {
+  display: flex;
+  align-items: center;
+  flex: 0 0 auto;
+  max-width: 220px;
+  border-right: 1px solid var(--rule);
+  position: relative;
+}
+.tab-name {
+  border: 0;
+  padding: 8px 6px 8px 14px;
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  letter-spacing: 0.04em;
+  color: var(--ink-3);
+}
+.tab:hover .tab-name { color: var(--ink-2); }
+.tab.on .tab-name { color: var(--ink); }
+/* The open tab is marked by a rule along its top edge, like a card in a file. */
+.tab.on::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: var(--ink);
+}
+.tab.new .tab-name { color: var(--git-new); }
+.tab.mod .tab-name { color: var(--git-mod); }
+.tab.staged .tab-name { color: var(--git-staged); }
+
+.tab-close {
+  border: 0;
+  padding: 8px 10px 8px 2px;
+  cursor: pointer;
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1;
+  color: transparent;
+}
+.tab:hover .tab-close { color: var(--ink-3); }
+.tab-close:hover { color: var(--ink); }
+
+/* ===========================================================================
+   Scrollbars: present, but not drawn.
+   ---------------------------------------------------------------------------
+   Every scrolling surface here is short and the position is obvious from the
+   text, so the bars are noise against the paper. Scrolling still works by
+   trackpad, wheel, keyboard and drag.
+   =========================================================================== */
+* { scrollbar-width: none; }
+*::-webkit-scrollbar { width: 0; height: 0; display: none; }

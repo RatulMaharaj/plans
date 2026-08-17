@@ -1,5 +1,5 @@
-import type { ReactNode } from "react";
-import { FONTS } from "./fonts";
+import { createContext, isValidElement, useContext, useState, type ReactNode } from "react";
+import { FONTS, MONO_FONTS } from "./fonts";
 import { THEMES } from "./theme";
 import { DEFAULTS, RANGES, type Settings } from "./settings";
 import type { RepoInfo } from "./api";
@@ -14,6 +14,22 @@ type Props = {
   onForgetRepo: (path: string) => void;
 };
 
+/**
+ * The filter query, read by Group so each control can hide itself.
+ *
+ * Controls all take `label` and `hint`, so matching can be done on their props
+ * rather than threading a prop through every call site.
+ */
+const Query = createContext("");
+
+/** Does this element's own text match? Elements without labels never do. */
+function matches(node: ReactNode, q: string): boolean {
+  if (!q) return true;
+  if (!isValidElement(node)) return false;
+  const p = node.props as { label?: string; hint?: string };
+  return `${p.label ?? ""} ${p.hint ?? ""}`.toLowerCase().includes(q);
+}
+
 export function SettingsPage({
   settings: s,
   onChange,
@@ -23,8 +39,10 @@ export function SettingsPage({
   onAddRepo,
   onForgetRepo,
 }: Props) {
+  const [q, setQ] = useState("");
   return (
     <div className="settings">
+      <Query.Provider value={q}>
       <div className="settings-inner">
         <header className="settings-head">
           <h1 className="settings-title">Settings</h1>
@@ -32,6 +50,22 @@ export function SettingsPage({
             Reset to defaults
           </button>
         </header>
+
+        <input
+          className="settings-filter"
+          value={q}
+          placeholder="Search settings"
+          spellCheck={false}
+          autoFocus
+          onChange={(e) => setQ(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Escape" && q) {
+              e.preventDefault();
+              e.stopPropagation();
+              setQ("");
+            }
+          }}
+        />
 
         {/* ---- paper ---------------------------------------------------- */}
         <Group name="Paper" hint="Applies to the whole app, not just the page.">
@@ -82,6 +116,30 @@ export function SettingsPage({
           </div>
         </Group>
 
+        <Group
+          name="Monospace"
+          hint="The chrome, the source view, and code blocks."
+        >
+          <div className="faces">
+            {MONO_FONTS.map((m) => (
+              <button
+                key={m.id}
+                className={`face ${m.id === s.monoId ? "on" : ""}`}
+                onClick={() => onChange({ monoId: m.id })}
+                aria-pressed={m.id === s.monoId}
+              >
+                <span>
+                  <span className="face-name" style={{ fontFamily: m.stack }}>
+                    {m.label}
+                  </span>
+                  <span className="face-note">{m.note}</span>
+                </span>
+                <span className="face-check">●</span>
+              </button>
+            ))}
+          </div>
+        </Group>
+
         <Group name="Measure">
           <Slider
             label="Text size"
@@ -89,6 +147,7 @@ export function SettingsPage({
             display={`${s.size}px`}
             {...RANGES.size}
             onChange={(size) => onChange({ size })}
+            fallback={DEFAULTS.size}
           />
           <Slider
             label="Line length"
@@ -96,6 +155,7 @@ export function SettingsPage({
             display={`${s.measure} characters`}
             {...RANGES.measure}
             onChange={(measure) => onChange({ measure })}
+            fallback={DEFAULTS.measure}
           />
           <Slider
             label="Line height"
@@ -103,6 +163,7 @@ export function SettingsPage({
             display={s.leading.toFixed(2)}
             {...RANGES.leading}
             onChange={(leading) => onChange({ leading })}
+            fallback={DEFAULTS.leading}
           />
           <div className="specimen-block">
             A plan is mostly prose. Set it so a paragraph reads without effort,
@@ -118,11 +179,78 @@ export function SettingsPage({
             on={s.spellcheck}
             onChange={(spellcheck) => onChange({ spellcheck })}
           />
+          <Choice
+            label="Autosave"
+            value={s.autosave}
+            options={[
+              { value: "afterDelay", label: "After a pause" },
+              { value: "onBlur", label: "On focus loss" },
+              { value: "manual", label: "Manual" },
+            ]}
+            onChange={(autosave) =>
+              onChange({ autosave: autosave as "afterDelay" | "onBlur" | "manual" })
+            }
+            hint={
+              s.autosave === "manual"
+                ? "⌘S only. Switching files still writes what's pending."
+                : s.autosave === "onBlur"
+                  ? "Writes when the window loses focus, or on ⌘S."
+                  : undefined
+            }
+          />
+          {s.autosave === "afterDelay" && (
+            <Slider
+              label="Pause before saving"
+              value={s.autosaveDelay}
+              display={`${s.autosaveDelay.toFixed(1)} seconds`}
+              {...RANGES.autosaveDelay}
+              onChange={(autosaveDelay) => onChange({ autosaveDelay })}
+              fallback={DEFAULTS.autosaveDelay}
+            />
+          )}
+        </Group>
+
+        {/* ---- files ------------------------------------------------------ */}
+        <Group name="Files" hint="What the tree down the left shows.">
+          <Toggle
+            label="File extensions"
+            hint="Off shows 'auth plan' rather than 'auth-plan.md'."
+            on={s.showExtensions}
+            onChange={(showExtensions) => onChange({ showExtensions })}
+          />
+          <Toggle
+            label="Gitignored files"
+            hint="Markdown that .gitignore excludes is hidden by default."
+            on={s.showIgnored}
+            onChange={(showIgnored) => onChange({ showIgnored })}
+          />
+          <Slider
+            label="Tree width"
+            value={s.treeWidth}
+            display={`${s.treeWidth}px`}
+            {...RANGES.treeWidth}
+            onChange={(treeWidth) => onChange({ treeWidth })}
+            fallback={DEFAULTS.treeWidth}
+          />
+          <Slider
+            label="Tree text size"
+            value={s.treeSize}
+            display={`${s.treeSize}px`}
+            {...RANGES.treeSize}
+            onChange={(treeSize) => onChange({ treeSize })}
+            fallback={DEFAULTS.treeSize}
+          />
+          <Toggle
+            label="Frontmatter block"
+            hint="Keeps YAML out of the page, behind a header button. Off leaves it in the editor."
+            on={s.showFrontmatter}
+            onChange={(showFrontmatter) => onChange({ showFrontmatter })}
+          />
         </Group>
 
         {/* ---- changes -------------------------------------------------- */}
         <Group
-          name="Changes"
+          name="Diff"
           hint="How the diff against the last commit is drawn."
         >
           <Choice
@@ -163,6 +291,16 @@ export function SettingsPage({
 
         {/* ---- panels --------------------------------------------------- */}
         <Group name="Panels">
+          <Row
+            label="Zen"
+            hint="⌘⇧L hides everything but the page. Escape brings it back."
+          />
+          <Toggle
+            label="File tree"
+            hint="⌘B, or ⌘⌃B while writing. Every open repository's markdown, down the left."
+            on={s.showIndex}
+            onChange={(showIndex) => onChange({ showIndex })}
+          />
           <Toggle
             label="Git panel"
             hint="⌘G. The index marks changed plans whether it's open or not."
@@ -223,6 +361,7 @@ export function SettingsPage({
           </p>
         </Group>
       </div>
+      </Query.Provider>
     </div>
   );
 }
@@ -238,14 +377,37 @@ function Group({
   hint?: string;
   children: ReactNode;
 }) {
+  const q = useContext(Query).trim().toLowerCase();
+
+  // A group whose own name matches keeps all of its contents — that is how the
+  // pickers and specimens, which carry no label of their own, stay reachable.
+  const wholeGroup = !q || `${name} ${hint ?? ""}`.toLowerCase().includes(q);
+  const kids = wholeGroup
+    ? children
+    : (Array.isArray(children) ? children : [children]).filter((c) => matches(c, q));
+
+  if (!wholeGroup && (kids as ReactNode[]).length === 0) return null;
+
   return (
     <section className="settings-group">
       <div className="settings-aside">
         <span className="tag">{name}</span>
         {hint && <p className="settings-hint">{hint}</p>}
       </div>
-      <div className="settings-body">{children}</div>
+      <div className="settings-body">{kids}</div>
     </section>
+  );
+}
+
+/** A row that only tells you something — a shortcut, usually. */
+function Row({ label, hint }: { label: string; hint: string }) {
+  return (
+    <div className="setting-row static">
+      <span className="setting-label">
+        {label}
+        <span className="setting-hint">{hint}</span>
+      </span>
+    </div>
   );
 }
 
@@ -283,15 +445,20 @@ function Choice({
   value,
   options,
   onChange,
+  hint,
 }: {
   label: string;
   value: string;
   options: { value: string; label: string }[];
   onChange: (v: string) => void;
+  hint?: string;
 }) {
   return (
     <div className="setting-row static">
-      <span className="setting-label">{label}</span>
+      <span className="setting-label">
+        {label}
+        {hint && <span className="setting-hint">{hint}</span>}
+      </span>
       <span className="segmented">
         {options.map((o) => (
           <button
@@ -316,6 +483,7 @@ function Slider({
   max,
   step,
   onChange,
+  fallback,
 }: {
   label: string;
   value: number;
@@ -324,12 +492,26 @@ function Slider({
   max: number;
   step: number;
   onChange: (v: number) => void;
+  /** The default. When given and departed from, a reset appears for this one setting. */
+  fallback?: number;
 }) {
+  const moved = fallback !== undefined && value !== fallback;
   return (
     <div className="setting-row static">
       <span className="setting-label">
         {label}
-        <span className="setting-hint">{display}</span>
+        <span className="setting-hint">
+          {display}
+          {moved && (
+            <button
+              className="setting-reset"
+              onClick={() => onChange(fallback)}
+              title={`Back to ${fallback}`}
+            >
+              reset
+            </button>
+          )}
+        </span>
       </span>
       <input
         className="slider"

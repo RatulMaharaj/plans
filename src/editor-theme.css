@@ -25,7 +25,10 @@
   --crepe-color-selected: var(--shade);
   --crepe-color-inline-area: var(--shade);
 
-  --crepe-font-default: var(--doc-font);
+  /* Crepe uses --crepe-font-default for its *UI* — slash menu, language
+     picker, tooltips, toolbar — not for the prose, which sets its own face
+     below. So this is the ledger voice, not the reading face. */
+  --crepe-font-default: var(--mono);
   --crepe-font-title: var(--doc-font);
   --crepe-font-code: var(--mono);
   --crepe-shadow-1: var(--shadow);
@@ -91,3 +94,175 @@
 
 /* Task lists carry most of a plan's meaning; give the checkbox some presence. */
 .editor-host .milkdown .ProseMirror li[data-item-type="task"] { margin: 0.25em 0; }
+
+/* ---------------------------------------------------------------------------
+   Code blocks.
+
+   Type and syntax colours come from src/code-theme.ts, handed to Crepe as a
+   CodeMirror extension — the stock palette is generated into hashed class names
+   at runtime and can't be reached from here. What is left is the frame, drawn
+   to match a blockquote rather than a floating card.
+   --------------------------------------------------------------------------- */
+.editor-host .milkdown milkdown-code-block {
+  --crepe-color-surface: var(--paper);
+  --crepe-color-surface-low: var(--paper);
+}
+.editor-host .milkdown milkdown-code-block .cm-editor {
+  border: 1px solid var(--rule);
+  border-radius: 3px;
+  background: var(--paper);
+}
+.editor-host .milkdown milkdown-code-block .cm-editor.cm-focused {
+  outline: none;
+  border-color: var(--rule-strong);
+}
+/* The language picker reads as chrome, so it takes the ledger voice. */
+.editor-host .milkdown milkdown-code-block .language-picker,
+.editor-host .milkdown milkdown-code-block button {
+  font-family: var(--mono);
+  font-size: 9.5px;
+  letter-spacing: 0.11em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+  background: var(--paper);
+  border-color: var(--rule);
+}
+
+/* Inline code sits in the prose, so it stays quiet: no box, just the face. */
+.editor-host .milkdown .ProseMirror code {
+  background: transparent;
+  padding: 0 0.1em;
+}
+
+/* ---------------------------------------------------------------------------
+   Crepe's floating UI is portalled to the body, outside .editor-host, so it
+   can't inherit the tokens set on .milkdown — it gets them here instead.
+   --------------------------------------------------------------------------- */
+.milkdown-slash-menu,
+.milkdown-block-handle,
+.milkdown-toolbar,
+.milkdown-link-preview,
+.milkdown-link-edit {
+  --crepe-font-default: var(--mono);
+  --crepe-color-surface: var(--raised);
+  --crepe-color-surface-low: var(--shade);
+  --crepe-color-on-surface: var(--ink);
+  --crepe-color-on-surface-variant: var(--ink-2);
+  --crepe-color-outline: var(--rule-strong);
+  --crepe-color-hover: var(--shade);
+  --crepe-color-selected: var(--shade);
+  --crepe-shadow-1: var(--shadow);
+  --crepe-shadow-2: var(--shadow);
+  font-family: var(--mono);
+}
+
+/* Menu rows and the language picker read as chrome: small, tracked, quiet. */
+.milkdown-slash-menu .menu-group li,
+.milkdown-slash-menu .tab-group li {
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.04em;
+}
+.milkdown-slash-menu .menu-group h6,
+.milkdown-slash-menu .tab-group li {
+  font-size: 9.5px;
+  letter-spacing: 0.11em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+
+/* ---------------------------------------------------------------------------
+   No block handle.
+
+   Crepe puts a drag grip and a "+" in the left margin of every block. They
+   belong to a document tool rather than a page, and they twitch as the pointer
+   moves down the text. Hidden rather than disabled, because the same feature
+   provides the slash menu, which stays.
+   --------------------------------------------------------------------------- */
+.milkdown-block-handle { display: none !important; }
+
+/* ---------------------------------------------------------------------------
+   HTML inside markdown: rendered, not printed.
+   --------------------------------------------------------------------------- */
+.editor-host .milkdown .ProseMirror .md-html { display: inline; }
+.editor-host .milkdown .ProseMirror .md-html img { max-width: 100%; height: auto; }
+.editor-host .milkdown .ProseMirror .md-html :is(p, div, picture) { display: block; }
+
+/* A comment is an aside, not prose: a small marker that opens a card. */
+.md-comment { position: relative; display: inline; }
+.md-comment-mark {
+  border: 1px solid var(--rule-strong);
+  border-radius: 2px;
+  padding: 1px 5px;
+  cursor: pointer;
+  vertical-align: 2px;
+  font-family: var(--mono);
+  font-size: 8.5px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+.md-comment-mark:hover { color: var(--ink); border-color: var(--ink-3); }
+.md-comment.open .md-comment-mark { color: var(--ink); border-color: var(--ink); }
+
+.md-comment-card { display: none; }
+.md-comment.open .md-comment-card {
+  display: block;
+  position: absolute;
+  z-index: 30;
+  top: 1.7em;
+  left: 0;
+  width: 300px;
+  padding: 10px 12px 11px;
+  background: var(--raised);
+  border: 1px solid var(--rule-strong);
+  border-radius: 4px;
+  box-shadow: var(--shadow);
+  white-space: pre-wrap;
+}
+.md-comment-who {
+  display: block;
+  margin-bottom: 5px;
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+.md-comment-text {
+  display: block;
+  font-family: var(--mono);
+  font-size: 11px;
+  line-height: 1.6;
+  color: var(--ink-2);
+}
+
+/* ---------------------------------------------------------------------------
+   Mermaid: the diagram sits under its source, as a figure under a caption.
+   --------------------------------------------------------------------------- */
+.editor-host .milkdown .ProseMirror .mermaid-figure {
+  display: flex;
+  justify-content: center;
+  /* Its own figure rather than an extension of the block above: the code
+     block carries its own frame and margins, so a joined edge never lined up. */
+  margin: 10px 0 1.8em;
+  padding: 18px 14px;
+  border: 1px solid var(--rule);
+  border-radius: 3px;
+  background: var(--paper);
+  /* No overflow clipping: the SVG is scaled to fit in fit(), so a diagram is
+     never cropped, and a wide one shrinks rather than being cut off. */
+}
+.editor-host .milkdown .ProseMirror .mermaid-figure svg {
+  max-width: 100%;
+  height: auto;
+  display: block;
+}
+/* A diagram mid-sentence is usually a syntax error, so it says so quietly. */
+.editor-host .milkdown .ProseMirror .mermaid-figure.bad {
+  justify-content: flex-start;
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  color: var(--git-mod);
+}

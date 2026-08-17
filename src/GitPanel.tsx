@@ -1,13 +1,15 @@
 import { useEffect, useState } from "react";
 import { api, type GitStatus, type StatusEntry } from "./api";
+import { Dropdown } from "./Dropdown";
 
 type Props = {
   repo: string;
-  scope: string[];
   status: GitStatus | null;
   busy: string | null;
   onRun: (label: string, fn: () => Promise<unknown>) => void;
   notify: (msg: string, kind?: "info" | "error") => void;
+  /** Open a changed file and show its diff. */
+  onOpen: (relPath: string) => void;
 };
 
 /**
@@ -15,7 +17,7 @@ type Props = {
  * state — the index already carries a mark for every changed plan. That's what
  * makes it safe to leave closed.
  */
-export function GitPanel({ repo, scope, status, busy, onRun, notify }: Props) {
+export function GitPanel({ repo, status, busy, onRun, notify, onOpen }: Props) {
   const [message, setMessage] = useState("");
   const [branches, setBranches] = useState<string[]>([]);
 
@@ -34,8 +36,13 @@ export function GitPanel({ repo, scope, status, busy, onRun, notify }: Props) {
     );
   }
 
-  const staged = status.entries.filter((e) => e.index !== " " && e.index !== "?");
-  const unstaged = status.entries.filter((e) => e.worktree !== " ");
+  // This app edits markdown, so the panel only ever acts on markdown. A repo's
+  // source changes are none of its business, and "stage all" must never mean
+  // "git add ." — it stages exactly the files listed above it.
+  const mine = status.entries.filter((e) => /\.(md|markdown)$/i.test(e.path));
+  const staged = mine.filter((e) => e.index !== " " && e.index !== "?");
+  const unstaged = mine.filter((e) => e.worktree !== " ");
+  const others = status.entries.length - mine.length;
 
   const commit = () => {
     if (!staged.length) return notify("Nothing staged to commit", "error");
@@ -50,23 +57,17 @@ export function GitPanel({ repo, scope, status, busy, onRun, notify }: Props) {
       <div className="git-head">
         <span className="tag">Repository</span>
         <div className="branch-row">
-          <select
-            className="branch-select"
+          <Dropdown
+            className="wide"
+            ariaLabel="Branch"
             value={status.branch}
             disabled={!!busy}
-            aria-label="Branch"
-            onChange={(e) =>
-              onRun(`Switched to ${e.target.value}`, () =>
-                api.gitCheckout(repo, e.target.value),
-              )
-            }
-          >
-            {branches.length ? (
-              branches.map((b) => <option key={b}>{b}</option>)
-            ) : (
-              <option>{status.branch}</option>
-            )}
-          </select>
+            onChange={(b) => onRun(`Switched to ${b}`, () => api.gitCheckout(repo, b))}
+            choices={(branches.length ? branches : [status.branch]).map((b) => ({
+              value: b,
+              label: b,
+            }))}
+          />
         </div>
         <div className="sync">
           <button
@@ -98,6 +99,7 @@ export function GitPanel({ repo, scope, status, busy, onRun, notify }: Props) {
         busy={busy}
         action="Unstage"
         onAction={(paths) => onRun("Unstaged", () => api.gitUnstage(repo, paths))}
+        onOpen={onOpen}
         onAll={
           staged.length
             ? () =>
@@ -115,15 +117,28 @@ export function GitPanel({ repo, scope, status, busy, onRun, notify }: Props) {
         busy={busy}
         action="Stage"
         onAction={(paths) => onRun("Staged", () => api.gitStage(repo, paths))}
+        onOpen={onOpen}
+        onDiscard={(path) => {
+          // Discarding cannot be undone by git, so it asks first.
+          if (!window.confirm(`Throw away your changes to ${path}?`)) return;
+          onRun("Change discarded", () => api.gitDiscard(repo, [path]));
+        }}
         onAll={
           unstaged.length
             ? () =>
                 onRun("Staged all", () =>
-                  api.gitStage(repo, scope.length ? scope : ["."]),
+                  api.gitStage(repo, unstaged.map((e) => e.path)),
                 )
             : undefined
         }
       />
+
+      {others > 0 && (
+        <p className="git-aside">
+          {others} other change{others > 1 ? "s" : ""} in this repository, outside
+          markdown. Not shown, and not touched by anything here.
+        </p>
+      )}
 
       <div className="commit">
         <textarea
@@ -155,6 +170,8 @@ function Section({
   action,
   onAction,
   onAll,
+  onDiscard,
+  onOpen,
 }: {
   title: string;
   entries: StatusEntry[];
@@ -163,6 +180,9 @@ function Section({
   action: string;
   onAction: (paths: string[]) => void;
   onAll?: () => void;
+  /** Present on the unstaged side only: throw the change away. */
+  onDiscard?: (path: string) => void;
+  onOpen?: (path: string) => void;
 }) {
   return (
     <section className="git-section">
@@ -181,19 +201,40 @@ function Section({
         const dir = e.path.includes("/")
           ? e.path.slice(0, e.path.lastIndexOf("/"))
           : "";
+        // A deleted file has nothing to open — its diff is all that's left.
+        const gone = (staged ? e.index : e.worktree) === "D";
         return (
           <div className="change" key={`${staged}-${e.path}`}>
-            <span className="change-path" title={e.path}>
-              <span className="change-name">{e.path.split("/").pop()}</span>
-              {dir && <span className="change-dir">{dir}</span>}
-            </span>
             <button
-              className="act"
-              onClick={() => onAction([e.path])}
-              disabled={!!busy}
+              className="change-path"
+              title={gone ? `${e.path} (deleted)` : `Open ${e.path}`}
+              disabled={!onOpen || gone}
+              onClick={() => onOpen?.(e.path)}
             >
-              {action}
+              <span className={`change-name ${gone ? "gone" : ""}`}>
+                {e.path.split("/").pop()}
+              </span>
+              {dir && <span className="change-dir">{dir}</span>}
             </button>
+            <span className="change-acts">
+              {onDiscard && (
+                <button
+                  className="act quiet"
+                  onClick={() => onDiscard(e.path)}
+                  disabled={!!busy}
+                  title={gone ? "Restore this file" : "Throw this change away"}
+                >
+                  Undo
+                </button>
+              )}
+              <button
+                className="act"
+                onClick={() => onAction([e.path])}
+                disabled={!!busy}
+              >
+                {action}
+              </button>
+            </span>
           </div>
         );
       })}

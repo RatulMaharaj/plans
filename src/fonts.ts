@@ -15,6 +15,47 @@ export type FontChoice = {
 
 export const MONO = `"Space Mono", ui-monospace, SFMono-Regular, monospace`;
 
+/**
+ * Monospaced faces for the chrome and for code blocks.
+ *
+ * Only Space Mono is vendored; the rest are faces macOS already has, so none of
+ * these need the network either.
+ */
+export type MonoChoice = { id: string; label: string; note: string; stack: string };
+
+export const MONO_FONTS: MonoChoice[] = [
+  {
+    id: "space-mono",
+    label: "Space Mono",
+    note: "Quirky, wide — the app's own",
+    stack: MONO,
+  },
+  {
+    id: "system",
+    label: "SF Mono",
+    note: "The system monospace",
+    stack: `ui-monospace, SFMono-Regular, "SF Mono", monospace`,
+  },
+  {
+    id: "menlo",
+    label: "Menlo",
+    note: "Even, unfussy, very legible",
+    stack: `Menlo, Consolas, monospace`,
+  },
+  {
+    id: "monaco",
+    label: "Monaco",
+    note: "Narrow, old Mac terminal",
+    stack: `Monaco, Menlo, monospace`,
+  },
+  {
+    id: "courier",
+    label: "Courier",
+    note: "Typewriter, for drafting",
+    stack: `"Courier New", Courier, monospace`,
+  },
+];
+
 export const FONTS: FontChoice[] = [
   {
     id: "vollkorn",

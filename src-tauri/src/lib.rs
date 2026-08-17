@@ -43,6 +43,42 @@ fn git(repo: &str, args: &[&str]) -> R<String> {
     }
 }
 
+/// The subset of `paths` that .gitignore excludes.
+///
+/// `git check-ignore` exits 1 when nothing matches, which is not an error, so
+/// this drives the process directly rather than going through `git()`.
+fn ignored_paths(repo: &str, paths: &[String]) -> std::collections::HashSet<String> {
+    use std::io::Write;
+    let mut set = std::collections::HashSet::new();
+    if paths.is_empty() {
+        return set;
+    }
+    let Ok(mut child) = Command::new("git")
+        .arg("-C")
+        .arg(repo)
+        .args(["check-ignore", "--stdin"])
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+    else {
+        return set;
+    };
+    if let Some(mut sin) = child.stdin.take() {
+        let _ = sin.write_all(paths.join("\n").as_bytes());
+    }
+    let Ok(out) = child.wait_with_output() else {
+        return set;
+    };
+    for line in String::from_utf8_lossy(&out.stdout).lines() {
+        let l = line.trim().trim_matches('"');
+        if !l.is_empty() {
+            set.insert(l.replace('\\', "/"));
+        }
+    }
+    set
+}
+
 const SKIP_DIRS: &[&str] = &[
     ".git",
     "node_modules",
@@ -216,7 +252,7 @@ fn collect_markdown(dir: &Path, root: &Path, out: &mut Vec<PlanFile>) {
 }
 
 #[tauri::command]
-fn list_plans(repo: String, dirs: Vec<String>) -> R<Vec<PlanFile>> {
+fn list_plans(repo: String, dirs: Vec<String>, include_ignored: bool) -> R<Vec<PlanFile>> {
     let root = PathBuf::from(&repo);
     let mut out = Vec::new();
     for d in dirs {
@@ -225,23 +261,86 @@ fn list_plans(repo: String, dirs: Vec<String>) -> R<Vec<PlanFile>> {
             collect_markdown(&abs, &root, &mut out);
         }
     }
+    if !include_ignored {
+        let paths: Vec<String> = out.iter().map(|f| f.rel_path.clone()).collect();
+        let ignored = ignored_paths(&repo, &paths);
+        out.retain(|f| !ignored.contains(&f.rel_path));
+    }
     out.sort_by(|a, b| a.rel_path.cmp(&b.rel_path));
     Ok(out)
 }
 
-#[tauri::command]
-fn read_plan(repo: String, rel_path: String) -> R<String> {
-    let p = safe_join(&repo, &rel_path)?;
-    std::fs::read_to_string(&p).map_err(|e| format!("could not read {rel_path}: {e}"))
+/// A cheap fingerprint of what is on disk, used to notice that something else
+/// wrote the file while we had it open. Content-hashed rather than mtime-based:
+/// two writes inside the same clock tick are common when an agent is working,
+/// and reverting a file to its previous text should read as no change at all.
+fn stamp_of(bytes: &[u8]) -> String {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    bytes.hash(&mut h);
+    format!("{:016x}", h.finish())
+}
+
+/// The marker returned for a file that does not exist. Distinct from any hash.
+const ABSENT: &str = "absent";
+
+fn stamp_at(p: &Path) -> String {
+    match std::fs::read(p) {
+        Ok(b) => stamp_of(&b),
+        Err(_) => ABSENT.to_string(),
+    }
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct PlanText {
+    content: String,
+    /// Pass back to `write_plan` to make the write conditional on this version.
+    stamp: String,
 }
 
 #[tauri::command]
-fn write_plan(repo: String, rel_path: String, content: String) -> R<()> {
+fn read_plan(repo: String, rel_path: String) -> R<PlanText> {
     let p = safe_join(&repo, &rel_path)?;
+    let bytes = std::fs::read(&p).map_err(|e| format!("could not read {rel_path}: {e}"))?;
+    let content =
+        String::from_utf8(bytes.clone()).map_err(|_| format!("{rel_path} is not text"))?;
+    Ok(PlanText {
+        stamp: stamp_of(&bytes),
+        content,
+    })
+}
+
+/// The current fingerprint without paying to send the contents back.
+#[tauri::command]
+fn stat_plan(repo: String, rel_path: String) -> R<String> {
+    Ok(stamp_at(&safe_join(&repo, &rel_path)?))
+}
+
+/// Sentinel the frontend matches on to tell a conflict from a real IO failure.
+const STALE: &str = "STALE";
+
+/// Write, optionally only if the file still looks the way the caller last saw
+/// it. Nothing is locked: the check happens immediately before the write, and a
+/// mismatch is reported rather than resolved — the choice is the reader's.
+#[tauri::command]
+fn write_plan(
+    repo: String,
+    rel_path: String,
+    content: String,
+    expect_stamp: Option<String>,
+) -> R<String> {
+    let p = safe_join(&repo, &rel_path)?;
+    if let Some(expected) = expect_stamp {
+        let actual = stamp_at(&p);
+        if actual != expected {
+            return Err(STALE.to_string());
+        }
+    }
     if let Some(parent) = p.parent() {
         std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
-    std::fs::write(&p, content).map_err(|e| format!("could not write {rel_path}: {e}"))
+    std::fs::write(&p, &content).map_err(|e| format!("could not write {rel_path}: {e}"))?;
+    Ok(stamp_of(content.as_bytes()))
 }
 
 #[tauri::command]
@@ -443,6 +542,22 @@ fn git_checkout(repo: String, branch: String) -> R<String> {
     git(&repo, &["checkout", &branch])
 }
 
+/// Branch off the current HEAD and switch to it.
+#[tauri::command]
+fn git_create_branch(repo: String, name: String) -> R<String> {
+    let name = name.trim().to_string();
+    if name.is_empty() {
+        return Err("a branch needs a name".into());
+    }
+    git(&repo, &["checkout", "-b", &name])
+}
+
+/// Fetch from the default remote, so ahead/behind counts mean something.
+#[tauri::command]
+fn git_fetch(repo: String) -> R<String> {
+    git(&repo, &["fetch", "--prune"])
+}
+
 #[tauri::command]
 fn git_log(repo: String, scope: Vec<String>, limit: u32) -> R<String> {
     let n = format!("-{limit}");
@@ -469,6 +584,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             open_repo,
             list_plans,
+            stat_plan,
             read_plan,
             write_plan,
             create_plan,
@@ -485,6 +601,8 @@ pub fn run() {
             git_pull,
             git_branches,
             git_checkout,
+            git_create_branch,
+            git_fetch,
             git_log,
         ])
         .run(tauri::generate_context!())

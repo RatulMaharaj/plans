@@ -50,14 +50,25 @@ function camelStatus(s: any): GitStatus {
 export const api = {
   openRepo: (path: string) => invoke<any>("open_repo", { path }).then(camelRepo),
 
-  listPlans: (repo: string, dirs: string[]) =>
-    invoke<any[]>("list_plans", { repo, dirs }).then((xs) => xs.map(camelFile)),
+  listPlans: (repo: string, dirs: string[], includeIgnored = false) =>
+    invoke<any[]>("list_plans", { repo, dirs, includeIgnored }).then((xs) =>
+      xs.map(camelFile),
+    ),
 
+  /** The text plus a fingerprint of the version it came from. */
   readPlan: (repo: string, relPath: string) =>
-    invoke<string>("read_plan", { repo, relPath }),
+    invoke<{ content: string; stamp: string }>("read_plan", { repo, relPath }),
 
-  writePlan: (repo: string, relPath: string, content: string) =>
-    invoke<void>("write_plan", { repo, relPath, content }),
+  /** The current fingerprint, without reading the file back. */
+  statPlan: (repo: string, relPath: string) =>
+    invoke<string>("stat_plan", { repo, relPath }),
+
+  /**
+   * Write, refusing if the file no longer matches `expectStamp`. Returns the
+   * new fingerprint. Rejects with "STALE" when something else got there first.
+   */
+  writePlan: (repo: string, relPath: string, content: string, expectStamp?: string) =>
+    invoke<string>("write_plan", { repo, relPath, content, expectStamp }),
 
   createPlan: (repo: string, relPath: string, title: string) =>
     invoke<void>("create_plan", { repo, relPath, title }),
@@ -94,6 +105,11 @@ export const api = {
   gitPull: (repo: string) => invoke<string>("git_pull", { repo }),
 
   gitBranches: (repo: string) => invoke<BranchList>("git_branches", { repo }),
+
+  gitCreateBranch: (repo: string, name: string) =>
+    invoke<string>("git_create_branch", { repo, name }),
+
+  gitFetch: (repo: string) => invoke<string>("git_fetch", { repo }),
 
   gitCheckout: (repo: string, branch: string) =>
     invoke<string>("git_checkout", { repo, branch }),
