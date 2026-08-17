@@ -1,4 +1,10 @@
-import { invoke } from "@tauri-apps/api/core";
+import { invoke as rawInvoke } from "@tauri-apps/api/core";
+import { timed } from "./perf";
+
+/** Every command goes through here, so the profiler sees the Rust boundary. */
+function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
+  return timed(`ipc ${cmd}`, () => rawInvoke<T>(cmd, args));
+}
 
 export type RepoInfo = {
   path: string;
@@ -58,6 +64,9 @@ export const api = {
   /** The text plus a fingerprint of the version it came from. */
   readPlan: (repo: string, relPath: string) =>
     invoke<{ content: string; stamp: string }>("read_plan", { repo, relPath }),
+
+  /** Development only: profiler output, to a file anyone can read. */
+  perfLog: (line: string) => rawInvoke<void>("perf_log", { line }),
 
   /** An image from the repository, inlined as a data URL. */
   readAsset: (repo: string, relPath: string) =>

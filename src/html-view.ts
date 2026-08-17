@@ -140,7 +140,7 @@ export const htmlBridge: {
   insert: ((value: string) => void) | null;
 } = { request: null, apply: null, insert: null };
 
-export const htmlView = $view(htmlSchema.node, () => (node, _view, getPos) => {
+export const htmlView = $view(htmlSchema.node, () => (node, _view, getPos, decorations) => {
   const edit = () =>
     htmlBridge.request?.({
       from: getPos() ?? 0,
@@ -155,6 +155,10 @@ export const htmlView = $view(htmlSchema.node, () => (node, _view, getPos) => {
     const who = commentAuthor(body);
     const dom = document.createElement("span");
     dom.className = "md-comment";
+    for (const d of decorations ?? []) {
+      const cls = (d as unknown as { type?: { attrs?: { class?: string } } }).type?.attrs?.class;
+      if (cls) dom.classList.add(...cls.split(" "));
+    }
     dom.setAttribute("data-type", "html");
     dom.setAttribute("data-value", value);
 
@@ -212,6 +216,15 @@ export const htmlView = $view(htmlSchema.node, () => (node, _view, getPos) => {
 
   const dom = document.createElement("span");
   dom.className = "md-html";
+  /**
+   * ProseMirror does not put inline decorations on an atom's DOM — it hands
+   * them to the node view instead. Without this the classes the wrapper plugin
+   * computes never land, and a hidden tag stays visible.
+   */
+  for (const d of decorations ?? []) {
+    const cls = (d as unknown as { type?: { attrs?: { class?: string } } }).type?.attrs?.class;
+    if (cls) dom.classList.add(...cls.split(" "));
+  }
   dom.setAttribute("data-type", "html");
   dom.setAttribute("data-value", value);
   dom.innerHTML = sanitize(standalone(value));
@@ -238,6 +251,17 @@ export const htmlView = $view(htmlSchema.node, () => (node, _view, getPos) => {
    =========================================================================== */
 
 const pictureKey = new PluginKey("plans-picture");
+
+/** Every html node's text, joined. Cheap next to parsing them. */
+let lastHtml = "";
+
+function htmlSignature(doc: PMNode): string {
+  const parts: string[] = [];
+  doc.descendants((node) => {
+    if (node.type.name === "html") parts.push(String(node.attrs.value ?? ""));
+  });
+  return parts.join("\u0000");
+}
 
 /**
  * Night is the only dark paper. Sepia is warm, not dark — it answers "light",
@@ -437,17 +461,34 @@ export const pictureView = $prose(
     new Plugin({
       key: pictureKey,
       state: {
-        init: (_, state) =>
-          pictureDecorations(state.doc, htmlContext.repo, htmlContext.relPath),
-        apply: (tr, old) =>
-          tr.docChanged || tr.getMeta(pictureKey)
-            ? pictureDecorations(tr.doc, htmlContext.repo, htmlContext.relPath)
-            : old,
+        init: (_, state) => {
+          lastHtml = htmlSignature(state.doc);
+          return pictureDecorations(state.doc, htmlContext.repo, htmlContext.relPath);
+        },
+        /**
+         * Rebuild only when the HTML in the document changed, or when the paper
+         * did. Every other transaction moves the existing decorations along —
+         * scanning the document and running DOMParser on each keystroke was a
+         * large part of why typing dragged.
+         */
+        apply(tr, old) {
+          if (tr.getMeta(pictureKey)) {
+            lastHtml = htmlSignature(tr.doc);
+            return pictureDecorations(tr.doc, htmlContext.repo, htmlContext.relPath);
+          }
+          if (!tr.docChanged) return old;
+          const now = htmlSignature(tr.doc);
+          if (now === lastHtml) return old.map(tr.mapping, tr.doc);
+          lastHtml = now;
+          return pictureDecorations(tr.doc, htmlContext.repo, htmlContext.relPath);
+        },
       },
       props: {
-        decorations(this: Plugin, state) {
-          return this.getState(state);
-        },
+        // Through the key: `this` is not reliably the plugin once Milkdown has
+        // wrapped it, and a decoration set that is never returned is invisible.
+        // Through the key: `this` is not reliably the plugin once Milkdown has
+        // wrapped it.
+        decorations: (state) => pictureKey.getState(state),
       },
       // The choice depends on the paper, so changing it re-decides.
       view: (view: EditorView) => {

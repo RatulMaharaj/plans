@@ -100,6 +100,17 @@ async function draw(host: HTMLElement, source: string) {
   }
 }
 
+/** The diagrams' sources, joined — cheap to compute, and enough to compare. */
+let lastSignature = "";
+
+function signature(doc: PMNode): string {
+  const parts: string[] = [];
+  doc.descendants((node) => {
+    if (isMermaid(node)) parts.push(node.textContent);
+  });
+  return parts.join("\u0000");
+}
+
 function build(doc: PMNode): DecorationSet {
   const out: Decoration[] = [];
   doc.descendants((node, pos) => {
@@ -130,23 +141,55 @@ export const mermaidView = $prose(
     new Plugin({
       key,
       state: {
-        init: (_, state) => build(state.doc),
-        apply: (tr, old) => (tr.docChanged ? build(tr.doc) : old),
+        init: (_, state) => {
+          lastSignature = signature(state.doc);
+          return build(state.doc);
+        },
+        /**
+         * Only rebuild when a diagram's own text changed. Otherwise the old
+         * decorations are moved to their new positions, which is what
+         * ProseMirror provides mapping for — rebuilding on every keystroke
+         * meant a full document scan and a fresh widget per diagram per key.
+         */
+        apply(tr, old) {
+          if (tr.getMeta(key)) {
+            lastSignature = signature(tr.doc);
+            return build(tr.doc);
+          }
+          if (!tr.docChanged) return old;
+          const now = signature(tr.doc);
+          if (now === lastSignature) return old.map(tr.mapping, tr.doc);
+          lastSignature = now;
+          return build(tr.doc);
+        },
       },
       props: {
         decorations(this: Plugin, state) {
           return this.getState(state);
         },
       },
-      view: () => ({
-        // Re-render when the paper changes, since the colours are baked in.
-        update: (view: EditorView) => {
-          const s = getComputedStyle(document.documentElement);
-          if (`${s.getPropertyValue("--paper").trim()}${s.getPropertyValue("--ink").trim()}` !== themed) {
-            cache.clear();
-            view.dispatch(view.state.tr.setMeta("plans-mermaid-repaint", true));
-          }
-        },
-      }),
+      /**
+       * Repaint when the paper changes.
+       *
+       * This must not be done from the plugin's update hook: dispatching there
+       * runs the update cycle again, which dispatches again — an unbounded
+       * recursion that ends in "Maximum call stack size exceeded" and takes the
+       * window with it. Watching the attribute instead means the transaction
+       * starts from outside the cycle, once per actual change.
+       */
+      view: (view: EditorView) => {
+        const repaint = () => {
+          cache.clear();
+          themed = "";
+          lastSignature = "";
+          view.dispatch(view.state.tr.setMeta(key, true));
+        };
+        const observer = new MutationObserver(repaint);
+        observer.observe(document.documentElement, {
+          attributes: true,
+          attributeFilter: ["data-theme"],
+        });
+        return { destroy: () => observer.disconnect() };
+      },
     }),
 );

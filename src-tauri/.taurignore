@@ -1,0 +1,8 @@
+# The dev watcher rebuilds and restarts the app when anything here changes.
+# This folder holds markdown that the app itself edits, so without this every
+# autosave restarts the application mid-keystroke.
+plans/
+**/*.md
+**/*.markdown
+gen/
+target/

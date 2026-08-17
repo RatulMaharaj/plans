@@ -64,7 +64,7 @@ const highlight = HighlightStyle.define([
 /** Code sits a little smaller than the prose it interrupts. */
 const chrome = EditorView.theme({
   "&": {
-    background: "var(--paper)",
+    background: "var(--code-bg, var(--paper))",
     color: "var(--code-name)",
     fontFamily: "var(--mono)",
     fontSize: "var(--code-size, 12px)",
@@ -78,7 +78,7 @@ const chrome = EditorView.theme({
   ".cm-line": { padding: "0 10px" },
   ".cm-cursor, .cm-dropCursor": { borderLeftColor: "var(--ink)" },
   ".cm-gutters": {
-    background: "var(--paper)",
+    background: "var(--code-bg, var(--paper))",
     color: "var(--ink-3)",
     border: "none",
     fontFamily: "var(--mono)",

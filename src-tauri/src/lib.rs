@@ -43,42 +43,6 @@ fn git(repo: &str, args: &[&str]) -> R<String> {
     }
 }
 
-/// The subset of `paths` that .gitignore excludes.
-///
-/// `git check-ignore` exits 1 when nothing matches, which is not an error, so
-/// this drives the process directly rather than going through `git()`.
-fn ignored_paths(repo: &str, paths: &[String]) -> std::collections::HashSet<String> {
-    use std::io::Write;
-    let mut set = std::collections::HashSet::new();
-    if paths.is_empty() {
-        return set;
-    }
-    let Ok(mut child) = Command::new("git")
-        .arg("-C")
-        .arg(repo)
-        .args(["check-ignore", "--stdin"])
-        .stdin(std::process::Stdio::piped())
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::null())
-        .spawn()
-    else {
-        return set;
-    };
-    if let Some(mut sin) = child.stdin.take() {
-        let _ = sin.write_all(paths.join("\n").as_bytes());
-    }
-    let Ok(out) = child.wait_with_output() else {
-        return set;
-    };
-    for line in String::from_utf8_lossy(&out.stdout).lines() {
-        let l = line.trim().trim_matches('"');
-        if !l.is_empty() {
-            set.insert(l.replace('\\', "/"));
-        }
-    }
-    set
-}
-
 const SKIP_DIRS: &[&str] = &[
     ".git",
     "node_modules",
@@ -208,63 +172,93 @@ fn open_repo(path: String) -> R<RepoInfo> {
     })
 }
 
-fn collect_markdown(dir: &Path, root: &Path, out: &mut Vec<PlanFile>) {
-    let Ok(entries) = std::fs::read_dir(dir) else {
-        return;
-    };
-    for e in entries.flatten() {
-        let name = e.file_name().to_string_lossy().into_owned();
-        if SKIP_DIRS.contains(&name.as_str()) {
-            continue;
-        }
-        let p = e.path();
-        let Ok(ft) = e.file_type() else { continue };
-        if ft.is_dir() {
-            collect_markdown(&p, root, out);
-            continue;
-        }
-        let ext = p
-            .extension()
-            .map(|s| s.to_string_lossy().to_ascii_lowercase())
-            .unwrap_or_default();
-        if ext != "md" && ext != "markdown" {
-            continue;
-        }
-        let rel = match p.strip_prefix(root) {
-            Ok(r) => r.to_string_lossy().replace('\\', "/"),
-            Err(_) => continue,
-        };
-        let modified = e
-            .metadata()
-            .ok()
-            .and_then(|m| m.modified().ok())
-            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-            .map(|d| d.as_secs())
-            .unwrap_or(0);
-        let parent = rel.rsplit_once('/').map(|(d, _)| d.to_string()).unwrap_or_default();
-        out.push(PlanFile {
-            rel_path: rel,
-            name,
-            dir: parent,
-            modified,
+/// Walking a repository for markdown.
+///
+/// This was a hand-rolled recursive read_dir followed by one
+/// `git check-ignore --stdin` over every path found. On a repository with a few
+/// thousand markdown files that is a full single-threaded tree walk plus a
+/// subprocess, on every poll — which is what made the app crawl.
+///
+/// `ignore` is ripgrep's walker: parallel across cores, and it reads .gitignore
+/// itself, so the subprocess disappears entirely.
+fn walk_markdown(root: &Path, include_ignored: bool) -> Vec<PlanFile> {
+    use ignore::{WalkBuilder, WalkState};
+    use std::sync::Mutex;
+
+    let found: Mutex<Vec<PlanFile>> = Mutex::new(Vec::new());
+    let mut builder = WalkBuilder::new(root);
+    builder
+        // Two threads, not every core. This runs on a timer, in the background,
+        // while someone is typing — it must never be the reason a frame is late.
+        .threads(2)
+        .hidden(false)
+        .parents(true)
+        .git_ignore(!include_ignored)
+        .git_global(!include_ignored)
+        .git_exclude(!include_ignored)
+        .follow_links(false)
+        // Build directories are skipped whether or not anything ignores them.
+        .filter_entry(|e| {
+            let name = e.file_name().to_string_lossy();
+            !SKIP_DIRS.contains(&name.as_ref())
         });
-    }
+
+    builder.build_parallel().run(|| {
+        Box::new(|result| {
+            let Ok(entry) = result else {
+                return WalkState::Continue;
+            };
+            if !entry.file_type().is_some_and(|t| t.is_file()) {
+                return WalkState::Continue;
+            }
+            let path = entry.path();
+            let ext = path
+                .extension()
+                .map(|s| s.to_string_lossy().to_ascii_lowercase())
+                .unwrap_or_default();
+            if ext != "md" && ext != "markdown" {
+                return WalkState::Continue;
+            }
+            let Ok(rel) = path.strip_prefix(root) else {
+                return WalkState::Continue;
+            };
+            let rel = rel.to_string_lossy().replace('\\', "/");
+            let name = path
+                .file_name()
+                .map(|s| s.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            let modified = entry
+                .metadata()
+                .ok()
+                .and_then(|m| m.modified().ok())
+                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|d| d.as_secs())
+                .unwrap_or(0);
+            let dir = rel.rsplit_once('/').map(|(d, _)| d.to_string()).unwrap_or_default();
+            if let Ok(mut out) = found.lock() {
+                out.push(PlanFile { rel_path: rel, name, dir, modified });
+            }
+            WalkState::Continue
+        })
+    });
+
+    found.into_inner().unwrap_or_default()
 }
 
 #[tauri::command]
 fn list_plans(repo: String, dirs: Vec<String>, include_ignored: bool) -> R<Vec<PlanFile>> {
     let root = PathBuf::from(&repo);
     let mut out = Vec::new();
-    for d in dirs {
-        let abs = safe_join(&repo, &d)?;
-        if abs.is_dir() {
-            collect_markdown(&abs, &root, &mut out);
+    // An empty entry means the repository itself, which is the only caller now.
+    if dirs.is_empty() || dirs.iter().any(|d| d.is_empty()) {
+        out = walk_markdown(&root, include_ignored);
+    } else {
+        for d in dirs {
+            let abs = safe_join(&repo, &d)?;
+            if abs.is_dir() {
+                out.extend(walk_markdown(&abs, include_ignored));
+            }
         }
-    }
-    if !include_ignored {
-        let paths: Vec<String> = out.iter().map(|f| f.rel_path.clone()).collect();
-        let ignored = ignored_paths(&repo, &paths);
-        out.retain(|f| !ignored.contains(&f.rel_path));
     }
     out.sort_by(|a, b| a.rel_path.cmp(&b.rel_path));
     Ok(out)
@@ -344,6 +338,23 @@ fn read_asset(repo: String, rel_path: String) -> R<String> {
     };
     let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
     Ok(format!("data:{mime};base64,{b64}"))
+}
+
+/// Append a line of profiler output to a file.
+///
+/// Development plumbing: the webview's console is only visible in the inspector,
+/// which makes it useless for anyone reading the app from outside.
+#[tauri::command]
+fn perf_log(line: String) -> R<()> {
+    use std::io::Write;
+    let path = std::env::temp_dir().join("plans-perf.log");
+    let mut f = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+        .map_err(|e| e.to_string())?;
+    writeln!(f, "{line}").map_err(|e| e.to_string())?;
+    Ok(())
 }
 
 /// The current fingerprint without paying to send the contents back.
@@ -428,16 +439,18 @@ fn parse_ahead_behind(repo: &str) -> (u32, u32, bool) {
 
 #[tauri::command]
 fn git_status(repo: String, scope: Vec<String>) -> R<GitStatus> {
+    // Only markdown. Enumerating every untracked file in a large repository is
+    // most of what this command costs, and none of it is ever shown.
     let mut args = vec!["status", "--porcelain=v1", "-uall", "--"];
-    for s in &scope {
-        args.push(s.as_str());
-    }
-    // With no scope, drop the trailing `--` separator argument set.
-    let raw = if scope.is_empty() {
-        git(&repo, &["status", "--porcelain=v1", "-uall"])?
+    if scope.is_empty() {
+        args.push("*.md");
+        args.push("*.markdown");
     } else {
-        git(&repo, &args)?
-    };
+        for s in &scope {
+            args.push(s.as_str());
+        }
+    }
+    let raw = git(&repo, &args)?;
 
     let mut entries = Vec::new();
     for line in raw.lines() {
@@ -621,6 +634,7 @@ pub fn run() {
             open_repo,
             list_plans,
             stat_plan,
+            perf_log,
             read_asset,
             read_plan,
             write_plan,

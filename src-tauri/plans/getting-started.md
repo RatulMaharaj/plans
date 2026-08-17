@@ -9,7 +9,10 @@ up in the sidebar, and edits are written straight back to disk.
 - Edit them in the WYSIWYG pane — the file on disk stays plain markdown.
 - Stage, commit, and push from the git panel on the right.
 
+Hello from the other side
+
 ## Next
 
-- [ ] Add another repository with **+ Add repo**
+- [x] Add another repository with **+ Add repo**
 - [ ] Try `Cmd+S` to force a save
+

@@ -103,14 +103,15 @@
    at runtime and can't be reached from here. What is left is the frame, drawn
    to match a blockquote rather than a floating card.
    --------------------------------------------------------------------------- */
-.editor-host .milkdown milkdown-code-block {
-  --crepe-color-surface: var(--paper);
-  --crepe-color-surface-low: var(--paper);
+.editor-host .milkdown :is(milkdown-code-block, .milkdown-code-block) {
+  --crepe-color-surface: var(--code-bg);
+  --crepe-color-surface-low: var(--code-bg);
 }
-.editor-host .milkdown milkdown-code-block .cm-editor {
+.editor-host .milkdown milkdown-code-block .cm-editor,
+.editor-host .milkdown .milkdown-code-block .cm-editor {
   border: 1px solid var(--rule);
   border-radius: 3px;
-  background: var(--paper);
+  background: var(--code-bg);
 }
 .editor-host .milkdown milkdown-code-block .cm-editor.cm-focused {
   outline: none;
@@ -130,8 +131,9 @@
 
 /* Inline code sits in the prose, so it stays quiet: no box, just the face. */
 .editor-host .milkdown .ProseMirror code {
-  background: transparent;
-  padding: 0 0.1em;
+  background: var(--code-bg);
+  border-radius: 2px;
+  padding: 0.1em 0.3em;
 }
 
 /* ---------------------------------------------------------------------------
@@ -307,4 +309,84 @@
   border: 1px solid var(--rule-strong);
   border-radius: 3px;
   padding: 1px 4px;
+}
+
+/* ---------------------------------------------------------------------------
+   The code block's own chrome: the language button and its picker.
+
+   Crepe draws these as a rounded button with an icon and a searchable list.
+   The shapes are fine; the register is not — they arrive in the reading face at
+   body size, on their own surfaces. These put them in the ledger voice, on the
+   app's papers, matching the dropdowns everywhere else in the app.
+   --------------------------------------------------------------------------- */
+
+.editor-host .milkdown .milkdown-code-block { background: var(--code-bg); border-radius: 3px; }
+.editor-host .milkdown .milkdown-code-block .tools { padding: 6px 8px 0; }
+
+.editor-host .milkdown .language-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 3px;
+  padding: 3px 6px;
+  cursor: pointer;
+  font-family: var(--mono);
+  font-size: 9.5px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+  transition: color 120ms ease, border-color 120ms ease;
+}
+.editor-host .milkdown .language-button:hover { color: var(--ink); border-color: var(--rule); }
+.editor-host .milkdown .language-button[data-expanded="true"] {
+  color: var(--ink);
+  border-color: var(--rule-strong);
+}
+/* Crepe's chevron is a 24px stroke icon; at this size it should be a caret. */
+.editor-host .milkdown .language-button .expand-icon svg { width: 9px; height: 9px; opacity: 0.7; }
+
+.editor-host .milkdown .language-picker,
+.editor-host .milkdown .language-picker .list-wrapper {
+  background: var(--raised);
+  border-color: var(--rule-strong);
+  border-radius: 4px;
+  box-shadow: var(--shadow);
+}
+.editor-host .milkdown .language-picker .search-box {
+  border-bottom: 1px solid var(--rule);
+  padding: 4px 8px;
+  gap: 6px;
+}
+.editor-host .milkdown .language-picker .search-icon svg,
+.editor-host .milkdown .language-picker .clear-icon svg { width: 11px; height: 11px; color: var(--ink-3); }
+.editor-host .milkdown .language-picker .search-input {
+  background: transparent;
+  border: 0;
+  outline: 0;
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.03em;
+  color: var(--ink);
+}
+.editor-host .milkdown .language-picker .search-input::placeholder {
+  color: var(--ink-3);
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+.editor-host .milkdown .language-picker li,
+.editor-host .milkdown .language-picker .list-item {
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.03em;
+  color: var(--ink-2);
+  padding: 5px 10px;
+}
+.editor-host .milkdown .language-picker li:hover,
+.editor-host .milkdown .language-picker .list-item:hover,
+.editor-host .milkdown .language-picker .selected {
+  background: var(--shade);
+  color: var(--ink);
 }

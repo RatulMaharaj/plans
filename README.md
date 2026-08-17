@@ -62,19 +62,19 @@ SSH keys, commit signing, and hooks all apply.
 
 ## Keys
 
-| Key | What |
-| --- | --- |
-| `⌘P` / `⌘⇧P` | Find a file · all commands |
-| `⌘1` `⌘2` `⌘3` | Page · source · diff |
-| `⌘N` / `⌘⇧O` | New file · add a repository |
-| `⌘S` | Save now |
-| `⌘W` | Close the buffer |
-| `⌘⌥←` `⌘⌥→` | Previous · next buffer |
-| `⌘B` | Show or hide the tree (`⌘⌃B` while writing, where `⌘B` is bold) |
-| `⌘G` | Git panel |
-| `⌘⇧L` | Zen — the page alone |
-| `⌘+` `⌘−` | Text size, or tree size when the tree has focus |
-| `⌘,` | Settings |
+| Key            | What                                                            |
+| -------------- | --------------------------------------------------------------- |
+| `⌘P` / `⌘⇧P`   | Find a file · all commands                                      |
+| `⌘1` `⌘2` `⌘3` | Page · source · diff                                            |
+| `⌘N` / `⌘⇧O`   | New file · add a repository                                     |
+| `⌘S`           | Save now                                                        |
+| `⌘W`           | Close the buffer                                                |
+| `⌘⌥←` `⌘⌥→`    | Previous · next buffer                                          |
+| `⌘B`           | Show or hide the tree (`⌘⌃B` while writing, where `⌘B` is bold) |
+| `⌘G`           | Git panel                                                       |
+| `⌘⇧L`          | Zen — the page alone                                            |
+| `⌘+` `⌘−`      | Text size, or tree size when the tree has focus                 |
+| `⌘,`           | Settings                                                        |
 
 ## Requirements
 
@@ -92,23 +92,23 @@ pnpm app:build   # produces a bundled .app / installer under src-tauri/target/re
 
 ## Layout
 
-| Path | What lives there |
-| --- | --- |
-| `src-tauri/src/lib.rs` | All Rust commands: repo discovery, file I/O with fingerprints, git |
-| `src/api.ts` | Typed wrapper over the Rust commands |
-| `src/App.tsx` | Layout, repo and buffer state, autosave, conflict handling |
-| `src/FileTree.tsx` | The tree, its git marks and its context menus |
-| `src/Editor.tsx` | Milkdown Crepe instance and its serialiser settings |
-| `src/SourceView.tsx` | The raw markdown, as CodeMirror |
-| `src/DiffView.tsx` | The editable diff against `HEAD` |
-| `src/GitPanel.tsx` | Status, staging, undo, commit, push/pull |
-| `src/Palette.tsx` | Files and commands behind `⌘P` |
-| `src/html-view.ts` | Rendering and editing the HTML inside markdown |
-| `src/mermaid-view.ts` | Diagrams drawn under their source |
-| `src/code-theme.ts` | Syntax highlighting, in the current paper's ink |
-| `src/matter.ts` | Splitting and rejoining frontmatter, losslessly |
-| `src/settings.ts` | Every setting, its range, and how it is applied |
-| `src/fonts.ts`, `scripts/fetch-fonts.mjs` | Typeface registry and the vendoring script |
+| Path                                      | What lives there                                                   |
+| ----------------------------------------- | ------------------------------------------------------------------ |
+| `src-tauri/src/lib.rs`                    | All Rust commands: repo discovery, file I/O with fingerprints, git |
+| `src/api.ts`                              | Typed wrapper over the Rust commands                               |
+| `src/App.tsx`                             | Layout, repo and buffer state, autosave, conflict handling         |
+| `src/FileTree.tsx`                        | The tree, its git marks and its context menus                      |
+| `src/Editor.tsx`                          | Milkdown Crepe instance and its serialiser settings                |
+| `src/SourceView.tsx`                      | The raw markdown, as CodeMirror                                    |
+| `src/DiffView.tsx`                        | The editable diff against `HEAD`                                   |
+| `src/GitPanel.tsx`                        | Status, staging, undo, commit, push/pull                           |
+| `src/Palette.tsx`                         | Files and commands behind `⌘P`                                     |
+| `src/html-view.ts`                        | Rendering and editing the HTML inside markdown                     |
+| `src/mermaid-view.ts`                     | Diagrams drawn under their source                                  |
+| `src/code-theme.ts`                       | Syntax highlighting, in the current paper's ink                    |
+| `src/matter.ts`                           | Splitting and rejoining frontmatter, losslessly                    |
+| `src/settings.ts`                         | Every setting, its range, and how it is applied                    |
+| `src/fonts.ts`, `scripts/fetch-fonts.mjs` | Typeface registry and the vendoring script                         |
 
 ## Notes
 
@@ -122,3 +122,4 @@ pnpm app:build   # produces a bundled .app / installer under src-tauri/target/re
   auto-merging behind your back.
 - Settings live in `localStorage`, not a file on disk — so they are not
   inspectable or checked in, and clearing the app's data resets them.
+

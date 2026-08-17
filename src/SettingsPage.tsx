@@ -68,7 +68,10 @@ export function SettingsPage({
         />
 
         {/* ---- paper ---------------------------------------------------- */}
-        <Group name="Paper" hint="Applies to the whole app, not just the page.">
+        <Group
+          name="Paper"
+          hint="The theme — light or dark — for the whole app, not just the page."
+        >
           <div className="papers wide">
             {THEMES.map((t) => (
               <button
@@ -92,7 +95,7 @@ export function SettingsPage({
         {/* ---- type ----------------------------------------------------- */}
         <Group
           name="Typeface"
-          hint="Five open-source families from Open Foundry, bundled with the app."
+          hint="The reading font. Five open-source families from Open Foundry, bundled with the app."
         >
           <div className="faces">
             {FONTS.map((f) => (
@@ -118,7 +121,7 @@ export function SettingsPage({
 
         <Group
           name="Monospace"
-          hint="The chrome, the source view, and code blocks."
+          hint="The mono font: the chrome, the source view, and code blocks."
         >
           <div className="faces">
             {MONO_FONTS.map((m) => (
@@ -219,7 +222,7 @@ export function SettingsPage({
         </Group>
 
         {/* ---- files ------------------------------------------------------ */}
-        <Group name="Files" hint="What the tree down the left shows.">
+        <Group name="Files" hint="What the sidebar tree down the left shows.">
           <Toggle
             label="File extensions"
             hint="Off shows 'auth plan' rather than 'auth-plan.md'."

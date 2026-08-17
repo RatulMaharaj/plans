@@ -5,7 +5,7 @@
  * it in its real folder structure. The git mark rides on each row, so the tree
  * carries state ambiently and the git panel is only needed to *act*.
  */
-import { useEffect, useMemo, useState } from "react";
+import { memo, useEffect, useMemo, useState } from "react";
 import type { PlanFile, RepoInfo } from "./api";
 
 export type Mark = "clean" | "new" | "mod" | "staged";
@@ -161,7 +161,12 @@ function dirKeys(nodes: Node[], repoPath: string, out: string[] = []): string[] 
   return out;
 }
 
-export function FileTree(p: Props) {
+/**
+ * Memoised: this renders thousands of rows in a large repository, and the poll
+ * behind it fires every few seconds. Without this it re-rendered on any App
+ * state change at all — a keystroke, a toast, the clock in the status bar.
+ */
+export const FileTree = memo(function FileTree(p: Props) {
   const [menu, setMenu] = useState<MenuAt | null>(null);
 
   // Any click, scroll, or escape puts the menu away.
@@ -183,21 +188,34 @@ export function FileTree(p: Props) {
     };
   }, [menu]);
 
+  /**
+   * The filtered file lists, and the tree built from them.
+   *
+   * Deliberately independent of git state: marks change on every save, and
+   * rebuilding, squashing and sorting thousands of nodes each time a file is
+   * written is work for nothing. Counts are derived separately below.
+   */
   const trees = useMemo(() => {
-    const out: Record<string, { nodes: Node[]; changed: number }> = {};
+    const out: Record<string, { nodes: Node[]; kept: PlanFile[] }> = {};
     const q = p.filter.trim().toLowerCase();
     for (const r of p.repos) {
       const files = p.filesByRepo[r.path] ?? [];
       const kept = q ? files.filter((f) => f.relPath.toLowerCase().includes(q)) : files;
-      // The number worth showing is how much differs from the last commit —
-      // a total file count says nothing you can act on.
-      const changed = kept.filter(
-        (f) => (p.marks.get(`${r.path}::${f.relPath}`) ?? "clean") !== "clean",
-      ).length;
-      out[r.path] = { nodes: squash(build(kept)), changed };
+      out[r.path] = { nodes: squash(build(kept)), kept };
     }
     return out;
-  }, [p.repos, p.filesByRepo, p.filter, p.marks]);
+  }, [p.repos, p.filesByRepo, p.filter]);
+
+  /** How much of each repo differs from its last commit. */
+  const changedByRepo = useMemo(() => {
+    const out: Record<string, number> = {};
+    for (const r of p.repos) {
+      out[r.path] = (trees[r.path]?.kept ?? []).filter(
+        (f) => (p.marks.get(`${r.path}::${f.relPath}`) ?? "clean") !== "clean",
+      ).length;
+    }
+    return out;
+  }, [p.repos, trees, p.marks]);
 
   /** "<repo>::<dirPath>" -> the worst state anywhere beneath it. */
   const dirMarks = useMemo(() => {
@@ -422,7 +440,8 @@ export function FileTree(p: Props) {
       {p.repos.map((r) => {
         const key = `${r.path}::`;
         const open = filtering || p.expanded.has(key);
-        const { nodes, changed } = trees[r.path] ?? { nodes: [], changed: 0 };
+        const nodes = trees[r.path]?.nodes ?? [];
+        const changed = changedByRepo[r.path] ?? 0;
         return (
           <div className="tree-repo" key={r.path}>
             <button
@@ -467,4 +486,4 @@ export function FileTree(p: Props) {
       })}
     </div>
   );
-}
+});

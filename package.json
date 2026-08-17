@@ -9,8 +9,10 @@
     "preview": "vite preview",
     "tauri": "tauri",
     "app": "tauri dev",
-    "app:build": "tauri build",
-    "fonts": "node scripts/fetch-fonts.mjs"
+    "app:build": "node scripts/release-linker.mjs tauri build",
+    "fonts": "node scripts/fetch-fonts.mjs",
+    "test": "playwright test",
+    "test:ui": "playwright test --ui"
   },
   "dependencies": {
     "@codemirror/commands": "^6.11.0",
@@ -33,10 +35,13 @@
     "diff": "^9.0.0",
     "mermaid": "^11.16.1",
     "react": "^19.1.0",
-    "react-dom": "^19.1.0"
+    "react-dom": "^19.1.0",
+    "unist-util-visit": "^5.1.0"
   },
   "devDependencies": {
+    "@playwright/test": "^1.62.1",
     "@tauri-apps/cli": "^2",
+    "@types/mdast": "^4.0.4",
     "@types/react": "^19.1.8",
     "@types/react-dom": "^19.1.6",
     "@vitejs/plugin-react": "^4.6.0",

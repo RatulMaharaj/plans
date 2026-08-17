@@ -12,6 +12,8 @@ import { FrontmatterSheet } from "./Frontmatter";
 import { NameSheet } from "./NameSheet";
 import { TextPrompt } from "./TextPrompt";
 import { SourceView } from "./SourceView";
+import { PerfHud } from "./PerfHud";
+import { start, tick } from "./perf";
 import { htmlBridge, type HtmlEdit } from "./html-view";
 import { joinFrontmatter, splitFrontmatter } from "./matter";
 import {
@@ -42,11 +44,55 @@ function stored<T>(key: string, fallback: T): T {
   }
 }
 
+/**
+ * Cheap equality for polled data, so an unchanged poll costs one comparison
+ * rather than a re-render of the whole tree.
+ */
+function sameFiles(
+  a: Record<string, PlanFile[]>,
+  b: Record<string, PlanFile[]>,
+): boolean {
+  const ka = Object.keys(a);
+  if (ka.length !== Object.keys(b).length) return false;
+  for (const k of ka) {
+    const x = a[k];
+    const y = b[k];
+    if (!y || x.length !== y.length) return false;
+    for (let i = 0; i < x.length; i++) {
+      if (x[i].relPath !== y[i].relPath || x[i].modified !== y[i].modified) return false;
+    }
+  }
+  return true;
+}
+
+function sameStatus(
+  a: Record<string, GitStatus>,
+  b: Record<string, GitStatus>,
+): boolean {
+  const ka = Object.keys(a);
+  if (ka.length !== Object.keys(b).length) return false;
+  for (const k of ka) {
+    const x = a[k];
+    const y = b[k];
+    if (!y) return false;
+    if (x.branch !== y.branch || x.ahead !== y.ahead || x.behind !== y.behind) return false;
+    if (x.entries.length !== y.entries.length) return false;
+    for (let i = 0; i < x.entries.length; i++) {
+      const p = x.entries[i];
+      const q = y.entries[i];
+      if (p.path !== q.path || p.index !== q.index || p.worktree !== q.worktree) return false;
+    }
+  }
+  return true;
+}
+
 type Toast = { text: string; kind: "info" | "error" } | null;
 type View = "write" | "source" | "diff" | "settings";
 
 
 export default function App() {
+  // Counts renders of the whole app, which is the cost a keystroke used to pay.
+  tick("render App");
   const [settings, setSettings] = useState<Settings>(loadSettings);
   const set = useCallback(
     (patch: Partial<Settings>) => setSettings((s) => ({ ...s, ...patch })),
@@ -74,6 +120,7 @@ export default function App() {
   const [palette, setPalette] = useState<null | { commands: boolean }>(null);
   /** Zen: the page alone. Deliberately not persisted — it's a mood, not a setting. */
   const [zen, setZen] = useState(false);
+  const [perf, setPerf] = useState(false);
   const [matterOpen, setMatterOpen] = useState(false);
   /** Where a new file is about to be created, while the name is being asked. */
   const [naming, setNaming] = useState<null | { repo: string; dir: string }>(null);
@@ -93,6 +140,17 @@ export default function App() {
     run: (value: string) => void;
   }>(null);
   const [branches, setBranches] = useState<string[]>([]);
+  /** Every folder in the repository a new file is being placed in. */
+  const folderChoices = useMemo(() => {
+    if (!naming) return [];
+    const seen = new Set<string>();
+    for (const f of filesByRepo[naming.repo] ?? []) {
+      const parts = f.relPath.split("/");
+      for (let i = 1; i < parts.length; i++) seen.add(parts.slice(0, i).join("/"));
+    }
+    return [...seen].sort();
+  }, [naming, filesByRepo]);
+
   /** A fragment of HTML open for editing, or null. */
   const [htmlEdit, setHtmlEdit] = useState<HtmlEdit | null>(null);
   /**
@@ -153,7 +211,11 @@ export default function App() {
       const ok = rs.filter(Boolean) as RepoInfo[];
       setRepos(ok);
       const last = stored<string | null>(KEY.last, null);
-      setActiveRepoPath(ok.find((r) => r.path === last)?.path ?? ok[0]?.path ?? null);
+      const active = ok.find((r) => r.path === last)?.path ?? ok[0]?.path ?? null;
+      setActiveRepoPath(active);
+      // Open the repository being worked in, so the app starts with its files
+      // in view rather than with a collapsed row and nothing to read.
+      if (active) setExpanded((prev) => new Set(prev).add(`${active}::`));
     });
   }, []);
 
@@ -173,31 +235,58 @@ export default function App() {
   // "" is the repo root — every markdown file in the repository, wherever it
   // lives. The Rust side skips .git, node_modules, target and friends.
   const refreshFiles = useCallback(async () => {
-    const got = await Promise.all(
-      repos.map(async (r) => {
-        try {
-          return [r.path, await api.listPlans(r.path, [""], settings.showIgnored)] as const;
-        } catch {
-          return [r.path, []] as const;
-        }
-      }),
-    );
-    setFilesByRepo(Object.fromEntries(got));
+    const done = start("poll files");
+    // One repository at a time. Four parallel walks take every core between
+    // them, which is exactly the wrong thing to do behind someone's typing.
+    const got: (readonly [string, PlanFile[]])[] = [];
+    for (const r of repos) {
+      try {
+        got.push([r.path, await api.listPlans(r.path, [""], settings.showIgnored)] as const);
+      } catch {
+        got.push([r.path, []] as const);
+      }
+    }
+    /**
+     * Keep the previous object when nothing moved.
+     *
+     * This runs every few seconds. Replacing state unconditionally meant the
+     * tree — thousands of nodes in a large repository — was rebuilt, re-sorted
+     * and re-rendered on every poll, for no change at all.
+     */
+    setFilesByRepo((prev) => {
+      const next = Object.fromEntries(got);
+      return sameFiles(prev, next) ? prev : next;
+    });
+    done();
   }, [repos, settings.showIgnored]);
 
+  /** One repository's status, for when only one thing can have changed. */
+  const refreshStatusFor = useCallback(async (repo: string) => {
+    try {
+      const st = await api.gitStatus(repo, []);
+      setStatusByRepo((prev) =>
+        sameStatus({ [repo]: prev[repo] }, { [repo]: st }) ? prev : { ...prev, [repo]: st },
+      );
+    } catch {
+      /* the next poll will pick it up */
+    }
+  }, []);
+
   const refreshStatus = useCallback(async () => {
-    const got = await Promise.all(
-      repos.map(async (r) => {
-        try {
-          return [r.path, await api.gitStatus(r.path, [])] as const;
-        } catch {
-          return [r.path, null] as const;
-        }
-      }),
-    );
-    setStatusByRepo(
-      Object.fromEntries(got.filter((g): g is readonly [string, GitStatus] => !!g[1])),
-    );
+    const got: (readonly [string, GitStatus | null])[] = [];
+    for (const r of repos) {
+      try {
+        got.push([r.path, await api.gitStatus(r.path, [])] as const);
+      } catch {
+        got.push([r.path, null] as const);
+      }
+    }
+    setStatusByRepo((prev) => {
+      const next = Object.fromEntries(
+        got.filter((g): g is readonly [string, GitStatus] => !!g[1]),
+      );
+      return sameStatus(prev, next) ? prev : next;
+    });
   }, [repos]);
 
   useEffect(() => {
@@ -205,19 +294,43 @@ export default function App() {
     void refreshStatus();
   }, [refreshFiles, refreshStatus]);
 
+  /**
+   * How often each kind of work runs.
+   *
+   * Measured: walking a repository and asking git for its status are cheap on
+   * their own, but doing both for every open repository at once, every few
+   * seconds, saturates the machine — and a saturated machine is a slow window.
+   *
+   * So: git status for the repository being looked at on the short interval,
+   * the others rarely; the file walk rarely for everyone, since files appearing
+   * is much less common than their contents changing.
+   */
+  const SLOW = 6;
+
   // Files written by Claude Code in a terminal should turn up on their own.
   useEffect(() => {
     if (settings.watchSeconds <= 0) return;
+    let n = 0;
     const t = setInterval(() => {
-      if (!busy) {
-        // The tree and git marks refresh even mid-edit; only the open document
-        // is held back, and that is handled by the watch below.
-        void refreshFiles();
+      if (busy) return;
+      n += 1;
+      // The active repository, every tick: this is what is on screen.
+      if (activeRepoPath) void refreshStatusFor(activeRepoPath);
+      // Everything else, and the walk for new files, every SLOW ticks.
+      if (n % SLOW === 0) {
         void refreshStatus();
+        void refreshFiles();
       }
     }, settings.watchSeconds * 1000);
     return () => clearInterval(t);
-  }, [refreshFiles, refreshStatus, busy, settings.watchSeconds]);
+  }, [
+    refreshFiles,
+    refreshStatus,
+    refreshStatusFor,
+    activeRepoPath,
+    busy,
+    settings.watchSeconds,
+  ]);
 
   /** "<repo>::<path>" -> mark, so the tree carries git state with the panel closed. */
   const marks = useMemo(() => {
@@ -235,13 +348,21 @@ export default function App() {
 
   const changeCount = status?.entries.length ?? 0;
 
+  /**
+   * Branches, on demand. Measured at over three seconds on a large repository,
+   * which is not something to do on a timer for a list nobody has opened.
+   */
   useEffect(() => {
-    if (!activeRepoPath) return setBranches([]);
+    if (!activeRepoPath || (!palette && !settings.showGit)) return;
+    let live = true;
     api
       .gitBranches(activeRepoPath)
-      .then((b) => setBranches(b.branches))
-      .catch(() => setBranches([]));
-  }, [activeRepoPath, status?.branch, epoch]);
+      .then((b) => live && setBranches(b.branches))
+      .catch(() => live && setBranches([]));
+    return () => {
+      live = false;
+    };
+  }, [activeRepoPath, status?.branch, epoch, palette, settings.showGit]);
 
   // --- repos ---------------------------------------------------------------
   const addRepo = useCallback(async () => {
@@ -336,7 +457,9 @@ export default function App() {
       setSavedAt(
         new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
       );
-      void refreshStatus();
+      // Only the repository that was written to. Re-reading every open repo's
+      // status on each autosave is a lot of work for one file's worth of news.
+      void refreshStatusFor(p.repo);
     } catch (e) {
       if (String(e).includes("STALE")) {
         // Put the edit back so no keystroke is lost while the reader decides.
@@ -768,6 +891,22 @@ export default function App() {
     [activeRepoPath, activePath, fileAction],
   );
 
+  /** Stable handlers, so a memoised tree is not defeated by new closures. */
+  const stageOne = useCallback(
+    (r: string, f: string) => fileAction(r, "Staged", () => api.gitStage(r, [f])),
+    [fileAction],
+  );
+  const unstageOne = useCallback(
+    (r: string, f: string) => fileAction(r, "Unstaged", () => api.gitUnstage(r, [f])),
+    [fileAction],
+  );
+  const discardOne = useCallback(
+    (r: string, f: string, m: Mark) => void discardFile(r, f, m),
+    [discardFile],
+  );
+  const deleteOne = useCallback((r: string, f: string) => void deleteFile(r, f), [deleteFile]);
+  const openOne = useCallback((r: string, f: string) => void openFile(r, f), [openFile]);
+
   /** New file in a given folder, rather than beside whatever is open. */
   const newFileIn = useCallback((repoPath: string, dir: string) => {
     setNaming({ repo: repoPath, dir });
@@ -879,9 +1018,18 @@ export default function App() {
       // While the palette is up it owns its own keys — don't also act on them.
       if (palette && !(e.metaKey || e.ctrlKey)) return;
       const mod = e.metaKey || e.ctrlKey;
+
+      // ⌘⌃P is the profiler. Checked before the palette, which also answers to
+      // "p" and would otherwise swallow it.
+      if (e.metaKey && e.ctrlKey && e.key.toLowerCase() === "p") {
+        e.preventDefault();
+        setPerf((v) => !v);
+        return;
+      }
+
       // ⌘P plans, ⌘⇧P commands, ⌘K either way. The ">" is what actually picks
       // the mode, so these are just two doors into the same box.
-      if (mod && (e.key.toLowerCase() === "p" || e.key.toLowerCase() === "k")) {
+      if (mod && !e.ctrlKey && (e.key.toLowerCase() === "p" || e.key.toLowerCase() === "k")) {
         e.preventDefault();
         setPalette({ commands: e.shiftKey });
         return;
@@ -1097,14 +1245,14 @@ export default function App() {
               activePath={activePath}
               expanded={expanded}
               onToggle={toggleNode}
-              onOpen={(r, f) => void openFile(r, f)}
+              onOpen={openOne}
               onForgetRepo={forgetRepo}
               filter={filter}
               showExtensions={settings.showExtensions}
-              onStage={(r, f) => fileAction(r, "Staged", () => api.gitStage(r, [f]))}
-              onUnstage={(r, f) => fileAction(r, "Unstaged", () => api.gitUnstage(r, [f]))}
-              onDiscard={(r, f, m) => void discardFile(r, f, m)}
-              onDelete={(r, f) => void deleteFile(r, f)}
+              onStage={stageOne}
+              onUnstage={unstageOne}
+              onDiscard={discardOne}
+              onDelete={deleteOne}
               onNewFile={newFileIn}
               onSetOpen={setOpen}
             />
@@ -1135,7 +1283,8 @@ export default function App() {
             />
           ) : (
             <>
-              {tabs.length > 0 && (
+              {/* Zen is one buffer and nothing else — no tabs, no header. */}
+              {tabs.length > 0 && !zenOn && (
                 <div className="tabs" role="tablist">
                   {tabs.map((t) => {
                     const on = t.repo === activeRepoPath && t.path === activePath;
@@ -1168,7 +1317,7 @@ export default function App() {
                 </div>
               )}
 
-              <div className="page-head">
+              <div className={`page-head ${zenOn ? "hushed" : ""}`}>
                 <span className="page-path">{activePath ?? ""}</span>
                 {activePath && (
                   <span className="page-actions">
@@ -1310,6 +1459,7 @@ export default function App() {
                       onChange={onSourceChange}
                       settings={settings}
                       docKey={docKey}
+                      active={view === "source"}
                     />
                   </div>
                 </>
@@ -1409,7 +1559,12 @@ export default function App() {
       {naming && (
         <NameSheet
           dir={naming.dir}
-          repoName={repos.find((r) => r.path === naming.repo)?.name ?? ""}
+          repo={naming.repo}
+          repos={repos}
+          // Folders belong to a repository, so choosing another starts at its root.
+          onRepoChange={(repo) => setNaming({ repo, dir: "" })}
+          dirs={folderChoices}
+          onDirChange={(dir) => setNaming({ repo: naming.repo, dir })}
           onCancel={() => setNaming(null)}
           onCreate={(relPath, title) => void createFile(naming.repo, relPath, title)}
         />
@@ -1456,6 +1611,7 @@ export default function App() {
           })
         }
         onReload={() => void reloadAll()}
+        onPerf={() => setPerf(true)}
         gitCommands={gitCommands}
         hasMatter={matter !== null}
         canEdit={!!activePath}
@@ -1464,6 +1620,8 @@ export default function App() {
           setMatterOpen(true);
         }}
       />
+
+      {perf && <PerfHud onClose={() => setPerf(false)} />}
 
       {toast && <div className={`toast ${toast.kind}`}>{toast.text}</div>}
     </div>

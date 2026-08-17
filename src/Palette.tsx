@@ -19,6 +19,12 @@ export type Command = {
   label: string;
   /** Current value, shown right-aligned. */
   value?: string;
+  /**
+   * Extra words to match on, never shown. The app calls a theme a paper, which
+   * is right on screen and wrong in a search box — nobody types "paper" looking
+   * for dark mode.
+   */
+  terms?: string;
   hint?: string;
   run: () => void;
 };
@@ -44,6 +50,7 @@ type Props = {
   zen: boolean;
   onZen: () => void;
   onReload: () => void;
+  onPerf: () => void;
   /** Built in App, since they need the repo, its status and its branches. */
   gitCommands: { id: string; label: string; hint?: string; run: () => void }[];
   canInsertHtml: boolean;
@@ -110,6 +117,13 @@ function buildCommands(p: Props): Command[] {
     });
   }
   add({
+    id: "perf",
+    group: "Go",
+    label: "Profiler",
+    hint: "⌘⌃P",
+    run: p.onPerf,
+  });
+  add({
     id: "zen",
     group: "Go",
     label: p.zen ? "Leave zen" : "Zen — the page alone",
@@ -159,6 +173,7 @@ function buildCommands(p: Props): Command[] {
       group: "Paper",
       label: t.label,
       value: s.theme === t.id ? "current" : undefined,
+      terms: `theme appearance colour color scheme ${t.id === "night" ? "dark" : "light"}`,
       run: () => set({ theme: t.id }),
     });
   }
@@ -168,6 +183,7 @@ function buildCommands(p: Props): Command[] {
       group: "Typeface",
       label: f.label,
       value: s.fontId === f.id ? "current" : f.note,
+      terms: "font typeface family serif sans reading",
       run: () => set({ fontId: f.id }),
     });
   }
@@ -178,6 +194,7 @@ function buildCommands(p: Props): Command[] {
       group: "Monospace",
       label: m.label,
       value: s.monoId === m.id ? "current" : m.note,
+      terms: "font mono monospace code chrome",
       run: () => set({ monoId: m.id }),
     });
   }
@@ -234,6 +251,7 @@ function buildCommands(p: Props): Command[] {
     group: string,
     label: string,
     hint?: string,
+    terms?: string,
   ) =>
     add({
       id: key,
@@ -241,10 +259,11 @@ function buildCommands(p: Props): Command[] {
       label: `${label}: turn ${s[key] ? "off" : "on"}`,
       value: onOff(s[key]),
       hint,
+      terms,
       run: () => set({ [key]: !s[key] } as Partial<Settings>),
     });
 
-  toggle("spellcheck", "Writing", "Spellcheck");
+  toggle("spellcheck", "Writing", "Spellcheck", undefined, "spelling dictionary");
   toggle("diffLineNumbers", "Diff", "Line numbers");
   toggle("diffWrap", "Diff", "Wrap long lines");
   toggle("diffExpandUnchanged", "Diff", "Show unchanged lines");
@@ -254,7 +273,7 @@ function buildCommands(p: Props): Command[] {
   toggle("showFrontmatter", "Files", "Frontmatter block");
   toggle("sourceLineNumbers", "Source", "Line numbers");
   toggle("sourceWrap", "Source", "Wrap long lines");
-  toggle("showIndex", "Panels", "File tree", "⌘B");
+  toggle("showIndex", "Panels", "File tree", "⌘B", "sidebar files explorer");
   toggle("showGit", "Panels", "Git panel", "⌘G");
   toggle("showStatusBar", "Panels", "Status bar");
 
@@ -306,7 +325,7 @@ export function Palette(props: Props) {
   const rows = useMemo<Row[]>(() => {
     if (isCmd) {
       return commands
-        .map((c) => ({ c, s: score(`${c.group} ${c.label}`, term) }))
+        .map((c) => ({ c, s: score(`${c.group} ${c.label} ${c.terms ?? ""}`, term) }))
         .filter((x) => x.s !== null)
         .sort((a, b) => (b.s as number) - (a.s as number))
         .slice(0, 60)
