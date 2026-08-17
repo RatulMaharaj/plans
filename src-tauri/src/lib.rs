@@ -542,6 +542,18 @@ fn create_plan(repo: String, rel_path: String, title: String) -> R<()> {
     std::fs::write(&p, format!("# {title}\n\n")).map_err(|e| e.to_string())
 }
 
+/// Make a folder. It will be empty, and git will not record it until something
+/// is written inside — which is git's business, not ours: the folder exists on
+/// disk, and the app remembers it until it has files of its own.
+#[tauri::command]
+fn create_folder(repo: String, rel_path: String) -> R<()> {
+    let p = safe_join(&repo, &rel_path)?;
+    if p.exists() {
+        return Err(format!("{rel_path} already exists"));
+    }
+    std::fs::create_dir_all(&p).map_err(|e| format!("could not create {rel_path}: {e}"))
+}
+
 #[tauri::command]
 fn rename_plan(repo: String, from: String, to: String) -> R<()> {
     let a = safe_join(&repo, &from)?;
@@ -788,6 +800,7 @@ pub fn run() {
             read_plan,
             write_plan,
             create_plan,
+            create_folder,
             rename_plan,
             delete_plan,
             git_status,

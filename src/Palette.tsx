@@ -57,6 +57,8 @@ type Props = {
   onPerf: () => void;
   /** Built in App, since they need the repo, its status and its branches. */
   gitCommands: { id: string; label: string; hint?: string; run: () => void }[];
+  canNewFolder: boolean;
+  onNewFolder: () => void;
   canRename: boolean;
   onRename: () => void;
   canInsertHtml: boolean;
@@ -111,6 +113,15 @@ function buildCommands(p: Props): Command[] {
       group: "Plans",
       label: p.hasMatter ? "Edit frontmatter" : "Add frontmatter",
       run: p.onMatter,
+    });
+  }
+  if (p.canNewFolder) {
+    add({
+      id: "new.folder",
+      group: "Plans",
+      label: "New folder…",
+      terms: "directory mkdir",
+      run: p.onNewFolder,
     });
   }
   if (p.canRename) {

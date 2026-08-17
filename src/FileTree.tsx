@@ -33,9 +33,31 @@ type Dir = {
 type File = { kind: "file"; name: string; path: string; file: PlanFile };
 type Node = Dir | File;
 
-/** Fold a flat list of repo-relative paths into nested folders. */
-function build(files: PlanFile[]): Node[] {
+/**
+ * Fold a flat list of repo-relative paths into nested folders.
+ *
+ * `empties` are folders that exist on disk but hold no markdown yet. A tree
+ * built only from files cannot show them, and a folder that vanishes the moment
+ * you make it is worse than not being able to make one.
+ */
+function build(files: PlanFile[], empties: string[] = []): Node[] {
   const root: Dir = { kind: "dir", name: "", path: "", children: [] };
+
+  const folder = (path: string): Dir => {
+    const parts = path.split("/");
+    let cur = root;
+    for (let i = 0; i < parts.length; i++) {
+      const at = parts.slice(0, i + 1).join("/");
+      let next = cur.children.find((c): c is Dir => c.kind === "dir" && c.path === at);
+      if (!next) {
+        next = { kind: "dir", name: parts[i], path: at, children: [] };
+        cur.children.push(next);
+      }
+      cur = next;
+    }
+    return cur;
+  };
+  for (const e of empties) if (e) folder(e);
   for (const f of files) {
     const parts = f.relPath.split("/");
     let cur = root;
@@ -137,6 +159,9 @@ type Props = {
   /** dir is repo-relative, "" for the repo root. */
   onNewFile: (repoPath: string, dir: string) => void;
   onRename: (repoPath: string, relPath: string) => void;
+  onNewFolder: (repoPath: string, dir: string) => void;
+  /** Folders that exist on disk but hold no markdown yet, per repository. */
+  emptyDirs: Record<string, string[]>;
   /** Open or close a whole subtree at once. */
   onSetOpen: (keys: string[], open: boolean) => void;
 };
@@ -202,10 +227,12 @@ export const FileTree = memo(function FileTree(p: Props) {
     for (const r of p.repos) {
       const files = p.filesByRepo[r.path] ?? [];
       const kept = q ? files.filter((f) => f.relPath.toLowerCase().includes(q)) : files;
-      out[r.path] = { nodes: squash(build(kept)), kept };
+      // A filter is asking about files, so empty folders step aside for it.
+      const empties = q ? [] : (p.emptyDirs[r.path] ?? []);
+      out[r.path] = { nodes: squash(build(kept, empties)), kept };
     }
     return out;
-  }, [p.repos, p.filesByRepo, p.filter]);
+  }, [p.repos, p.filesByRepo, p.filter, p.emptyDirs]);
 
   /** How much of each repo differs from its last commit. */
   const changedByRepo = useMemo(() => {
@@ -346,6 +373,15 @@ export const FileTree = memo(function FileTree(p: Props) {
               onClick={() => act(() => p.onNewFile(menu.repo, menu.path))}
             >
               New file here
+            </button>
+          )}
+
+          {menu.kind !== "file" && (
+            <button
+              className="ctx-item"
+              onClick={() => act(() => p.onNewFolder(menu.repo, menu.path))}
+            >
+              New folder here
             </button>
           )}
 

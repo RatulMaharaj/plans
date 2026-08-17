@@ -107,6 +107,9 @@ export const api = {
   createPlan: (repo: string, relPath: string, title: string) =>
     invoke<void>("create_plan", { repo, relPath, title }),
 
+  createFolder: (repo: string, relPath: string) =>
+    invoke<void>("create_folder", { repo, relPath }),
+
   renamePlan: (repo: string, from: string, to: string) =>
     invoke<void>("rename_plan", { repo, from, to }),
 

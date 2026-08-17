@@ -86,6 +86,15 @@ export function installFakeBackend(repos: FakeRepo[]) {
       if (r) delete r.files[relPath];
       return null;
     },
+    create_folder: ({ repo: p, relPath }) => {
+      const r = repo(p);
+      if (!r) throw new Error("no such repository");
+      // A folder is not a file; the fake filesystem only records that it exists.
+      if (Object.keys(r.files).some((f) => f.startsWith(`${relPath}/`))) {
+        throw new Error(`${relPath} already exists`);
+      }
+      return null;
+    },
     rename_plan: ({ repo: p, from, to }) => {
       const r = repo(p);
       if (!r) throw new Error("no such repository");

@@ -286,3 +286,26 @@ test("a pasted image is written into the repository, not inlined", async ({ page
     )
     .toContain("../assets/second.png");
 });
+
+test("a new folder appears, and holds a file", async ({ page }) => {
+  await open(page);
+  await page.locator(".row.repo").first().click({ button: "right" });
+  await page.locator(".ctx-item", { hasText: "New folder here" }).click();
+  await page.locator(".name-field").fill("ideas");
+  await page.keyboard.press("Enter");
+
+  // An empty folder is invisible to a tree built from files, so the app has to
+  // remember it until it has one.
+  await expect(page.locator(".row.dir", { hasText: "ideas" })).toBeVisible();
+
+  await page.locator(".row.dir", { hasText: "ideas" }).click({ button: "right" });
+  await page.locator(".ctx-item", { hasText: "New file here" }).click();
+  await page.locator(".name-field").fill("First idea");
+  await page.keyboard.press("Enter");
+
+  await expect
+    .poll(async () =>
+      page.evaluate(() => Object.keys((window as any).__fake.repos[0].files)),
+    )
+    .toContain("ideas/first-idea.md");
+});

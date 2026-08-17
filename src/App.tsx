@@ -30,6 +30,7 @@ const KEY = {
   repos: "plans.repos.v1",
   last: "plans.last.v1",
   tabs: "plans.tabs.v1",
+  dirs: "plans.dirs.v1",
 };
 
 /** An open buffer. The text lives on disk; this is only what is on the bar. */
@@ -130,6 +131,16 @@ export default function App() {
    * copy of the file — there is only ever one buffer, and it is the file.
    */
   const [tabs, setTabs] = useState<Tab[]>(() => stored<Tab[]>(KEY.tabs, []));
+  /**
+   * Folders made here that hold no markdown yet.
+   *
+   * The tree is built from files, so a new folder would be invisible — and git
+   * does not record an empty directory either, so nothing else remembers it.
+   * They are dropped from this list as soon as they have a file of their own.
+   */
+  const [emptyDirs, setEmptyDirs] = useState<Record<string, string[]>>(() =>
+    stored<Record<string, string[]>>(KEY.dirs, {}),
+  );
   /** A one-line question waiting on an answer: branch name, commit message. */
   const [asking, setAsking] = useState<null | {
     title: string;
@@ -145,13 +156,13 @@ export default function App() {
   /** Every folder in the repository a new file is being placed in. */
   const folderChoices = useMemo(() => {
     if (!naming) return [];
-    const seen = new Set<string>();
+    const seen = new Set<string>(emptyDirs[naming.repo] ?? []);
     for (const f of filesByRepo[naming.repo] ?? []) {
       const parts = f.relPath.split("/");
       for (let i = 1; i < parts.length; i++) seen.add(parts.slice(0, i).join("/"));
     }
     return [...seen].sort();
-  }, [naming, filesByRepo]);
+  }, [naming, filesByRepo, emptyDirs]);
 
   /** A fragment of HTML open for editing, or null. */
   const [htmlEdit, setHtmlEdit] = useState<HtmlEdit | null>(null);
@@ -228,6 +239,29 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem(KEY.tabs, JSON.stringify(tabs));
   }, [tabs]);
+
+  useEffect(() => {
+    localStorage.setItem(KEY.dirs, JSON.stringify(emptyDirs));
+  }, [emptyDirs]);
+
+  // Once a folder has markdown in it, the tree finds it on its own.
+  useEffect(() => {
+    setEmptyDirs((prev) => {
+      let changed = false;
+      const next: Record<string, string[]> = {};
+      for (const [repo, dirs] of Object.entries(prev)) {
+        const files = filesByRepo[repo];
+        if (!files) {
+          next[repo] = dirs;
+          continue;
+        }
+        const kept = dirs.filter((d) => !files.some((f) => f.relPath.startsWith(`${d}/`)));
+        if (kept.length !== dirs.length) changed = true;
+        if (kept.length) next[repo] = kept;
+      }
+      return changed ? next : prev;
+    });
+  }, [filesByRepo]);
 
   useEffect(() => {
     if (activeRepoPath) localStorage.setItem(KEY.last, JSON.stringify(activeRepoPath));
@@ -950,6 +984,40 @@ export default function App() {
     [fileAction, activeRepoPath, activePath, openFile],
   );
 
+  /** A folder, which the tree then remembers until it has files of its own. */
+  const newFolderIn = useCallback(
+    (repoPath: string, dir: string) => {
+      setAsking({
+        title: "New folder",
+        placeholder: "notes",
+        note: dir ? `Inside ${dir}` : "At the repository root",
+        confirm: "Create",
+        run: (name) => {
+          const clean = name.trim().replace(/^\/+|\/+$/g, "");
+          if (!clean) return;
+          const path = dir ? `${dir}/${clean}` : clean;
+          fileAction(repoPath, "Folder created", async () => {
+            await api.createFolder(repoPath, path);
+            setEmptyDirs((prev) => ({
+              ...prev,
+              [repoPath]: [...new Set([...(prev[repoPath] ?? []), path])],
+            }));
+            // Open it, and everything above it, so it is where you left it.
+            setExpanded((prev) => {
+              const next = new Set(prev).add(`${repoPath}::`);
+              const parts = path.split("/");
+              for (let i = 1; i <= parts.length; i++) {
+                next.add(`${repoPath}::${parts.slice(0, i).join("/")}`);
+              }
+              return next;
+            });
+          });
+        },
+      });
+    },
+    [fileAction],
+  );
+
   /** New file in a given folder, rather than beside whatever is open. */
   const newFileIn = useCallback((repoPath: string, dir: string) => {
     setNaming({ repo: repoPath, dir });
@@ -1283,6 +1351,8 @@ export default function App() {
               onDiscard={discardOne}
               onDelete={deleteOne}
               onNewFile={newFileIn}
+              onNewFolder={newFolderIn}
+              emptyDirs={emptyDirs}
               onRename={renameFile}
               onSetOpen={setOpen}
             />
@@ -1632,6 +1702,14 @@ export default function App() {
         zen={zen}
         onZen={() => setZen((z) => !z)}
         canInsertHtml={view === "write" && !!activePath}
+        canNewFolder={!!activeRepoPath}
+        onNewFolder={() =>
+          activeRepoPath &&
+          newFolderIn(
+            activeRepoPath,
+            activePath?.includes("/") ? activePath.slice(0, activePath.lastIndexOf("/")) : "",
+          )
+        }
         canRename={!!activePath && !!activeRepoPath}
         onRename={() => activeRepoPath && activePath && renameFile(activeRepoPath, activePath)}
         onInsertHtml={() =>
