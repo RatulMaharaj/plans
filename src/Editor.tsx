@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef } from "react";
 import { Crepe, CrepeFeature } from "@milkdown/crepe";
 import { remarkPluginsCtx, remarkStringifyOptionsCtx } from "@milkdown/core";
+import remarkFrontmatter from "remark-frontmatter";
 import { $prose, replaceAll } from "@milkdown/utils";
 import { Plugin, PluginKey } from "@milkdown/kit/prose/state";
 import { languages } from "@codemirror/language-data";
@@ -12,6 +13,7 @@ import { editorViewCtx } from "@milkdown/core";
 import { mermaidView } from "./mermaid-view";
 import { pasteLink } from "./paste-link";
 import { imageContext, pasteImage } from "./paste-image";
+import { yamlSchema } from "./yaml-node";
 import "./editor-theme.css";
 
 type Props = {
@@ -127,7 +129,21 @@ export function Editor({
      * be as close to the identity as remark can be made to go.
      */
     crepe.editor.config((ctx) => {
-      ctx.update(remarkPluginsCtx, (plugins) => [...plugins, { plugin: breaksFromHtml(), options: {} }]);
+      ctx.update(remarkPluginsCtx, (plugins) => [
+        ...plugins,
+        /**
+         * Frontmatter is a thing, not three dashes.
+         *
+         * Without this the parser reads `---` as a thematic break and the YAML
+         * beneath it as a setext heading, and serialising that back produces
+         * `----------------` where the closing fence was. The app normally
+         * hides the problem by splitting frontmatter off before the editor
+         * sees it — but with that setting turned off the YAML is in the
+         * document, and every save mangled it a little further.
+         */
+        { plugin: remarkFrontmatter, options: ["yaml"] } as never,
+        { plugin: breaksFromHtml(), options: {} },
+      ]);
       ctx.set(remarkStringifyOptionsCtx, {
         bullet: "-",
         emphasis: "*",
@@ -161,6 +177,9 @@ export function Editor({
 
     // Render HTML rather than printing its source into the prose.
     // Pasting a link over a selection turns it into one.
+    // A `yaml` node needs a schema before remark-frontmatter can produce one:
+    // an unknown node type fails the whole document, not just the block.
+    crepe.editor.use(yamlSchema);
     crepe.editor.use(pasteLink);
     // A pasted or dropped image is written into the repository and linked.
     crepe.editor.use(pasteImage);

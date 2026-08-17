@@ -417,3 +417,22 @@
   background: var(--shade);
   color: var(--ink);
 }
+
+/* Frontmatter left in the document: metadata, in the ledger voice, set apart
+   from the prose without pretending to be code. */
+.editor-host .milkdown .ProseMirror .md-frontmatter {
+  margin: 0 0 1.4em;
+  padding: 10px 0 12px;
+  border-bottom: 1px solid var(--rule);
+  background: transparent;
+  font-family: var(--mono);
+  font-size: calc(var(--code-size, 12px) - 0.5px);
+  line-height: 1.65;
+  letter-spacing: 0.02em;
+  color: var(--ink-3);
+  white-space: pre-wrap;
+}
+.editor-host .milkdown .ProseMirror .md-frontmatter.ProseMirror-selectednode {
+  color: var(--ink-2);
+  border-bottom-color: var(--rule-strong);
+}

@@ -36,6 +36,7 @@
     "mermaid": "^11.16.1",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
+    "remark-frontmatter": "^5.0.0",
     "unist-util-visit": "^5.1.0"
   },
   "devDependencies": {
@@ -45,6 +46,7 @@
     "@types/react": "^19.1.8",
     "@types/react-dom": "^19.1.6",
     "@vitejs/plugin-react": "^4.6.0",
+    "prettier": "^3.9.6",
     "remark": "^15.0.1",
     "remark-gfm": "^4.0.1",
     "remark-parse": "^11.0.0",

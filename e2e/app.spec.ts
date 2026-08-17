@@ -418,3 +418,40 @@ test("a file that vanishes underneath an edit is not treated as a conflict", asy
     .toContain("still mine");
   await expect(page.locator(".conflict")).toHaveCount(0);
 });
+
+test("frontmatter survives when it is left in the editor", async ({ page }) => {
+  const faults = await open(page, [
+    {
+      path: "/repo/one",
+      name: "one",
+      branch: "main",
+      files: { "meta.md": "---\ntitle: A plan\ndate: 2026-08-17\n---\n\n# The plan\n\nBody.\n" },
+    },
+  ]);
+
+  // Turn the frontmatter block off, so the YAML is in the document itself.
+  await page.keyboard.press("Meta+Shift+p");
+  await page.locator(".palette-input").fill(">frontmatter");
+  await expect(page.locator(".palette-row").first()).toContainText(/frontmatter/i);
+  await page.keyboard.press("Enter");
+  await expect(page.locator(".palette")).toHaveCount(0);
+
+  await fileRow(page, "meta").click();
+  await page.locator(".milkdown .ProseMirror").click();
+  await page.keyboard.type("x");
+
+  await expect
+    .poll(
+      async () =>
+        page.evaluate(() => (window as any).__fake.repos[0].files["meta.md"] as string),
+      { timeout: 15000 },
+    )
+    .toContain("title: A plan");
+
+  const text = await page.evaluate(
+    () => (window as any).__fake.repos[0].files["meta.md"] as string,
+  );
+  // Not a thematic break and a setext heading, which is what it used to become.
+  expect(text, "the closing fence must stay a fence").not.toContain("-----");
+  expect(faults, faults.join("\n")).toEqual([]);
+});
