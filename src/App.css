@@ -1,0 +1,925 @@
+/* ===========================================================================
+   Plans — "the ledger and the page"
+   ---------------------------------------------------------------------------
+   Two typographic registers held in tension. The page is the document: warm,
+   generous, set in a reading face at a reading size. The ledger is everything
+   around it — repos, index, git — set small in Space Mono, uppercase, tracked
+   out. Machine voice around human prose.
+
+   Colour discipline: chrome is ink at varying opacity and nothing else. The
+   only chromatic values in the whole app are the three git states, so colour
+   always means "this differs from what's committed."
+   =========================================================================== */
+
+:root[data-theme="day"] {
+  --paper: #fbfbf9;
+  --raised: #ffffff;
+  --shade: #f0f0ec;
+  --ink: #17181b;
+  --ink-2: #5b5f66;
+  --ink-3: #9aa0a8;
+  --rule: #e3e3de;
+  --rule-strong: #cfcfc8;
+  --git-new: #4b7a3f;
+  --git-mod: #9a6b12;
+  --git-staged: #3d5ba9;
+  --shadow: 0 1px 2px rgb(23 24 27 / 0.06), 0 8px 28px rgb(23 24 27 / 0.1);
+}
+
+:root[data-theme="sepia"] {
+  --paper: #e9dfcb;
+  --raised: #f1e9d8;
+  --shade: #dfd3bb;
+  --ink: #33291f;
+  --ink-2: #6b5c47;
+  --ink-3: #9c8b72;
+  --rule: #d6c9af;
+  --rule-strong: #c2b294;
+  --git-new: #4e6e33;
+  --git-mod: #8c5a0f;
+  --git-staged: #4a5288;
+  --shadow: 0 1px 2px rgb(51 41 31 / 0.08), 0 8px 28px rgb(51 41 31 / 0.14);
+}
+
+:root[data-theme="night"] {
+  /* Ink is deliberately not white — pure white on near-black halates. */
+  --paper: #121316;
+  --raised: #1a1b1f;
+  --shade: #202126;
+  --ink: #c8c5be;
+  --ink-2: #8b8880;
+  --ink-3: #5c5a55;
+  --rule: #26272b;
+  --rule-strong: #34353a;
+  --git-new: #7fa46a;
+  --git-mod: #c39a4a;
+  --git-staged: #8296cf;
+  --shadow: 0 1px 2px rgb(0 0 0 / 0.4), 0 8px 28px rgb(0 0 0 / 0.5);
+}
+
+:root {
+  --mono: "Space Mono", ui-monospace, SFMono-Regular, monospace;
+  /* Overwritten at runtime by applyType(). */
+  --doc-font: "Vollkorn", Georgia, serif;
+  --doc-size: 18.36px;
+  --doc-measure: 66ch;
+
+  --rail: 46px;
+  --index-w: 268px;
+  --git-w: 316px;
+  --bar: 30px;
+
+  color-scheme: light;
+}
+
+:root[data-theme="night"] { color-scheme: dark; }
+
+* { box-sizing: border-box; }
+
+html, body, #root { height: 100%; margin: 0; }
+
+body {
+  background: var(--paper);
+  color: var(--ink);
+  overflow: hidden;
+  font-family: var(--mono);
+  -webkit-font-smoothing: antialiased;
+  transition: background-color 140ms ease, color 140ms ease;
+}
+
+button, input, select, textarea { font: inherit; color: inherit; }
+
+:focus-visible {
+  outline: 1.5px solid var(--ink);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* --- the ledger voice ---------------------------------------------------- */
+/* Every piece of chrome text uses this. It is the app's utility register. */
+.tag {
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 400;
+  letter-spacing: 0.13em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+
+/* ===========================================================================
+   Shell
+   =========================================================================== */
+
+.app {
+  display: grid;
+  grid-template-rows: var(--rail) minmax(0, 1fr) var(--bar);
+  height: 100vh;
+}
+.app.no-bar { grid-template-rows: var(--rail) minmax(0, 1fr); }
+
+.body {
+  display: grid;
+  grid-template-columns: var(--index-w) minmax(0, 1fr);
+  min-height: 0;
+  position: relative;
+}
+.body.with-git { grid-template-columns: var(--index-w) minmax(0, 1fr) var(--git-w); }
+
+/* --- top rail ------------------------------------------------------------ */
+
+.rail {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 0 14px;
+  border-bottom: 1px solid var(--rule);
+  background: var(--paper);
+}
+
+.wordmark {
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.3em;
+  text-transform: uppercase;
+  color: var(--ink);
+  padding-right: 2px;
+}
+
+.rail-sep {
+  width: 1px;
+  height: 16px;
+  background: var(--rule);
+}
+
+.repo-select {
+  appearance: none;
+  background: transparent;
+  border: 0;
+  padding: 4px 16px 4px 4px;
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  color: var(--ink);
+  cursor: pointer;
+  max-width: 220px;
+  /* A typographic caret rather than an icon. */
+  background-image: linear-gradient(transparent, transparent);
+}
+.repo-select:hover { color: var(--ink); }
+.caret { color: var(--ink-3); font-size: 9px; margin-left: -12px; pointer-events: none; }
+
+.branch {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  color: var(--ink-3);
+}
+.branch::before { content: "⌥ "; opacity: 0.5; }
+
+.rail-spacer { flex: 1; }
+
+/* Rail buttons are letterforms, not icons. */
+.rail-btn {
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 3px;
+  padding: 4px 9px;
+  cursor: pointer;
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.13em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+  transition: color 120ms ease, border-color 120ms ease;
+}
+.rail-btn:hover { color: var(--ink); border-color: var(--rule); }
+.rail-btn.on { color: var(--ink); border-color: var(--rule-strong); }
+.rail-btn .aa {
+  font-family: var(--doc-font);
+  font-size: 14px;
+  letter-spacing: 0;
+  text-transform: none;
+}
+.rail-btn .count {
+  font-variant-numeric: tabular-nums;
+  margin-left: 6px;
+  color: var(--git-mod);
+}
+
+/* ===========================================================================
+   Index — the signature element
+   ---------------------------------------------------------------------------
+   A manuscript index, not a file tree. Each entry sets its title in the
+   reading face so the index previews the typeface choice, with a monospace
+   sub-line carrying the git mark and the folder it came from. Because state is
+   ambient here, the git panel is only needed to *act*, never to *know*.
+   =========================================================================== */
+
+.index {
+  border-right: 1px solid var(--rule);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--paper);
+}
+
+.index-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 16px 16px 10px;
+}
+
+.filter {
+  width: 100%;
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid var(--rule);
+  padding: 0 0 7px;
+  margin: 0 16px 4px;
+  width: calc(100% - 32px);
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  color: var(--ink);
+}
+.filter::placeholder { color: var(--ink-3); letter-spacing: 0.1em; text-transform: uppercase; font-size: 10px; }
+.filter:focus { outline: 0; border-bottom-color: var(--ink); }
+
+.scopes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 10px 16px 2px;
+}
+.scope {
+  background: none;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  color: var(--ink-3);
+  border-bottom: 1px solid transparent;
+}
+.scope.on { color: var(--ink-2); border-bottom-color: var(--rule-strong); }
+
+.entries { overflow-y: auto; padding: 8px 0 24px; flex: 1; }
+
+.entry {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: 0;
+  border-top: 1px solid var(--rule);
+  padding: 11px 16px 11px 16px;
+  cursor: pointer;
+  position: relative;
+  transition: background-color 100ms ease;
+}
+.entry:first-child { border-top: 0; }
+.entry:hover { background: var(--shade); }
+
+/* Active gets an ink bar in the margin — the ledger's tick mark. */
+.entry.active::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: -1px;
+  bottom: 0;
+  width: 2px;
+  background: var(--ink);
+}
+.entry.active { background: var(--shade); }
+
+.entry-title {
+  font-family: var(--doc-font);
+  font-size: 15px;
+  line-height: 1.3;
+  color: var(--ink-2);
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.entry.active .entry-title { color: var(--ink); }
+
+.entry-meta {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-top: 5px;
+  font-family: var(--mono);
+  font-size: 9.5px;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+.entry-folder { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* The git mark: the one place colour is allowed. */
+.mark { font-size: 11px; line-height: 1; width: 7px; flex-shrink: 0; }
+.mark.clean { color: var(--ink-3); }
+.mark.new { color: var(--git-new); }
+.mark.mod { color: var(--git-mod); }
+.mark.staged { color: var(--git-staged); }
+
+.index-foot { padding: 10px 16px; border-top: 1px solid var(--rule); }
+
+.new-plan {
+  width: 100%;
+  background: transparent;
+  border: 1px dashed var(--rule-strong);
+  border-radius: 3px;
+  padding: 7px;
+  cursor: pointer;
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.13em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+  transition: color 120ms ease, border-color 120ms ease;
+}
+.new-plan:hover:not(:disabled) { color: var(--ink); border-color: var(--ink-3); border-style: solid; }
+.new-plan:disabled { opacity: 0.4; cursor: default; }
+
+/* ===========================================================================
+   Page
+   =========================================================================== */
+
+.page {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  background: var(--paper);
+}
+
+.page-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 0 28px;
+  height: 34px;
+  flex-shrink: 0;
+}
+.page-path {
+  font-family: var(--mono);
+  font-size: 9.5px;
+  letter-spacing: 0.11em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.page-actions { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+.page-head .rail-btn { padding: 3px 7px; }
+.page-head .rail-btn:hover { color: var(--git-mod); }
+
+.editor-host { flex: 1; overflow-y: auto; min-height: 0; }
+
+.blank {
+  flex: 1;
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 10px;
+  text-align: center;
+  padding: 40px;
+}
+.blank-line {
+  font-family: var(--doc-font);
+  font-size: 19px;
+  color: var(--ink-2);
+  max-width: 34ch;
+  line-height: 1.5;
+}
+
+/* --- live diff ------------------------------------------------------------ */
+
+.diff-state {
+  padding: 34px 28px;
+  max-width: var(--doc-measure);
+  margin: 0 auto;
+  text-transform: none;
+  letter-spacing: 0.06em;
+  font-size: 11px;
+}
+
+.diff-surface {
+  padding: 20px 24px 45vh;
+  font-size: 12px;
+}
+/* The diff is machine output, so it stays in the ledger's voice rather than
+   inheriting the reading face. */
+.diff-surface :is(pre, code, .diffs, [data-diffs]) {
+  font-family: var(--mono) !important;
+}
+
+/* ===========================================================================
+   Status bar
+   =========================================================================== */
+
+.bar {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 0 16px;
+  border-top: 1px solid var(--rule);
+  background: var(--paper);
+  font-family: var(--mono);
+  font-size: 9.5px;
+  letter-spacing: 0.11em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+.bar-spacer { flex: 1; }
+.bar b { font-weight: 400; color: var(--ink-2); }
+.bar .saving { color: var(--git-mod); }
+
+/* ===========================================================================
+   Settings — one page, laid out as a two-column reference sheet: the label
+   column stays in the ledger voice, the controls sit in the page column.
+   =========================================================================== */
+
+.settings { overflow-y: auto; flex: 1; min-height: 0; }
+.settings-inner { max-width: 760px; margin: 0 auto; padding: 44px 32px 25vh; }
+
+.settings-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+  padding-bottom: 22px;
+  border-bottom: 1px solid var(--rule-strong);
+}
+.settings-title {
+  font-family: var(--doc-font);
+  font-size: 30px;
+  font-weight: 600;
+  letter-spacing: -0.015em;
+  margin: 0;
+  color: var(--ink);
+}
+
+.settings-group {
+  display: grid;
+  grid-template-columns: 176px minmax(0, 1fr);
+  gap: 28px;
+  padding: 26px 0;
+  border-bottom: 1px solid var(--rule);
+}
+.settings-aside { padding-top: 3px; }
+.settings-hint {
+  font-family: var(--mono);
+  font-size: 10px;
+  line-height: 1.55;
+  color: var(--ink-3);
+  margin: 8px 0 0;
+}
+.settings-body { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+
+/* --- rows ---------------------------------------------------------------- */
+
+.setting-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  width: 100%;
+  background: transparent;
+  border: 0;
+  border-radius: 4px;
+  padding: 9px 10px;
+  margin: 0 -10px;
+  cursor: pointer;
+  text-align: left;
+}
+.setting-row:hover:not(.static) { background: var(--shade); }
+.setting-row.static { cursor: default; }
+
+.setting-label {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  letter-spacing: 0.02em;
+  color: var(--ink);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.setting-hint {
+  font-size: 10px;
+  color: var(--ink-3);
+  letter-spacing: 0.04em;
+  line-height: 1.5;
+}
+
+.switch {
+  flex-shrink: 0;
+  width: 30px;
+  height: 17px;
+  border-radius: 9px;
+  border: 1px solid var(--rule-strong);
+  background: transparent;
+  position: relative;
+  transition: background-color 130ms ease, border-color 130ms ease;
+}
+.switch .knob {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  background: var(--ink-3);
+  transition: transform 130ms cubic-bezier(0.2, 0.7, 0.3, 1), background-color 130ms ease;
+}
+.switch.on { background: var(--ink); border-color: var(--ink); }
+.switch.on .knob { transform: translateX(13px); background: var(--paper); }
+
+.segmented { display: flex; flex-shrink: 0; }
+.segmented button {
+  background: transparent;
+  border: 1px solid var(--rule-strong);
+  margin-left: -1px;
+  padding: 5px 11px;
+  cursor: pointer;
+  font-family: var(--mono);
+  font-size: 9.5px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+  transition: color 120ms ease, background-color 120ms ease;
+}
+.segmented button:first-child { margin-left: 0; border-radius: 3px 0 0 3px; }
+.segmented button:last-child { border-radius: 0 3px 3px 0; }
+.segmented button:hover { color: var(--ink); }
+.segmented button.on { background: var(--ink); border-color: var(--ink); color: var(--paper); }
+.segmented.small button { padding: 4px 9px; }
+
+.slider { flex: 0 0 190px; }
+
+.specimen-block {
+  font-family: var(--doc-font);
+  font-size: var(--doc-size);
+  line-height: var(--doc-leading, 1.62);
+  color: var(--ink-2);
+  border-left: 2px solid var(--rule-strong);
+  padding: 2px 0 2px 16px;
+  margin-top: 14px;
+  max-width: var(--doc-measure);
+}
+
+.repo-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--rule);
+}
+.repo-row-main { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.repo-row-name { font-family: var(--mono); font-size: 11.5px; color: var(--ink); }
+.repo-row-name em { color: var(--ink-3); font-style: normal; }
+.repo-row-path,
+.repo-row-dirs {
+  font-family: var(--mono);
+  font-size: 9.5px;
+  color: var(--ink-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.repo-row-dirs { color: var(--ink-2); }
+.settings .new-plan { margin-top: 12px; }
+
+.credit {
+  font-family: var(--mono);
+  font-size: 10px;
+  line-height: 1.75;
+  color: var(--ink-3);
+  margin: 0;
+  max-width: 62ch;
+}
+
+@keyframes sheet-in {
+  from { opacity: 0; transform: translateY(-4px); }
+  to { opacity: 1; transform: none; }
+}
+
+.sheet-label { display: block; margin-bottom: 10px; }
+
+.papers { display: flex; gap: 8px; }
+.papers.wide { max-width: 340px; }
+.paper-swatch {
+  flex: 1;
+  border: 1px solid var(--rule-strong);
+  border-radius: 4px;
+  padding: 12px 0 7px;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.11em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+  transition: border-color 120ms ease, color 120ms ease;
+}
+.paper-swatch:hover { border-color: var(--ink-3); }
+.paper-swatch.on { border-color: var(--ink); color: var(--ink); }
+/* A specimen "Aa" on that theme's actual paper. */
+.paper-swatch .specimen {
+  font-family: var(--doc-font);
+  font-size: 15px;
+  line-height: 1;
+  width: 34px;
+  height: 26px;
+  display: grid;
+  place-items: center;
+  border-radius: 2px;
+  border: 1px solid rgb(128 128 128 / 0.25);
+}
+
+.faces { display: flex; flex-direction: column; }
+.face {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  background: transparent;
+  border: 0;
+  border-radius: 3px;
+  padding: 7px 8px;
+  margin: 0 -8px;
+  cursor: pointer;
+  text-align: left;
+}
+.face:hover { background: var(--shade); }
+.face-name { font-size: 16px; color: var(--ink-2); line-height: 1.2; }
+.face.on .face-name { color: var(--ink); }
+.face.on .face-check { color: var(--ink); }
+.face-check { font-family: var(--mono); font-size: 10px; color: transparent; }
+.face-note {
+  display: block;
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.08em;
+  color: var(--ink-3);
+  margin-top: 3px;
+  text-transform: uppercase;
+}
+
+.slider-row { display: flex; align-items: center; gap: 12px; padding: 3px 0 9px; }
+.slider-row .lo, .slider-row .hi { font-family: var(--doc-font); color: var(--ink-3); line-height: 1; }
+.slider-row .lo { font-size: 12px; }
+.slider-row .hi { font-size: 19px; }
+.slider-row .rule-lo, .slider-row .rule-hi { display: block; background: var(--ink-3); height: 1px; }
+.slider-row .rule-lo { width: 8px; }
+.slider-row .rule-hi { width: 17px; }
+
+input[type="range"] {
+  flex: 1;
+  appearance: none;
+  height: 1px;
+  background: var(--rule-strong);
+  cursor: pointer;
+}
+input[type="range"]::-webkit-slider-thumb {
+  appearance: none;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--ink);
+  border: 2px solid var(--raised);
+  box-shadow: 0 0 0 1px var(--ink);
+}
+
+/* ===========================================================================
+   Git panel — optional, and only for acting
+   =========================================================================== */
+
+.git {
+  border-left: 1px solid var(--rule);
+  background: var(--paper);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow-y: auto;
+  animation: git-in 180ms cubic-bezier(0.2, 0.7, 0.3, 1);
+}
+@keyframes git-in {
+  from { opacity: 0; transform: translateX(10px); }
+  to { opacity: 1; transform: none; }
+}
+
+.git-head { padding: 14px 16px 12px; border-bottom: 1px solid var(--rule); }
+
+.branch-row { display: flex; align-items: center; gap: 8px; margin: 8px 0 12px; }
+.branch-select {
+  flex: 1;
+  min-width: 0;
+  appearance: none;
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid var(--rule);
+  padding: 0 0 6px;
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.05em;
+  color: var(--ink);
+  cursor: pointer;
+}
+
+.sync { display: flex; gap: 8px; }
+.ghost {
+  flex: 1;
+  background: transparent;
+  border: 1px solid var(--rule-strong);
+  border-radius: 3px;
+  padding: 6px 8px;
+  cursor: pointer;
+  font-family: var(--mono);
+  font-size: 9.5px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink-2);
+  transition: border-color 120ms ease, color 120ms ease;
+}
+.ghost:hover:not(:disabled) { border-color: var(--ink); color: var(--ink); }
+.ghost:disabled { opacity: 0.4; cursor: default; }
+.ghost .n { font-variant-numeric: tabular-nums; color: var(--ink-3); margin-left: 4px; }
+
+.note { margin-top: 10px; line-height: 1.5; text-transform: none; letter-spacing: 0.02em; font-size: 10px; }
+
+.git-section { padding: 12px 16px; border-bottom: 1px solid var(--rule); }
+.section-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.change { display: flex; align-items: center; gap: 6px; }
+.change-path {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  background: transparent;
+  border: 0;
+  padding: 4px 0;
+  cursor: pointer;
+  text-align: left;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  letter-spacing: 0.02em;
+  color: var(--ink-2);
+  overflow: hidden;
+}
+.change-path:hover { color: var(--ink); }
+.change-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.change-dir { color: var(--ink-3); font-size: 9px; flex-shrink: 0; }
+
+.act {
+  background: none;
+  border: 0;
+  padding: 2px 0;
+  cursor: pointer;
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+  flex-shrink: 0;
+}
+.act:hover:not(:disabled) { color: var(--ink); }
+.act:disabled { opacity: 0.4; cursor: default; }
+
+.diff { border-bottom: 1px solid var(--rule); max-height: 300px; overflow: auto; }
+.diff-head {
+  position: sticky;
+  top: 0;
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  background: var(--shade);
+  padding: 6px 16px;
+}
+.diff pre {
+  margin: 0;
+  padding: 10px 16px;
+  font-family: var(--mono);
+  font-size: 10px;
+  line-height: 1.55;
+  white-space: pre;
+  color: var(--ink-2);
+}
+.diff .add { color: var(--git-new); }
+.diff .del { color: var(--git-mod); }
+.diff .hunk { color: var(--ink-3); }
+
+.commit { margin-top: auto; padding: 14px 16px; display: flex; flex-direction: column; gap: 10px; }
+.commit textarea {
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid var(--rule);
+  padding: 0 0 8px;
+  resize: none;
+  font-family: var(--mono);
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--ink);
+}
+.commit textarea:focus { outline: 0; border-bottom-color: var(--ink); }
+.commit textarea::placeholder { color: var(--ink-3); }
+
+.solid {
+  background: var(--ink);
+  color: var(--paper);
+  border: 1px solid var(--ink);
+  border-radius: 3px;
+  padding: 8px;
+  cursor: pointer;
+  font-family: var(--mono);
+  font-size: 9.5px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  transition: opacity 120ms ease;
+}
+.solid:disabled { opacity: 0.28; cursor: default; }
+
+.none { font-family: var(--mono); font-size: 10px; color: var(--ink-3); letter-spacing: 0.06em; padding: 2px 0; margin: 0; }
+.none.pad { padding: 12px 16px; }
+
+/* ===========================================================================
+   Toast
+   =========================================================================== */
+
+.toast {
+  position: fixed;
+  bottom: calc(var(--bar) + 14px);
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 50;
+  background: var(--raised);
+  border: 1px solid var(--rule-strong);
+  border-radius: 4px;
+  padding: 9px 16px;
+  box-shadow: var(--shadow);
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  color: var(--ink-2);
+  max-width: 60vw;
+  animation: sheet-in 150ms ease;
+}
+.toast.error { color: var(--git-mod); border-color: var(--git-mod); }
+
+/* ===========================================================================
+   Narrow windows: the index and git panel fold away before the page does.
+   =========================================================================== */
+
+@media (max-width: 1100px) {
+  .body.with-git { grid-template-columns: var(--index-w) minmax(0, 1fr); }
+  .body.with-git .git {
+    position: absolute;
+    right: 0;
+    top: 0;
+    bottom: 0;
+    width: var(--git-w);
+    box-shadow: var(--shadow);
+    z-index: 20;
+  }
+}
+
+@media (max-width: 820px) {
+  .body, .body.with-git { grid-template-columns: minmax(0, 1fr); }
+  .index {
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    width: var(--index-w);
+    box-shadow: var(--shadow);
+    z-index: 21;
+  }
+  .index.tucked { display: none; }
+}

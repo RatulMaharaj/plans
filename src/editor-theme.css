@@ -1,0 +1,93 @@
+@import "@milkdown/crepe/theme/common/style.css";
+@import "@milkdown/crepe/theme/frame.css";
+@import "./fonts/fonts.css";
+
+/* ---------------------------------------------------------------------------
+   Crepe exposes its whole palette as custom properties, so the editor is
+   repainted from our three papers rather than shipping its own light/dark.
+   --------------------------------------------------------------------------- */
+.editor-host .milkdown {
+  --crepe-color-background: var(--paper);
+  --crepe-color-on-background: var(--ink);
+  --crepe-color-surface: var(--paper);
+  --crepe-color-surface-low: var(--shade);
+  --crepe-color-on-surface: var(--ink);
+  --crepe-color-on-surface-variant: var(--ink-2);
+  --crepe-color-outline: var(--rule-strong);
+  --crepe-color-primary: var(--ink);
+  --crepe-color-secondary: var(--shade);
+  --crepe-color-on-secondary: var(--ink);
+  --crepe-color-inverse: var(--ink);
+  --crepe-color-on-inverse: var(--paper);
+  --crepe-color-inline-code: var(--git-mod);
+  --crepe-color-error: var(--git-mod);
+  --crepe-color-hover: var(--shade);
+  --crepe-color-selected: var(--shade);
+  --crepe-color-inline-area: var(--shade);
+
+  --crepe-font-default: var(--doc-font);
+  --crepe-font-title: var(--doc-font);
+  --crepe-font-code: var(--mono);
+  --crepe-shadow-1: var(--shadow);
+  --crepe-shadow-2: var(--shadow);
+
+  background: transparent;
+  color: var(--ink);
+}
+
+/* --- the page itself ------------------------------------------------------ */
+.editor-host .milkdown .ProseMirror {
+  max-width: var(--doc-measure);
+  margin: 0 auto;
+  padding: 34px 28px 45vh;
+  font-family: var(--doc-font);
+  font-size: var(--doc-size);
+  line-height: var(--doc-leading, 1.62);
+  color: var(--ink);
+}
+
+/* Headings sit in the same face but earn their rank through weight and space,
+   not size alone — a plan is mostly h1/h2 and shouldn't shout. */
+.editor-host .milkdown .ProseMirror h1,
+.editor-host .milkdown .ProseMirror h2,
+.editor-host .milkdown .ProseMirror h3,
+.editor-host .milkdown .ProseMirror h4 {
+  font-family: var(--doc-font);
+  line-height: 1.22;
+  letter-spacing: -0.005em;
+  color: var(--ink);
+}
+.editor-host .milkdown .ProseMirror h1 { font-size: 1.72em; margin: 0 0 0.5em; font-weight: 600; }
+.editor-host .milkdown .ProseMirror h2 { font-size: 1.26em; margin: 1.9em 0 0.45em; font-weight: 600; }
+.editor-host .milkdown .ProseMirror h3 { font-size: 1.06em; margin: 1.6em 0 0.4em; font-weight: 600; }
+
+.editor-host .milkdown .ProseMirror p { margin: 0 0 0.9em; }
+
+.editor-host .milkdown .ProseMirror blockquote {
+  border-left: 2px solid var(--rule-strong);
+  padding-left: 1.1em;
+  margin-left: 0;
+  color: var(--ink-2);
+  font-style: italic;
+}
+
+.editor-host .milkdown .ProseMirror hr {
+  border: 0;
+  border-top: 1px solid var(--rule);
+  margin: 2.4em 0;
+}
+
+.editor-host .milkdown .ProseMirror code {
+  font-family: var(--mono);
+  font-size: 0.82em;
+  color: var(--ink-2);
+}
+
+.editor-host .milkdown .ProseMirror a {
+  color: var(--ink);
+  text-decoration-color: var(--ink-3);
+  text-underline-offset: 2px;
+}
+
+/* Task lists carry most of a plan's meaning; give the checkbox some presence. */
+.editor-host .milkdown .ProseMirror li[data-item-type="task"] { margin: 0.25em 0; }
