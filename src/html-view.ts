@@ -250,11 +250,18 @@ export const htmlView = $view(htmlSchema.node, () => (node, _view, getPos, decor
    whichever source matches the current theme.
    =========================================================================== */
 
-const pictureKey = new PluginKey("plans-picture");
+type HtmlState = { signature: string; set: DecorationSet };
 
-/** Every html node's text, joined. Cheap next to parsing them. */
-let lastHtml = "";
+const pictureKey = new PluginKey<HtmlState>("plans-picture");
 
+/**
+ * Every html node's text, joined. Cheap next to parsing them.
+ *
+ * Held in the plugin's own state, never in a module variable: an editor can be
+ * built twice (React remounts, StrictMode does it deliberately), and a shared
+ * signature means the second instance compares against the first's work,
+ * concludes nothing has changed, and renders no decorations at all.
+ */
 function htmlSignature(doc: PMNode): string {
   const parts: string[] = [];
   doc.descendants((node) => {
@@ -461,10 +468,10 @@ export const pictureView = $prose(
     new Plugin({
       key: pictureKey,
       state: {
-        init: (_, state) => {
-          lastHtml = htmlSignature(state.doc);
-          return pictureDecorations(state.doc, htmlContext.repo, htmlContext.relPath);
-        },
+        init: (_, state) => ({
+          signature: htmlSignature(state.doc),
+          set: pictureDecorations(state.doc, htmlContext.repo, htmlContext.relPath),
+        }),
         /**
          * Rebuild only when the HTML in the document changed, or when the paper
          * did. Every other transaction moves the existing decorations along —
@@ -473,14 +480,31 @@ export const pictureView = $prose(
          */
         apply(tr, old) {
           if (tr.getMeta(pictureKey)) {
-            lastHtml = htmlSignature(tr.doc);
-            return pictureDecorations(tr.doc, htmlContext.repo, htmlContext.relPath);
+            return {
+              signature: htmlSignature(tr.doc),
+              set: pictureDecorations(tr.doc, htmlContext.repo, htmlContext.relPath),
+            };
           }
           if (!tr.docChanged) return old;
           const now = htmlSignature(tr.doc);
-          if (now === lastHtml) return old.map(tr.mapping, tr.doc);
-          lastHtml = now;
-          return pictureDecorations(tr.doc, htmlContext.repo, htmlContext.relPath);
+
+          /**
+           * Mapping is the cheap path, but it is not always enough.
+           *
+           * Loading or swapping a document replaces the whole doc, and mapping
+           * decorations through that deletion drops all of them. The signature
+           * is unchanged — same HTML, different document — so a signature check
+           * alone would keep an empty set and render nothing. Counting what
+           * survived catches it.
+           */
+          const mapped = old.set.map(tr.mapping, tr.doc);
+          const intact = mapped.find().length === old.set.find().length;
+          if (now === old.signature && intact) return { signature: now, set: mapped };
+
+          return {
+            signature: now,
+            set: pictureDecorations(tr.doc, htmlContext.repo, htmlContext.relPath),
+          };
         },
       },
       props: {
@@ -488,7 +512,7 @@ export const pictureView = $prose(
         // wrapped it, and a decoration set that is never returned is invisible.
         // Through the key: `this` is not reliably the plugin once Milkdown has
         // wrapped it.
-        decorations: (state) => pictureKey.getState(state),
+        decorations: (state) => pictureKey.getState(state)?.set,
       },
       // The choice depends on the paper, so changing it re-decides.
       view: (view: EditorView) => {

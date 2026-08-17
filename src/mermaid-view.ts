@@ -16,7 +16,9 @@ import type { EditorView } from "@milkdown/kit/prose/view";
 import type { Node as PMNode } from "@milkdown/kit/prose/model";
 import mermaid from "mermaid";
 
-const key = new PluginKey("plans-mermaid");
+type MermaidState = { signature: string; set: DecorationSet };
+
+const key = new PluginKey<MermaidState>("plans-mermaid");
 
 /** Rendered SVG by diagram source, so scrolling doesn't re-render the world. */
 const cache = new Map<string, string>();
@@ -101,8 +103,6 @@ async function draw(host: HTMLElement, source: string) {
 }
 
 /** The diagrams' sources, joined — cheap to compute, and enough to compare. */
-let lastSignature = "";
-
 function signature(doc: PMNode): string {
   const parts: string[] = [];
   doc.descendants((node) => {
@@ -141,10 +141,9 @@ export const mermaidView = $prose(
     new Plugin({
       key,
       state: {
-        init: (_, state) => {
-          lastSignature = signature(state.doc);
-          return build(state.doc);
-        },
+        // Signature in the plugin's state, not a module variable: two editors
+        // would otherwise share it, and the second would render nothing.
+        init: (_, state) => ({ signature: signature(state.doc), set: build(state.doc) }),
         /**
          * Only rebuild when a diagram's own text changed. Otherwise the old
          * decorations are moved to their new positions, which is what
@@ -153,20 +152,21 @@ export const mermaidView = $prose(
          */
         apply(tr, old) {
           if (tr.getMeta(key)) {
-            lastSignature = signature(tr.doc);
-            return build(tr.doc);
+            return { signature: signature(tr.doc), set: build(tr.doc) };
           }
           if (!tr.docChanged) return old;
           const now = signature(tr.doc);
-          if (now === lastSignature) return old.map(tr.mapping, tr.doc);
-          lastSignature = now;
-          return build(tr.doc);
+          // Mapping through a whole-document replacement drops everything, and
+          // the signature cannot tell that apart from an ordinary edit.
+          const mapped = old.set.map(tr.mapping, tr.doc);
+          const intact = mapped.find().length === old.set.find().length;
+          if (now === old.signature && intact) return { signature: now, set: mapped };
+          return { signature: now, set: build(tr.doc) };
         },
       },
       props: {
-        decorations(this: Plugin, state) {
-          return this.getState(state);
-        },
+        // Through the key: `this` is not reliably the plugin here.
+        decorations: (state) => key.getState(state)?.set,
       },
       /**
        * Repaint when the paper changes.
@@ -181,7 +181,6 @@ export const mermaidView = $prose(
         const repaint = () => {
           cache.clear();
           themed = "";
-          lastSignature = "";
           view.dispatch(view.state.tr.setMeta(key, true));
         };
         const observer = new MutationObserver(repaint);

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef } from "react";
 import { Crepe, CrepeFeature } from "@milkdown/crepe";
-import { remarkStringifyOptionsCtx } from "@milkdown/core";
+import { remarkPluginsCtx, remarkStringifyOptionsCtx } from "@milkdown/core";
 import { $prose, replaceAll } from "@milkdown/utils";
 import { Plugin, PluginKey } from "@milkdown/kit/prose/state";
 import { languages } from "@codemirror/language-data";
@@ -28,6 +28,34 @@ type Props = {
  * Milkdown Crepe gives us a WYSIWYG surface whose source of truth is markdown,
  * so what lands on disk stays diff-friendly for git.
  */
+/**
+ * `<br>` becomes a real line break.
+ *
+ * Milkdown drops inline `<br/>`: it survives neither as an html node nor as a
+ * break, so `Title<br/><sub>…` renders as one run-on line. Rewriting it to
+ * mdast's own break before Milkdown parses gives it something it understands,
+ * and the serialiser writes it back as HTML so the file keeps its author's form.
+ */
+const BR = /^<br\s*\/?>$/i;
+
+function breaksFromHtml() {
+  return () => (tree: { children?: unknown[] }) => {
+    const walk = (node: any) => {
+      const kids = node?.children;
+      if (!Array.isArray(kids)) return;
+      for (let i = 0; i < kids.length; i++) {
+        const child = kids[i];
+        if (child?.type === "html" && BR.test(String(child.value).trim())) {
+          kids[i] = { type: "break" };
+        } else {
+          walk(child);
+        }
+      }
+    };
+    walk(tree);
+  };
+}
+
 export function Editor({ docKey, repo, relPath, initialValue, spellcheck, onChange }: Props) {
   const hostRef = useRef<HTMLDivElement | null>(null);
   const instance = useRef<Crepe | null>(null);
@@ -39,6 +67,8 @@ export function Editor({ docKey, repo, relPath, initialValue, spellcheck, onChan
   const swapping = useRef(false);
   /** The text last handed to App, so an unchanged document is not reported. */
   const lastSentRef = useRef("");
+  /** Set by the live editor, so a swap can declare the new document untouched. */
+  const untouch = useRef<(() => void) | null>(null);
   const onChangeRef = useRef(onChange);
   onChangeRef.current = onChange;
 
@@ -83,6 +113,7 @@ export function Editor({ docKey, repo, relPath, initialValue, spellcheck, onChan
      * be as close to the identity as remark can be made to go.
      */
     crepe.editor.config((ctx) => {
+      ctx.update(remarkPluginsCtx, (plugins) => [...plugins, { plugin: breaksFromHtml(), options: {} }]);
       ctx.set(remarkStringifyOptionsCtx, {
         bullet: "-",
         emphasis: "*",
@@ -105,7 +136,12 @@ export function Editor({ docKey, repo, relPath, initialValue, spellcheck, onChan
          * no longer protected, so it may re-parse as emphasis next time the
          * file is opened. Fidelity to what is on disk is worth more here.
          */
-        handlers: { text: (node: { value: string }) => node.value },
+        handlers: {
+          text: (node: { value: string }) => node.value,
+          // It arrived as HTML and leaves as HTML, rather than as a backslash
+          // or two invisible trailing spaces.
+          break: () => "<br />",
+        },
       });
     });
 
@@ -130,6 +166,7 @@ export function Editor({ docKey, repo, relPath, initialValue, spellcheck, onChan
         .map((line) => schema.nodes.html.create({ value: line }));
 
     htmlBridge.apply = ({ from, to, value }) => {
+      touched = true;
       crepe.editor.action((ctx) => {
         const view = ctx.get(editorViewCtx);
         const nodes = nodesFor(value, view.state.schema);
@@ -141,6 +178,7 @@ export function Editor({ docKey, repo, relPath, initialValue, spellcheck, onChan
     };
 
     htmlBridge.insert = (value) => {
+      touched = true;
       crepe.editor.action((ctx) => {
         const view = ctx.get(editorViewCtx);
         const nodes = nodesFor(value, view.state.schema);
@@ -156,6 +194,16 @@ export function Editor({ docKey, repo, relPath, initialValue, spellcheck, onChan
      * escaping all normalise — so nothing is reported until create() has
      * settled and the text genuinely differs from what we were handed.
      */
+    /**
+     * Nothing is an edit until someone edits.
+     *
+     * `ready` was not enough. Parsing and re-serialising is not always the
+     * identity — HTML especially — so a file could differ from itself the
+     * moment it was opened, and autosave would write the difference back. A
+     * document is only dirty once a person has typed, pasted, cut or dropped
+     * into it, or changed it through the app's own HTML editor.
+     */
+    let touched = false;
     let ready = false;
     let timer: number | null = null;
     lastSentRef.current = initialValue;
@@ -174,7 +222,7 @@ export function Editor({ docKey, repo, relPath, initialValue, spellcheck, onChan
      */
     const send = () => {
       timer = null;
-      if (!ready || swapping.current) return;
+      if (!ready || !touched || swapping.current) return;
       const markdown = crepe.getMarkdown();
       if (markdown === lastSentRef.current) return;
       lastSentRef.current = markdown;
@@ -199,6 +247,16 @@ export function Editor({ docKey, repo, relPath, initialValue, spellcheck, onChan
 
     instance.current = crepe;
     created.current = false;
+    untouch.current = () => {
+      touched = false;
+    };
+
+    const onInput = () => {
+      touched = true;
+    };
+    for (const ev of ["beforeinput", "paste", "cut", "drop", "keydown"] as const) {
+      root.addEventListener(ev, onInput, true);
+    }
     /**
      * True once this effect has been cleaned up.
      *
@@ -238,6 +296,9 @@ export function Editor({ docKey, repo, relPath, initialValue, spellcheck, onChan
       }
       disposed = true;
       created.current = false;
+      for (const ev of ["beforeinput", "paste", "cut", "drop", "keydown"] as const) {
+        root.removeEventListener(ev, onInput, true);
+      }
       if (instance.current === crepe) instance.current = null;
       htmlBridge.apply = null;
       htmlBridge.insert = null;
@@ -276,6 +337,7 @@ export function Editor({ docKey, repo, relPath, initialValue, spellcheck, onChan
     }
     swapping.current = true;
     lastSentRef.current = text;
+    untouch.current?.();
     try {
       crepe.editor.action(replaceAll(text));
     } catch (e) {

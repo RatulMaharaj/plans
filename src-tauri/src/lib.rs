@@ -659,3 +659,99 @@ pub fn run() {
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
+
+// ---------------------------------------------------------------------------
+// tests
+// ---------------------------------------------------------------------------
+//
+// The two things worth proving here are the ones that would be quiet if they
+// broke: a path that escapes its repository, and a fingerprint that fails to
+// notice a file changed underneath an edit. Everything else in this file is a
+// thin wrapper over `git`, which tests itself.
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // --- safe_join: the boundary between the UI and the filesystem ----------
+
+    #[test]
+    fn joins_paths_inside_the_repository() {
+        let p = safe_join("/repo", "notes/plan.md").unwrap();
+        assert_eq!(p, PathBuf::from("/repo/notes/plan.md"));
+    }
+
+    #[test]
+    fn refuses_to_escape_the_repository() {
+        for bad in ["../secrets", "notes/../../etc/passwd", "..", "a/../.."] {
+            assert!(
+                safe_join("/repo", bad).is_err(),
+                "{bad} should not be allowed out of the repository",
+            );
+        }
+    }
+
+    #[test]
+    fn refuses_absolute_paths() {
+        assert!(safe_join("/repo", "/etc/passwd").is_err());
+    }
+
+    #[test]
+    fn allows_a_leading_dot_segment() {
+        // "./plan.md" is how a path can arrive from the UI and means the same
+        // thing as "plan.md"; refusing it would be surprising.
+        assert_eq!(
+            safe_join("/repo", "./plan.md").unwrap(),
+            PathBuf::from("/repo/./plan.md"),
+        );
+    }
+
+    #[test]
+    fn the_empty_path_is_the_repository_itself() {
+        assert_eq!(safe_join("/repo", "").unwrap(), PathBuf::from("/repo"));
+    }
+
+    // --- stamps: how a write knows the file did not move underneath it ------
+
+    #[test]
+    fn the_same_bytes_give_the_same_stamp() {
+        assert_eq!(stamp_of(b"# Plan\n"), stamp_of(b"# Plan\n"));
+    }
+
+    #[test]
+    fn different_bytes_give_different_stamps() {
+        assert_ne!(stamp_of(b"# Plan\n"), stamp_of(b"# Plan\n\n"));
+        // A trailing newline is a real difference: it is exactly the byte the
+        // serialiser used to drop.
+        assert_ne!(stamp_of(b"text"), stamp_of(b"text\n"));
+    }
+
+    #[test]
+    fn a_file_reverted_to_its_old_contents_reads_as_unchanged() {
+        // Content-hashed rather than mtime-based, on purpose: an agent that
+        // writes and undoes a change has not changed anything.
+        let before = stamp_of(b"one");
+        let after_edit = stamp_of(b"two");
+        let reverted = stamp_of(b"one");
+        assert_ne!(before, after_edit);
+        assert_eq!(before, reverted);
+    }
+
+    #[test]
+    fn a_missing_file_is_absent_rather_than_empty() {
+        let missing = stamp_at(Path::new("/definitely/not/here.md"));
+        assert_eq!(missing, ABSENT);
+        // And "absent" must not collide with the stamp of an empty file, or
+        // creating a file would look like no change at all.
+        assert_ne!(missing, stamp_of(b""));
+    }
+
+    // --- what counts as markdown, and what is skipped -----------------------
+
+    #[test]
+    fn build_directories_are_skipped() {
+        for dir in ["node_modules", "target", ".git", "dist"] {
+            assert!(SKIP_DIRS.contains(&dir), "{dir} should be skipped");
+        }
+    }
+}
