@@ -111,13 +111,14 @@ export function installFakeBackend(repos: FakeRepo[]) {
       }
       return out;
     },
-    write_asset: ({ repo: p, relPath, stem, ext }) => {
+    write_asset: ({ repo: p, relPath, folder, stem, ext }) => {
       const r = repo(p);
-      const dir = relPath.includes("/") ? relPath.slice(0, relPath.lastIndexOf("/")) : "";
+      const dir = (folder || "assets").replace(/^\/+|\/+$/g, "");
       const name = `${stem}.${ext}`;
-      const full = dir ? `${dir}/assets/${name}` : `assets/${name}`;
-      if (r) r.files[full] = "<binary>";
-      return `assets/${name}`;
+      if (r) r.files[`${dir}/${name}`] = "<binary>";
+      // The link climbs out of the document's own folder, as markdown needs.
+      const depth = (relPath.match(/\//g) ?? []).length;
+      return `${"../".repeat(depth)}${dir}/${name}`;
     },
     git_status: ({ repo: p }) => {
       const r = repo(p);

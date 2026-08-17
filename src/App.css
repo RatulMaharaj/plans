@@ -1746,3 +1746,19 @@ body.resizing .files-edge { pointer-events: auto; }
 
 /* A search hit shows the line, with its file and line number alongside. */
 .palette-row .palette-label { font-variant-numeric: tabular-nums; }
+
+/* A short text setting: a folder name, a path. */
+.setting-field {
+  width: 180px;
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid var(--rule);
+  padding: 0 0 4px;
+  text-align: right;
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.03em;
+  color: var(--ink);
+}
+.setting-field:focus { outline: 0; border-bottom-color: var(--ink-3); }
+.setting-field::placeholder { color: var(--ink-3); }

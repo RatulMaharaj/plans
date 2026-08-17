@@ -45,6 +45,8 @@ export type Settings = {
   showExtensions: boolean;
   /** Hold YAML frontmatter apart from the prose, above the page. */
   showFrontmatter: boolean;
+  /** Where a pasted image is written, relative to the repository root. */
+  imageFolder: string;
 
   // Source
   /** Line numbers down the side of the raw markdown. */
@@ -84,6 +86,7 @@ export const DEFAULTS: Settings = {
   showIgnored: false,
   showExtensions: true,
   showFrontmatter: true,
+  imageFolder: "assets",
   sourceLineNumbers: true,
   sourceWrap: true,
   treeSize: 12.5,

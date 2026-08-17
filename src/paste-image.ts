@@ -15,8 +15,8 @@ import { imageSchema } from "@milkdown/preset-commonmark";
 import { Plugin, PluginKey } from "@milkdown/kit/prose/state";
 import { api } from "./api";
 
-/** Which file we are in, so the image can be written beside it. */
-export const imageContext = { repo: "", relPath: "" };
+/** Which file we are in, and where images go. Set when a document is opened. */
+export const imageContext = { repo: "", relPath: "", folder: "assets" };
 
 const KIND = /^image\/(png|jpe?g|gif|webp|avif|svg\+xml)$/i;
 
@@ -34,13 +34,14 @@ function stemFor(relPath: string): string {
 }
 
 async function insert(view: { state: any; dispatch: (tr: any) => void }, ctx: any, file: File) {
-  const { repo, relPath } = imageContext;
+  const { repo, relPath, folder } = imageContext;
   if (!repo || !relPath) return;
 
   const bytes = new Uint8Array(await file.arrayBuffer());
   const src = await api.writeAsset(
     repo,
     relPath,
+    folder,
     stemFor(relPath),
     extensionFor(file.type),
     Array.from(bytes),
@@ -56,8 +57,23 @@ export const pasteImage = $prose((ctx) => {
   return new Plugin({
     key: new PluginKey("plans-paste-image"),
     view: (view) => {
-      const filesFrom = (data: DataTransfer | null) =>
-        [...(data?.files ?? [])].filter((f) => KIND.test(f.type));
+      /**
+       * Both routes, because they are not the same one.
+       *
+       * A screenshot pasted from the macOS clipboard arrives through
+       * `items` as a file entry, while a file dragged from Finder arrives
+       * through `files`. Reading only `files` — as this did — works in a
+       * synthetic test and does nothing at all in the app.
+       */
+      const filesFrom = (data: DataTransfer | null): File[] => {
+        if (!data) return [];
+        const found = [...(data.files ?? [])].filter((f) => KIND.test(f.type));
+        if (found.length) return found;
+        return [...(data.items ?? [])]
+          .filter((i) => i.kind === "file" && KIND.test(i.type))
+          .map((i) => i.getAsFile())
+          .filter((f): f is File => !!f);
+      };
 
       const onPaste = (event: ClipboardEvent) => {
         const files = filesFrom(event.clipboardData);

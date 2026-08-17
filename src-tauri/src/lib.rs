@@ -367,21 +367,21 @@ pub struct Hit {
 fn write_asset(
     repo: String,
     rel_path: String,
+    folder: String,
     stem: String,
     ext: String,
     bytes: Vec<u8>,
 ) -> R<String> {
-    let root = PathBuf::from(&repo);
-    let dir = rel_path
-        .rsplit_once('/')
-        .map(|(d, _)| d.to_string())
-        .unwrap_or_default();
-    // Alongside the document, in a folder named for it.
-    let folder = if dir.is_empty() {
+    // A folder under the repository root, not beside the document: images are
+    // shared between notes more often than they belong to one, and a tree full
+    // of assets/ folders is worse than a single place to look.
+    let folder = folder.trim().trim_matches('/').to_string();
+    let folder = if folder.is_empty() {
         "assets".to_string()
     } else {
-        format!("{dir}/assets")
+        folder
     };
+
     let safe_stem: String = stem
         .chars()
         .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
@@ -389,12 +389,12 @@ fn write_asset(
         .trim_matches('-')
         .to_lowercase();
     let safe_stem = if safe_stem.is_empty() {
-        "image".into()
+        "image".to_string()
     } else {
         safe_stem
     };
     let ext = ext.trim_start_matches('.').to_lowercase();
-    let ext = if ext.chars().all(|c| c.is_ascii_alphanumeric()) && !ext.is_empty() {
+    let ext = if !ext.is_empty() && ext.chars().all(|c| c.is_ascii_alphanumeric()) {
         ext
     } else {
         "png".to_string()
@@ -403,6 +403,8 @@ fn write_asset(
     let abs_dir = safe_join(&repo, &folder)?;
     std::fs::create_dir_all(&abs_dir).map_err(|e| e.to_string())?;
 
+    // Numbered rather than overwritten: a pasted image must never replace one
+    // that is already linked from somewhere.
     let mut name = format!("{safe_stem}.{ext}");
     let mut n = 2;
     while abs_dir.join(&name).exists() {
@@ -411,12 +413,23 @@ fn write_asset(
     }
     std::fs::write(abs_dir.join(&name), &bytes).map_err(|e| e.to_string())?;
 
-    // Relative to the document, which is how the link has to read.
-    let _ = root;
-    Ok(format!("assets/{name}"))
+    Ok(link_from(&rel_path, &format!("{folder}/{name}")))
 }
 
-/// Search inside the markdown of a repository.
+/// A link from one repo-relative path to another, as markdown wants it.
+///
+/// A document in `notes/deep/` linking to `assets/x.png` needs `../../assets/x.png`;
+/// one at the root needs `assets/x.png`. Getting this wrong is invisible in the
+/// editor, which resolves paths itself, and broken everywhere else.
+fn link_from(doc: &str, target: &str) -> String {
+    let depth = doc.matches('/').count();
+    if depth == 0 {
+        return target.to_string();
+    }
+    format!("{}{}", "../".repeat(depth), target)
+}
+
+/// Search inside the markdown of a repository./// Search inside the markdown of a repository.
 ///
 /// Filenames answer "which file was that", and are already searchable. This
 /// answers the other question — "where did I write about X" — which for notes
@@ -883,6 +896,19 @@ mod tests {
     }
 
     // --- what counts as markdown, and what is skipped -----------------------
+
+    #[test]
+    fn a_link_climbs_out_of_the_documents_folder() {
+        assert_eq!(link_from("readme.md", "assets/a.png"), "assets/a.png");
+        assert_eq!(
+            link_from("notes/plan.md", "assets/a.png"),
+            "../assets/a.png"
+        );
+        assert_eq!(
+            link_from("notes/deep/plan.md", "assets/a.png"),
+            "../../assets/a.png",
+        );
+    }
 
     #[test]
     fn build_directories_are_skipped() {

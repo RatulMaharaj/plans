@@ -251,6 +251,13 @@ export function SettingsPage({
             onChange={(treeSize) => onChange({ treeSize })}
             fallback={DEFAULTS.treeSize}
           />
+          <Field
+            label="Image folder"
+            hint="Where a pasted image is written, from the repository root."
+            value={s.imageFolder}
+            placeholder="assets"
+            onChange={(imageFolder) => onChange({ imageFolder })}
+          />
           <Toggle
             label="Frontmatter block"
             hint="Keeps YAML out of the page, behind a header button. Off leaves it in the editor."
@@ -433,6 +440,38 @@ function Row({ label, hint }: { label: string; hint: string }) {
         {label}
         <span className="setting-hint">{hint}</span>
       </span>
+    </div>
+  );
+}
+
+/** A short piece of text: a folder name, a path. */
+function Field({
+  label,
+  hint,
+  value,
+  placeholder,
+  onChange,
+}: {
+  label: string;
+  hint?: string;
+  value: string;
+  placeholder?: string;
+  onChange: (v: string) => void;
+}) {
+  return (
+    <div className="setting-row static">
+      <span className="setting-label">
+        {label}
+        {hint && <span className="setting-hint">{hint}</span>}
+      </span>
+      <input
+        className="setting-field"
+        value={value}
+        placeholder={placeholder}
+        spellCheck={false}
+        aria-label={label}
+        onChange={(e) => onChange(e.target.value)}
+      />
     </div>
   );
 }

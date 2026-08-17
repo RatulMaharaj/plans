@@ -1365,6 +1365,26 @@ export default function App() {
                 <span className="page-path">{activePath ?? ""}</span>
                 {activePath && (
                   <span className="page-actions">
+                    {/* Layout sits to the left of the view switch: appearing
+                        between the switch and Delete moved them under the
+                        pointer every time the diff was opened. */}
+                    {view === "diff" && (
+                      <span className="segmented small">
+                        <button
+                          className={settings.diffStyle === "unified" ? "on" : ""}
+                          onClick={() => set({ diffStyle: "unified" })}
+                        >
+                          Unified
+                        </button>
+                        <button
+                          className={settings.diffStyle === "split" ? "on" : ""}
+                          onClick={() => set({ diffStyle: "split" })}
+                        >
+                          Split
+                        </button>
+                      </span>
+                    )}
+
                     <span className="segmented small">
                       <button
                         className={view === "write" ? "on" : ""}
@@ -1387,23 +1407,6 @@ export default function App() {
                         Diff
                       </button>
                     </span>
-                    {/* Layout belongs where the diff is, not only in Settings. */}
-                    {view === "diff" && (
-                      <span className="segmented small">
-                        <button
-                          className={settings.diffStyle === "unified" ? "on" : ""}
-                          onClick={() => set({ diffStyle: "unified" })}
-                        >
-                          Unified
-                        </button>
-                        <button
-                          className={settings.diffStyle === "split" ? "on" : ""}
-                          onClick={() => set({ diffStyle: "split" })}
-                        >
-                          Split
-                        </button>
-                      </span>
-                    )}
                     {/* Only where there is one to edit. */}
                     {matter !== null && (
                       <button
@@ -1494,6 +1497,7 @@ export default function App() {
                       relPath={activePath}
                       initialValue={content}
                       spellcheck={settings.spellcheck}
+                      imageFolder={settings.imageFolder}
                       onChange={onChange}
                     />
                   </div>

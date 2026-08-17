@@ -22,6 +22,8 @@ type Props = {
   docKey: string;
   initialValue: string;
   spellcheck: boolean;
+  /** Where pasted images are written, relative to the repository root. */
+  imageFolder: string;
   onChange: (markdown: string) => void;
 };
 
@@ -57,7 +59,15 @@ function breaksFromHtml() {
   };
 }
 
-export function Editor({ docKey, repo, relPath, initialValue, spellcheck, onChange }: Props) {
+export function Editor({
+  docKey,
+  repo,
+  relPath,
+  initialValue,
+  spellcheck,
+  imageFolder,
+  onChange,
+}: Props) {
   const hostRef = useRef<HTMLDivElement | null>(null);
   const instance = useRef<Crepe | null>(null);
   /** Only true between create() resolving and destroy(); actions need it. */
@@ -80,6 +90,7 @@ export function Editor({ docKey, repo, relPath, initialValue, spellcheck, onChan
     htmlContext.relPath = relPath;
     imageContext.repo = repo;
     imageContext.relPath = relPath;
+    imageContext.folder = imageFolder;
 
     const crepe = new Crepe({
       root,
@@ -365,6 +376,7 @@ export function Editor({ docKey, repo, relPath, initialValue, spellcheck, onChan
     htmlContext.relPath = relPath;
     imageContext.repo = repo;
     imageContext.relPath = relPath;
+    imageContext.folder = imageFolder;
     swap(initialValue);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [docKey]);

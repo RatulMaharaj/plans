@@ -107,16 +107,25 @@
   --crepe-color-surface: var(--code-bg);
   --crepe-color-surface-low: var(--code-bg);
 }
-.editor-host .milkdown milkdown-code-block .cm-editor,
-.editor-host .milkdown .milkdown-code-block .cm-editor {
+.editor-host .milkdown :is(milkdown-code-block, .milkdown-code-block) .cm-editor {
   border: 1px solid var(--rule);
   border-radius: 3px;
   background: var(--code-bg);
 }
-.editor-host .milkdown milkdown-code-block .cm-editor.cm-focused {
+.editor-host .milkdown :is(milkdown-code-block, .milkdown-code-block) .cm-editor.cm-focused {
   outline: none;
+}
+.editor-host .milkdown :is(milkdown-code-block, .milkdown-code-block) .cm-editor.cm-focused {
   border-color: var(--rule-strong);
 }
+/* No line numbers in prose. A fenced block in a document is a quotation of
+   code, not a file being edited — the numbers would refer to nothing, and they
+   cost 33px of indent that pushes the code away from the text around it. The
+   Source view keeps its gutter, where the numbers mean something. */
+.editor-host .milkdown :is(milkdown-code-block, .milkdown-code-block) .cm-gutters {
+  display: none;
+}
+
 /* The language picker reads as chrome, so it takes the ledger voice. */
 .editor-host .milkdown milkdown-code-block .language-picker,
 .editor-host .milkdown milkdown-code-block button {
@@ -320,8 +329,26 @@
    app's papers, matching the dropdowns everywhere else in the app.
    --------------------------------------------------------------------------- */
 
-.editor-host .milkdown .milkdown-code-block { background: var(--code-bg); border-radius: 3px; }
-.editor-host .milkdown .milkdown-code-block .tools { padding: 6px 8px 0; }
+/* The frame belongs to the code itself, not to a box around it. The outer
+   element draws nothing: the language button sits above the border, in the
+   prose, and the bordered block starts at the code. */
+.editor-host .milkdown :is(.milkdown-code-block, milkdown-code-block) {
+  background: transparent;
+  border: 0;
+  /* Tighter above than below: the language button already sits in that gap,
+     and a paragraph reads as belonging to the code it introduces.
+
+     Measured, not guessed: Crepe pads this container by 20px, which pushed the
+     whole block right of every heading, paragraph and table. The frame belongs
+     on the same vertical as the prose, so the padding goes. */
+  margin: 0.5em 0 1.2em;
+  padding: 0;
+}
+.editor-host .milkdown .milkdown-code-block .tools {
+  padding: 0 0 4px;
+  border: 0;
+  background: transparent;
+}
 
 .editor-host .milkdown .language-button {
   display: inline-flex;

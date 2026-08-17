@@ -32,8 +32,17 @@ const surface = EditorView.theme({
   "&": {
     height: "100%",
     fontSize: "calc(var(--doc-size) * 0.72)",
+    /**
+     * Paper, not the code block's ground.
+     *
+     * codeTheme is shared with fenced blocks, where a distinct surface sets the
+     * code apart from the prose around it. Here the source *is* the document,
+     * with nothing to be set apart from — so it takes the page's own colour and
+     * overrides what the shared theme brings.
+     */
     background: "var(--paper)",
   },
+  ".cm-scroller, .cm-gutters": { background: "var(--paper)" },
   ".cm-scroller": {
     fontFamily: "var(--mono)",
     lineHeight: "1.75",

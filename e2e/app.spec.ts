@@ -272,17 +272,17 @@ test("a pasted image is written into the repository, not inlined", async ({ page
     el.dispatchEvent(new ClipboardEvent("paste", { clipboardData: data, bubbles: true, cancelable: true }));
   });
 
-  // The bytes land beside the document…
+  // The bytes land in the repository's image folder, not beside the document…
   await expect
     .poll(async () =>
       page.evaluate(() => Object.keys((window as any).__fake.repos[0].files)),
     )
-    .toContain("notes/assets/second.png");
+    .toContain("assets/second.png");
 
-  // …and the markdown gets an ordinary relative link, not a data URL.
+  // …and the markdown links to it relatively, climbing out of notes/.
   await expect
     .poll(async () =>
       page.evaluate(() => (window as any).__fake.repos[0].files["notes/second.md"] as string),
     )
-    .toContain("assets/second.png");
+    .toContain("../assets/second.png");
 });

@@ -66,8 +66,14 @@ export const api = {
     invoke<{ content: string; stamp: string }>("read_plan", { repo, relPath }),
 
   /** Write an image beside a document; returns the path to link to. */
-  writeAsset: (repo: string, relPath: string, stem: string, ext: string, bytes: number[]) =>
-    invoke<string>("write_asset", { repo, relPath, stem, ext, bytes }),
+  writeAsset: (
+    repo: string,
+    relPath: string,
+    folder: string,
+    stem: string,
+    ext: string,
+    bytes: number[],
+  ) => invoke<string>("write_asset", { repo, relPath, folder, stem, ext, bytes }),
 
   /** Lines inside the repository's markdown that contain `query`. */
   searchPlans: (repo: string, query: string, includeIgnored = false, limit = 60) =>
