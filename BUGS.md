@@ -7,9 +7,12 @@ symptom, or when the same mistake could be made again.
 Fixed entries stay because the pattern is the useful part. Each names how it was
 found, since on this project the finding has usually been harder than the fix.
 
+Remember to add changesets for any patched bugs - fixed bugs belong in the changelog rather than here.
+
 ## Open
 
-Nothing at the moment.
+- [ ] Hitting esc should unfocus the editor so I can use Cmd + B, maybe the visual clue is the selected tab colour when selected vs when focused/editing
+- [ ] Write / source / diff state doesn’t seem to be at a buffer level. So we should move those 3 buttons up into tab row.
 
 ## Watch for
 

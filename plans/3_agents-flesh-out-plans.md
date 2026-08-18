@@ -1,3 +1,9 @@
+---
+
+---
+---
+status: draft
+---
 # Agents That Flesh Out Plans
 
 The plans in this folder are written by an agent. That happens in a terminal,

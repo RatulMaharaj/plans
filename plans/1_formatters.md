@@ -1,3 +1,6 @@
+---
+status: active
+---
 # Formatters Support
 
 Plans writes markdown back to disk with its own remark-stringify settings. Every

@@ -1,3 +1,6 @@
+---
+status: done
+---
 # Collaboration
 
 The draft has three ideas — no accounts, markdown-native comments, UI grown

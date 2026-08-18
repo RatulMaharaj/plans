@@ -1,3 +1,6 @@
+---
+status: active
+---
 # Split Panes
 
 Plans shows one document at a time. Writing a plan means reading another one —
@@ -8,6 +11,8 @@ are ways of arranging one thing.
 
 The goal: two documents side by side, each with its own view, its own scroll
 position, and its own cursor, moved between by keyboard.
+
+We also need to make Ctrl + t, tab through the open buffers -  I didn't add a full plan for that but please do it.
 
 ## The real work is the state, not the layout
 

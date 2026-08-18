@@ -1,3 +1,6 @@
+---
+status: done
+---
 # Changesets and Release Notes
 
 Releases have no memory. The version is hand-edited into `package.json` and

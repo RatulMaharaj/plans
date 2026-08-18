@@ -1,3 +1,6 @@
+---
+status: done
+---
 # Auto-Updates
 
 Upgrading Plans currently means noticing that a new release exists, finding it,
