@@ -30,6 +30,26 @@ Not bugs yet — places the same class of mistake would land next.
 
 ## Fixed
 
+### Clicking a file showed the previous one
+
+Some files would not open at all — a blank buffer, or the document you were
+already looking at, unchanged.
+
+A `<br>` was being turned into a line break wherever it appeared, including one
+standing on its own between blocks. mdast puts that at the root of the document,
+and a break at the root builds a document ProseMirror refuses:
+`Cannot create node for doc`. The whole file failed, not the block, and because
+the swap threw, the previous document stayed on screen.
+
+The conversion is now limited to the places a break can legally go — inside a
+paragraph, heading, link, table cell — and a block-level `<br>` keeps its html
+node, which renders anyway.
+
+Found from the trace log: every failing swap named the offending content, with
+`hardbreak` sitting between a heading and a paragraph. Not reproducible in the
+test harness until the fixture used a standalone `<br />`, which is exactly how
+these files are written.
+
 ### Diagrams kept their colours when the paper changed
 
 A mermaid diagram stayed in the old theme's colours until the file was closed

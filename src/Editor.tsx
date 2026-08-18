@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Crepe, CrepeFeature } from "@milkdown/crepe";
 import { remarkPluginsCtx, remarkStringifyOptionsCtx } from "@milkdown/core";
 import remarkFrontmatter from "remark-frontmatter";
@@ -14,6 +14,7 @@ import { mermaidView } from "./mermaid-view";
 import { pasteLink } from "./paste-link";
 import { imageContext, pasteImage } from "./paste-image";
 import { yamlSchema } from "./yaml-node";
+import { trace } from "./perf";
 import "./editor-theme.css";
 
 type Props = {
@@ -43,14 +44,39 @@ type Props = {
  */
 const BR = /^<br\s*\/?>$/i;
 
+/**
+ * Only where a break can legally go.
+ *
+ * A `<br>` inside a paragraph or a heading is a line break. A `<br>` standing
+ * on its own between blocks is not: mdast puts it at the root, and a break
+ * there builds a document the schema refuses — "Cannot create node for doc" —
+ * which fails the whole file rather than the block. The symptom was clicking a
+ * file and still seeing the previous one, because the swap threw and left the
+ * old document in place.
+ *
+ * A block-level `<br>` keeps its html node, which the html view renders.
+ */
+const INLINE_PARENTS = new Set([
+  "paragraph",
+  "heading",
+  "emphasis",
+  "strong",
+  "delete",
+  "link",
+  "linkReference",
+  "tableCell",
+  "footnoteDefinition",
+]);
+
 function breaksFromHtml() {
   return () => (tree: { children?: unknown[] }) => {
     const walk = (node: any) => {
       const kids = node?.children;
       if (!Array.isArray(kids)) return;
+      const inline = INLINE_PARENTS.has(String(node?.type));
       for (let i = 0; i < kids.length; i++) {
         const child = kids[i];
-        if (child?.type === "html" && BR.test(String(child.value).trim())) {
+        if (inline && child?.type === "html" && BR.test(String(child.value).trim())) {
           kids[i] = { type: "break" };
         } else {
           walk(child);
@@ -80,6 +106,19 @@ export function Editor({
   const swapping = useRef(false);
   /** The text last handed to App, so an unchanged document is not reported. */
   const lastSentRef = useRef("");
+
+  /**
+   * Bumped to rebuild the editor from scratch.
+   *
+   * The editor is constructed once and swapped thereafter, which is what makes
+   * switching files quick — but it means a swap that silently fails leaves a
+   * blank page and no way back. If a document goes in and nothing comes out,
+   * this starts again rather than leaving someone staring at an empty buffer.
+   */
+  const [rebuild, setRebuild] = useState(0);
+  /** The text a rebuild was already attempted for, so it happens once. */
+  const rebuiltFor = useRef<string | null>(null);
+
   /** Set by the live editor, so a swap can declare the new document untouched. */
   const untouch = useRef<(() => void) | null>(null);
   const onChangeRef = useRef(onChange);
@@ -310,6 +349,7 @@ export function Editor({
           return;
         }
         created.current = true;
+        trace("editor created");
         // A frame after creation, so the initial serialisation has been and gone.
         requestAnimationFrame(() => {
           ready = true;
@@ -317,6 +357,7 @@ export function Editor({
           if (queued.current !== null) {
             const text = queued.current;
             queued.current = null;
+            trace("taking queued document", { chars: text.length });
             swap(text);
           }
         });
@@ -329,6 +370,7 @@ export function Editor({
         clearTimeout(timer);
         send();
       }
+      trace("editor destroyed");
       disposed = true;
       created.current = false;
       for (const ev of ["beforeinput", "paste", "cut", "drop", "keydown"] as const) {
@@ -347,7 +389,7 @@ export function Editor({
     };
     // initialValue is read at construction; later documents arrive below.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [rebuild]);
 
   /**
    * A different document, into the editor that already exists.
@@ -367,20 +409,40 @@ export function Editor({
   const swap = useCallback((text: string) => {
     const crepe = instance.current;
     if (!crepe || !created.current) {
+      trace("swap queued", { chars: text.length, hasEditor: !!crepe });
       queued.current = text;
       return;
     }
+    trace("swap", { chars: text.length });
     swapping.current = true;
     lastSentRef.current = text;
     untouch.current?.();
     try {
       crepe.editor.action(replaceAll(text));
     } catch (e) {
+      trace("swap failed", { error: String(e) });
       console.error("could not replace the document", e);
     } finally {
       // Let the resulting transactions settle before anything counts as typing.
       requestAnimationFrame(() => {
         swapping.current = false;
+        // Did the document actually arrive?
+        if (text.trim()) {
+          const now = (() => {
+            try {
+              return crepe.getMarkdown();
+            } catch {
+              return "";
+            }
+          })();
+          if (!now.trim() && rebuiltFor.current !== text) {
+            // Once per document: a file the schema cannot build would otherwise
+            // rebuild the editor forever, which is worse than showing nothing.
+            rebuiltFor.current = text;
+            trace("swap left the editor empty — rebuilding", { chars: text.length });
+            setRebuild((n) => n + 1);
+          }
+        }
       });
     }
   }, []);

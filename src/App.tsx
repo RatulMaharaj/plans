@@ -677,6 +677,7 @@ export default function App() {
           raw: split.raw,
           eol: /\n$/.test(text),
         };
+        trace("opened", { relPath, chars: text.length });
         setActiveRepoPath(repoPath);
         setActivePath(relPath);
         setMatter(split.matter);

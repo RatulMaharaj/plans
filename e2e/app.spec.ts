@@ -486,3 +486,31 @@ test("a diagram is redrawn when the paper changes", async ({ page }) => {
     .poll(async () => figure.innerHTML(), { timeout: 20000 })
     .not.toBe(before);
 });
+
+test("a file with a standalone <br /> still opens, and switching works", async ({ page }) => {
+  const faults = await open(page, [
+    {
+      path: "/repo/one",
+      name: "one",
+      branch: "main",
+      files: {
+        // A break standing on its own between blocks, as agents often write.
+        "loose.md": "# Loose\n\n<br />\n\nBody after the break.\n",
+        "other.md": "# Other\n\nOther body.\n",
+      },
+    },
+  ]);
+
+  await fileRow(page, "loose").click();
+  await expect(page.locator(".milkdown")).toContainText("Body after the break");
+
+  // Switching must actually switch: a document that fails to build leaves the
+  // previous one on screen, which is what a lone <br /> used to do.
+  await fileRow(page, "other").click();
+  await expect(page.locator(".milkdown")).toContainText("Other body");
+  await expect(page.locator(".milkdown")).not.toContainText("Body after the break");
+
+  await fileRow(page, "loose").click();
+  await expect(page.locator(".milkdown")).toContainText("Body after the break");
+  expect(faults, faults.join("\n")).toEqual([]);
+});
