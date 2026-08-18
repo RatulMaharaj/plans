@@ -1,5 +1,5 @@
 ---
-status: active
+status: done
 ---
 # Esc Unfocuses the Editor
 

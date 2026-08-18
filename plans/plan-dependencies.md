@@ -1,5 +1,5 @@
 ---
-status: triage
+status: ready
 ---
 # Plan Dependencies
 

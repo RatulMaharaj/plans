@@ -110,7 +110,7 @@ export const DEFAULTS: Settings = {
   showIgnored: false,
   showExtensions: true,
   showFrontmatter: true,
-  statuses: "draft, triage, active, done, blocked",
+  statuses: "draft, ready, busy, done",
   imageFolder: "assets",
   sourceLineNumbers: true,
   sourceWrap: true,
@@ -145,9 +145,14 @@ export function loadSettings(): Settings {
     const raw = localStorage.getItem(KEY);
     // Merge over defaults so a settings file from an older build still opens.
     const s = raw ? { ...DEFAULTS, ...(JSON.parse(raw) as Partial<Settings>) } : DEFAULTS;
-    // A saved list that still matches the pre-triage default hasn't been
+    // A saved list that still matches an earlier default hasn't been
     // customised; move it to the current default. Edited lists are untouched.
-    if (s.statuses === "draft, active, done, blocked") s.statuses = DEFAULTS.statuses;
+    if (
+      s.statuses === "draft, active, done, blocked" ||
+      s.statuses === "draft, triage, active, done, blocked" ||
+      s.statuses === "draft, triage, active, busy, done, blocked"
+    )
+      s.statuses = DEFAULTS.statuses;
     return s;
   } catch {
     return DEFAULTS;

@@ -106,9 +106,9 @@ export function setMatterValue(matter: string, key: string, value: string | null
  */
 export function statusTone(
   status: string,
-): "draft" | "triage" | "active" | "done" | "blocked" | "other" {
+): "draft" | "ready" | "busy" | "done" | "other" {
   const s = status.trim().toLowerCase();
-  if (s === "draft" || s === "triage" || s === "active" || s === "done" || s === "blocked")
+  if (s === "draft" || s === "ready" || s === "busy" || s === "done")
     return s;
   return "other";
 }

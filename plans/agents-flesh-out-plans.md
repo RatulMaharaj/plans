@@ -1,8 +1,5 @@
 ---
-
----
----
-status: draft
+status: busy
 ---
 # Agents That Flesh Out Plans
 
