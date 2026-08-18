@@ -157,6 +157,10 @@ type Props = {
   onUnstage: (repoPath: string, relPath: string) => void;
   onDiscard: (repoPath: string, relPath: string, mark: Mark) => void;
   onDelete: (repoPath: string, relPath: string) => void;
+  /** Delete a folder and everything inside it; App asks first if need be. */
+  onDeleteDir: (repoPath: string, relPath: string) => void;
+  /** Show the file or folder in Finder. relPath "" is the repository itself. */
+  onReveal: (repoPath: string, relPath: string) => void;
   /** dir is repo-relative, "" for the repo root. */
   onNewFile: (repoPath: string, dir: string) => void;
   onRename: (repoPath: string, relPath: string) => void;
@@ -529,6 +533,13 @@ export const FileTree = memo(function FileTree(p: Props) {
             Copy path
           </button>
 
+          <button
+            className="ctx-item"
+            onClick={() => act(() => p.onReveal(menu.repo, menu.path))}
+          >
+            Reveal in Finder
+          </button>
+
           {menu.kind === "file" && menu.mark !== "clean" && (
             <>
               <span className="ctx-rule" />
@@ -564,6 +575,18 @@ export const FileTree = memo(function FileTree(p: Props) {
                 onClick={() => act(() => p.onDelete(menu.repo, menu.path))}
               >
                 Delete
+              </button>
+            </>
+          )}
+
+          {menu.kind === "dir" && (
+            <>
+              <span className="ctx-rule" />
+              <button
+                className="ctx-item warn"
+                onClick={() => act(() => p.onDeleteDir(menu.repo, menu.path))}
+              >
+                Delete folder
               </button>
             </>
           )}

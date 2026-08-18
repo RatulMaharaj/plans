@@ -9,7 +9,7 @@ found, since on this project the finding has usually been harder than the fix.
 
 ## Open
 
-Nothing known. Add what you hit.
+Nothing at the moment.
 
 ## Watch for
 
@@ -29,6 +29,28 @@ Not bugs yet — places the same class of mistake would land next.
   green test proves the harness agrees with the code, not that the app works.
 
 ## Fixed
+
+### Reload did not let go of deleted folders
+
+A folder removed outside the app — by hand, by an agent, or by a git checkout —
+stayed in the sidebar, and reloading did not clear it.
+
+Empty folders exist only in localStorage: git does not record them and the file
+walk cannot see them, so the app remembers them itself. That memory had one
+eviction rule — a folder leaves the list when it gains markdown — and none for
+the folder itself disappearing. Nothing on disk was ever asked.
+
+Now every file refresh (the poll and Reload both go through it) also asks the
+disk which remembered folders still exist, and drops the rest. Any purely
+local cache of something on disk needs an answer for *deleted underneath us*,
+not only for *superseded*.
+
+### Chrome text was selectable
+
+Dragging across buttons, header tabs, the rail or the status bar started a text
+selection, so the app's furniture highlighted like prose. One rule now turns
+selection off for buttons and the chrome regions; the document and the inputs
+keep theirs.
 
 ### Clicking a file showed the previous one
 

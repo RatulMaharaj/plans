@@ -146,6 +146,14 @@ button, input, select, textarea { font: inherit; color: inherit; }
 /* No default button face — chrome is paper unless a rule says otherwise. */
 button { background: transparent; }
 
+/* Chrome is furniture, not text. A drag across a button, a tab, the header
+   rail or the status bar should never start a selection — only the document
+   and the inputs hold selectable text. */
+button, .rail, .bar, .tabs, .ctx {
+  -webkit-user-select: none;
+  user-select: none;
+}
+
 :focus-visible {
   outline: 1.5px solid var(--ink);
   outline-offset: 2px;

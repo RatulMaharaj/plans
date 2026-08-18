@@ -179,6 +179,9 @@ export default function App() {
   const [emptyDirs, setEmptyDirs] = useState<Record<string, string[]>>(() =>
     stored<Record<string, string[]>>(KEY.dirs, {}),
   );
+  /** The same list, readable from inside the poll without re-arming it. */
+  const emptyDirsRef = useRef(emptyDirs);
+  emptyDirsRef.current = emptyDirs;
   /** A one-line question waiting on an answer: branch name, commit message. */
   const [asking, setAsking] = useState<null | {
     title: string;
@@ -453,6 +456,36 @@ export default function App() {
     setFilesByRepo((prev) => {
       const next = Object.fromEntries(got);
       return sameFiles(prev, next) ? prev : next;
+    });
+    /*
+     * The remembered empty folders live only in localStorage — nothing on disk
+     * records them — so a folder deleted outside the app, or swept away by a
+     * git checkout, stayed in the tree forever. Ask the disk which are still
+     * there, every time the files are re-read.
+     */
+    const still: Record<string, string[]> = {};
+    for (const r of repos) {
+      const dirs = emptyDirsRef.current[r.path] ?? [];
+      if (!dirs.length) continue;
+      try {
+        still[r.path] = await api.existingDirs(r.path, dirs);
+      } catch {
+        still[r.path] = dirs; // an error is not evidence they are gone
+      }
+    }
+    setEmptyDirs((prev) => {
+      let changed = false;
+      const next: Record<string, string[]> = { ...prev };
+      for (const [repo, dirs] of Object.entries(still)) {
+        const cur = prev[repo] ?? [];
+        const kept = cur.filter((d) => dirs.includes(d));
+        if (kept.length !== cur.length) {
+          changed = true;
+          if (kept.length) next[repo] = kept;
+          else delete next[repo];
+        }
+      }
+      return changed ? next : prev;
     });
     done();
   }, [repos, settings.showIgnored]);
@@ -1130,6 +1163,54 @@ export default function App() {
     [activeRepoPath, activePath, fileAction],
   );
 
+  /**
+   * Delete a folder and everything under it. The tree only shows markdown, so
+   * the folder may hold files the user has never seen — the census counts
+   * them, and the question says so before anything is removed.
+   */
+  const deleteDir = useCallback(
+    async (repoPath: string, relPath: string) => {
+      let census: { files: number; hidden: number };
+      try {
+        census = await api.folderCensus(repoPath, relPath);
+      } catch (e) {
+        notify(String(e), "error");
+        return;
+      }
+      if (census.files > 0) {
+        const files = `${census.files} file${census.files === 1 ? "" : "s"}`;
+        const unseen =
+          census.hidden > 0
+            ? ` ${census.hidden === census.files ? (census.files === 1 ? "It is" : "All of them are") : `${census.hidden} of them are`} not markdown, so the sidebar does not show ${census.hidden === 1 ? "it" : "them"}.`
+            : "";
+        if (!window.confirm(`Delete ${relPath} and the ${files} inside it?${unseen}`)) {
+          return;
+        }
+      }
+      const under = (path: string) => path === relPath || path.startsWith(`${relPath}/`);
+      if (repoPath === activeRepoPath && activePath && under(activePath)) {
+        if (saveTimer.current) clearTimeout(saveTimer.current);
+        pending.current = null;
+        setActivePath(null);
+        setContent("");
+        setMatter(null);
+      }
+      setTabs((prev) => prev.filter((t) => !(t.repo === repoPath && under(t.path))));
+      setEmptyDirs((prev) => ({
+        ...prev,
+        [repoPath]: (prev[repoPath] ?? []).filter((d) => !under(d)),
+      }));
+      fileAction(repoPath, "Folder deleted", () => api.deleteFolder(repoPath, relPath));
+    },
+    [activeRepoPath, activePath, fileAction, notify],
+  );
+
+  const revealOne = useCallback(
+    (r: string, f: string) =>
+      void api.revealInFinder(r, f).catch((e) => notify(String(e), "error")),
+    [notify],
+  );
+
   /** Stable handlers, so a memoised tree is not defeated by new closures. */
   const stageOne = useCallback(
     (r: string, f: string) => fileAction(r, "Staged", () => api.gitStage(r, [f])),
@@ -1144,6 +1225,7 @@ export default function App() {
     [discardFile],
   );
   const deleteOne = useCallback((r: string, f: string) => void deleteFile(r, f), [deleteFile]);
+  const deleteDirOne = useCallback((r: string, f: string) => void deleteDir(r, f), [deleteDir]);
   const openOne = useCallback((r: string, f: string) => void openFile(r, f), [openFile]);
 
   /**
@@ -1610,6 +1692,8 @@ export default function App() {
               onUnstage={unstageOne}
               onDiscard={discardOne}
               onDelete={deleteOne}
+              onDeleteDir={deleteDirOne}
+              onReveal={revealOne}
               onNewFile={newFileIn}
               onNewFolder={newFolderIn}
               onMove={moveTo}

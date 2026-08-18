@@ -116,6 +116,21 @@ export const api = {
   deletePlan: (repo: string, relPath: string) =>
     invoke<void>("delete_plan", { repo, relPath }),
 
+  /** How many files a folder holds, and how many of them the tree hides. */
+  folderCensus: (repo: string, relPath: string) =>
+    invoke<{ files: number; hidden: number }>("folder_census", { repo, relPath }),
+
+  deleteFolder: (repo: string, relPath: string) =>
+    invoke<void>("delete_folder", { repo, relPath }),
+
+  /** Which of these folders still exist on disk. */
+  existingDirs: (repo: string, relPaths: string[]) =>
+    invoke<string[]>("existing_dirs", { repo, relPaths }),
+
+  /** Show the file or folder in Finder (or the platform's file manager). */
+  revealInFinder: (repo: string, relPath: string) =>
+    invoke<void>("reveal_in_finder", { repo, relPath }),
+
   gitStatus: (repo: string, scope: string[]) =>
     invoke<any>("git_status", { repo, scope }).then(camelStatus),
 

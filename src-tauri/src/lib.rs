@@ -601,6 +601,74 @@ fn delete_plan(repo: String, rel_path: String) -> R<()> {
     std::fs::remove_file(&p).map_err(|e| e.to_string())
 }
 
+/// What a folder holds, counted before deleting it. `hidden` is the files the
+/// tree never shows — anything that is not markdown — since deleting those
+/// without saying so would be deleting things the user has never seen.
+#[derive(Serialize)]
+struct FolderCensus {
+    files: u32,
+    hidden: u32,
+}
+
+#[tauri::command]
+fn folder_census(repo: String, rel_path: String) -> R<FolderCensus> {
+    fn walk(dir: &Path, c: &mut FolderCensus) -> std::io::Result<()> {
+        for entry in std::fs::read_dir(dir)? {
+            let path = entry?.path();
+            if path.is_dir() {
+                walk(&path, c)?;
+            } else {
+                c.files += 1;
+                let md = path
+                    .extension()
+                    .map(|e| {
+                        let e = e.to_ascii_lowercase();
+                        e == "md" || e == "markdown"
+                    })
+                    .unwrap_or(false);
+                if !md {
+                    c.hidden += 1;
+                }
+            }
+        }
+        Ok(())
+    }
+    let p = safe_join(&repo, &rel_path)?;
+    let mut c = FolderCensus { files: 0, hidden: 0 };
+    walk(&p, &mut c).map_err(|e| e.to_string())?;
+    Ok(c)
+}
+
+#[tauri::command]
+fn delete_folder(repo: String, rel_path: String) -> R<()> {
+    if rel_path.trim().is_empty() {
+        return Err("refusing to delete the repository root".into());
+    }
+    let p = safe_join(&repo, &rel_path)?;
+    std::fs::remove_dir_all(&p).map_err(|e| e.to_string())
+}
+
+/// Which of these remembered folders still exist on disk? The frontend keeps
+/// empty folders in localStorage — nothing on disk records them — so this is
+/// how a reload lets go of the ones deleted outside the app.
+#[tauri::command]
+fn existing_dirs(repo: String, rel_paths: Vec<String>) -> R<Vec<String>> {
+    let mut out = Vec::new();
+    for rel in rel_paths {
+        if safe_join(&repo, &rel)?.is_dir() {
+            out.push(rel);
+        }
+    }
+    Ok(out)
+}
+
+/// Show the file or folder in the platform's file manager, selected.
+#[tauri::command]
+fn reveal_in_finder(repo: String, rel_path: String) -> R<()> {
+    let p = safe_join(&repo, &rel_path)?;
+    tauri_plugin_opener::reveal_item_in_dir(&p).map_err(|e| e.to_string())
+}
+
 // ---------------------------------------------------------------------------
 // git commands
 // ---------------------------------------------------------------------------
@@ -869,6 +937,10 @@ pub fn run() {
             create_folder,
             rename_plan,
             delete_plan,
+            folder_census,
+            delete_folder,
+            existing_dirs,
+            reveal_in_finder,
             git_status,
             git_diff,
             git_head_text,
