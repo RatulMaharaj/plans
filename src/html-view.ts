@@ -28,6 +28,159 @@ export function commentAuthor(body: string): string | null {
 }
 
 /**
+ * A thread is one comment with more than one voice in it: one line per turn,
+ * each "@name: what they said". The strict reading — *every* non-empty line
+ * must match — is what keeps prose that merely mentions an @handle rendering
+ * as the single note it is.
+ */
+export type CommentTurn = { who: string | null; text: string };
+
+export function commentTurns(body: string): CommentTurn[] {
+  const lines = body
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter(Boolean);
+  const parsed = lines.map((l) => l.match(/^@([A-Za-z0-9_.-]+):\s*(.*)$/));
+  if (lines.length > 0 && parsed.every(Boolean)) {
+    return parsed.map((m) => ({ who: m![1], text: m![2] }));
+  }
+  return [{ who: commentAuthor(body), text: body }];
+}
+
+/** `@name` fit for a comment: "Ratul Maharaj" becomes "ratul-maharaj". */
+export function authorSlug(name: string): string {
+  return name
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, "-")
+    .replace(/[^a-z0-9_.-]/g, "");
+}
+
+/**
+ * A reply appended to a comment's source. The first reply promotes a one-line
+ * note to the block form — one line per turn — which is also how a person
+ * would write it by hand.
+ */
+export function withReply(value: string, author: string, text: string): string {
+  const body = value.match(COMMENT)?.[1] ?? "";
+  const lines = body
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter(Boolean);
+  const reply = author ? `@${author}: ${text}` : text;
+  return `<!--\n${[...lines, reply].join("\n")}\n-->`;
+}
+
+/**
+ * The comment card, shared between the two ways a comment can arrive: as one
+ * node (a single-line comment, or anything the app itself wrote) rendered by
+ * the node view, and as a run of per-line nodes gathered by the decoration
+ * plugin below. `replace` writes the whole comment back — the reply field goes
+ * through it, so both arrivals get threads for free.
+ */
+function commentCard(
+  value: string,
+  replace: (next: string) => void,
+): { dom: HTMLElement; destroy: () => void } {
+  const body = (value.match(COMMENT)?.[1] ?? value).trim();
+  const turns = commentTurns(body);
+
+  const dom = document.createElement("span");
+  dom.className = "md-comment";
+  dom.setAttribute("data-type", "html");
+  dom.setAttribute("data-value", value);
+
+  const mark = document.createElement("button");
+  mark.className = "md-comment-mark";
+  mark.type = "button";
+  mark.textContent = turns.length > 1 ? `note ×${turns.length}` : "note";
+  mark.title = body;
+
+  const card = document.createElement("span");
+  card.className = "md-comment-card";
+  for (const t of turns) {
+    const turn = document.createElement("span");
+    turn.className = "md-comment-turn";
+    const meta = document.createElement("span");
+    meta.className = "md-comment-who";
+    meta.textContent = t.who ? `@${t.who}` : "comment";
+    const text = document.createElement("span");
+    text.className = "md-comment-text";
+    text.textContent = t.text;
+    turn.append(meta, text);
+    card.appendChild(turn);
+  }
+
+  // The reply lands in the file, not in an inbox: one more line in the block.
+  const reply = document.createElement("span");
+  reply.className = "md-comment-reply";
+  const field = document.createElement("input");
+  field.type = "text";
+  field.placeholder = htmlContext.author ? `Reply as @${htmlContext.author}` : "Reply";
+  field.className = "md-comment-field";
+  const send = document.createElement("button");
+  send.type = "button";
+  send.className = "md-comment-send";
+  send.textContent = "Reply";
+  const submit = () => {
+    const text = field.value.trim();
+    if (!text) return;
+    replace(withReply(value, htmlContext.author, text));
+  };
+  send.addEventListener("mousedown", (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    submit();
+  });
+  field.addEventListener("keydown", (e) => {
+    e.stopPropagation();
+    if (e.key === "Enter") {
+      e.preventDefault();
+      submit();
+    }
+    if (e.key === "Escape") close();
+  });
+  // The field is inside the editor's DOM; without these the keystrokes would
+  // be ProseMirror's, and a click would move the caret instead of the focus.
+  for (const ev of ["mousedown", "beforeinput", "paste", "cut"] as const) {
+    field.addEventListener(ev, (e) => e.stopPropagation());
+  }
+  reply.append(field, send);
+  card.appendChild(reply);
+
+  // One card open at a time, and any click elsewhere puts it away.
+  const away = (e: MouseEvent) => {
+    if (!dom.contains(e.target as Node)) close();
+  };
+  const onKey = (e: KeyboardEvent) => {
+    if (e.key === "Escape") close();
+  };
+  function close() {
+    dom.classList.remove("open");
+    document.removeEventListener("mousedown", away, true);
+    document.removeEventListener("keydown", onKey, true);
+  }
+
+  mark.addEventListener("mousedown", (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (dom.classList.contains("open")) return close();
+    document.querySelectorAll(".md-comment.open").forEach((el) => el.classList.remove("open"));
+    dom.classList.add("open");
+    document.addEventListener("mousedown", away, true);
+    document.addEventListener("keydown", onKey, true);
+  });
+  dom.append(mark, card);
+  return {
+    dom,
+    destroy: () => {
+      document.removeEventListener("mousedown", away, true);
+      document.removeEventListener("keydown", onKey, true);
+    },
+  };
+}
+
+/**
  * These files are the reader's own, but they are also written by agents, and a
  * script tag in a plan should never run just because the plan was opened.
  */
@@ -119,7 +272,7 @@ function resolveAssets(root: HTMLElement, repo: string, relPath: string) {
  * The view needs to know which file it is in to resolve relative paths, and
  * that isn't in the node — so it is set here whenever a document is opened.
  */
-export const htmlContext = { repo: "", relPath: "" };
+export const htmlContext = { repo: "", relPath: "", author: "" };
 
 /**
  * The bridge between rendered HTML and the app.
@@ -138,7 +291,17 @@ export const htmlBridge: {
   apply: ((edit: HtmlEdit) => void) | null;
   /** Set by Editor: put a new fragment in at the cursor. */
   insert: ((value: string) => void) | null;
-} = { request: null, apply: null, insert: null };
+  /**
+   * Set by Editor: put a comment in after the block holding the selection —
+   * never inline, where it would split a sentence in the source.
+   */
+  comment: ((value: string) => void) | null;
+} = { request: null, apply: null, insert: null, comment: null };
+
+/** Whether a fragment is one complete comment, fences and all. */
+export function isComment(value: string): boolean {
+  return COMMENT.test(value);
+}
 
 export const htmlView = $view(htmlSchema.node, () => (node, _view, getPos, decorations) => {
   const edit = () =>
@@ -151,66 +314,22 @@ export const htmlView = $view(htmlSchema.node, () => (node, _view, getPos, decor
   const comment = value.match(COMMENT);
 
   if (comment) {
-    const body = comment[1].trim();
-    const who = commentAuthor(body);
-    const dom = document.createElement("span");
-    dom.className = "md-comment";
+    const { dom, destroy } = commentCard(value, (next) =>
+      htmlBridge.apply?.({
+        from: getPos() ?? 0,
+        to: (getPos() ?? 0) + node.nodeSize,
+        value: next,
+      }),
+    );
     for (const d of decorations ?? []) {
       const cls = (d as unknown as { type?: { attrs?: { class?: string } } }).type?.attrs?.class;
       if (cls) dom.classList.add(...cls.split(" "));
     }
-    dom.setAttribute("data-type", "html");
-    dom.setAttribute("data-value", value);
-
-    const mark = document.createElement("button");
-    mark.className = "md-comment-mark";
-    mark.type = "button";
-    mark.textContent = "note";
-    mark.title = body;
-
-    const card = document.createElement("span");
-    card.className = "md-comment-card";
-    const meta = document.createElement("span");
-    meta.className = "md-comment-who";
-    meta.textContent = who ? `@${who}` : "comment";
-    const text = document.createElement("span");
-    text.className = "md-comment-text";
-    text.textContent = body;
-    card.append(meta, text);
-
-    // One card open at a time, and any click elsewhere puts it away.
-    const away = (e: MouseEvent) => {
-      if (!dom.contains(e.target as Node)) close();
-    };
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") close();
-    };
-    function close() {
-      dom.classList.remove("open");
-      document.removeEventListener("mousedown", away, true);
-      document.removeEventListener("keydown", onKey, true);
-    }
-
-    mark.addEventListener("mousedown", (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      if (dom.classList.contains("open")) return close();
-      document
-        .querySelectorAll(".md-comment.open")
-        .forEach((el) => el.classList.remove("open"));
-      dom.classList.add("open");
-      document.addEventListener("mousedown", away, true);
-      document.addEventListener("keydown", onKey, true);
-    });
-    dom.append(mark, card);
     return {
       dom,
       ignoreMutation: () => true,
       stopEvent: () => true,
-      destroy: () => {
-        document.removeEventListener("mousedown", away, true);
-        document.removeEventListener("keydown", onKey, true);
-      },
+      destroy,
     };
   }
 
@@ -336,6 +455,41 @@ function htmlChunks(doc: PMNode): Chunk[] {
   return out;
 }
 
+/**
+ * Multi-line comments, gathered the way pictures are.
+ *
+ * A thread written across several lines arrives as one node per line — "<!--",
+ * a turn each, "-->" — and none of them alone is a comment the node view can
+ * recognise. The run is collected, its lines hidden, and one card widget stands
+ * in for the whole block. Single-line comments never open a run here; the node
+ * view above already renders them.
+ */
+function commentRuns(doc: PMNode): Run[] {
+  const runs: Run[] = [];
+  let open: { from: number; parts: string[]; blocks: [number, number][] } | null = null;
+  for (const c of htmlChunks(doc)) {
+    const v = c.value.trim();
+    if (!open && /^<!--/.test(v) && !v.includes("-->")) {
+      open = { from: c.from, parts: [c.value], blocks: [c.block] };
+      continue;
+    }
+    if (open) {
+      open.parts.push(c.value);
+      open.blocks.push(c.block);
+      if (c.value.includes("-->")) {
+        runs.push({
+          from: open.from,
+          to: c.to,
+          html: open.parts.join("\n"),
+          blocks: open.blocks,
+        });
+        open = null;
+      }
+    }
+  }
+  return runs;
+}
+
 function pictureRuns(doc: PMNode): Run[] {
   const runs: Run[] = [];
   let open: { from: number; parts: string[]; blocks: [number, number][] } | null = null;
@@ -422,6 +576,33 @@ function wrapperDecorations(doc: PMNode): Decoration[] {
 
 function pictureDecorations(doc: PMNode, repo: string, relPath: string): DecorationSet {
   const out: Decoration[] = wrapperDecorations(doc);
+  for (const run of commentRuns(doc)) {
+    const seen = new Set<string>();
+    for (const [from, to] of run.blocks) {
+      const key = `${from}:${to}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push(Decoration.inline(from, to, { class: "md-hidden" }));
+    }
+    let card: { dom: HTMLElement; destroy: () => void } | null = null;
+    out.push(
+      Decoration.widget(
+        run.to,
+        () => {
+          card = commentCard(run.html, (next) =>
+            htmlBridge.apply?.({ from: run.from, to: run.to, value: next }),
+          );
+          card.dom.setAttribute("contenteditable", "false");
+          return card.dom;
+        },
+        {
+          side: 1,
+          key: `comment:${run.from}:${run.html}`,
+          destroy: () => card?.destroy(),
+        },
+      ),
+    );
+  }
   for (const run of pictureRuns(doc)) {
     const src = chooseSource(run.html);
     // Hide each block the run occupies, so no empty paragraphs are left behind.

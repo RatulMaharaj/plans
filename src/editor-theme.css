@@ -436,3 +436,45 @@
   color: var(--ink-2);
   border-bottom-color: var(--rule-strong);
 }
+
+/* A thread: one comment, several voices — one turn per line of the block. */
+.md-comment-turn { display: block; }
+.md-comment-turn + .md-comment-turn { margin-top: 8px; }
+
+/* The reply lands in the file, not in an inbox. */
+.md-comment-reply {
+  display: flex;
+  gap: 6px;
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px solid var(--rule);
+}
+.md-comment-field {
+  flex: 1;
+  min-width: 0;
+  border: 1px solid var(--rule-strong);
+  border-radius: 3px;
+  padding: 3px 6px;
+  background: var(--paper, transparent);
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--ink);
+}
+.md-comment-field:focus { outline: none; border-color: var(--ink-3); }
+.md-comment-send {
+  border: 1px solid var(--rule-strong);
+  border-radius: 3px;
+  padding: 3px 8px;
+  background: none;
+  cursor: pointer;
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-2);
+}
+.md-comment-send:hover { color: var(--ink); border-color: var(--ink-3); }
+
+/* The card holds turns and a reply now, so the raw pre-wrap goes per-text. */
+.md-comment.open .md-comment-card { white-space: normal; }
+.md-comment-text { white-space: pre-wrap; }

@@ -66,6 +66,7 @@ type Props = {
   onMoveFile: () => void;
   canInsertHtml: boolean;
   onInsertHtml: () => void;
+  onNewComment: () => void;
   hasMatter: boolean;
   canEdit: boolean;
   onMatter: () => void;
@@ -144,6 +145,14 @@ function buildCommands(p: Props): Command[] {
     });
   }
   if (p.canInsertHtml) {
+    add({
+      id: "comment",
+      group: "Plans",
+      label: "New comment…",
+      hint: "⌘⇧M",
+      terms: "note thread review aside",
+      run: p.onNewComment,
+    });
     add({
       id: "html",
       group: "Plans",

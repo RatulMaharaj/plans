@@ -8,7 +8,7 @@ import { languages } from "@codemirror/language-data";
 import { LanguageDescription } from "@codemirror/language";
 import { yaml } from "@codemirror/lang-yaml";
 import { codeTheme } from "./code-theme";
-import { htmlBridge, htmlContext, htmlView, pictureView } from "./html-view";
+import { htmlBridge, htmlContext, htmlView, isComment, pictureView } from "./html-view";
 import { editorViewCtx } from "@milkdown/core";
 import { mermaidView } from "./mermaid-view";
 import { pasteLink } from "./paste-link";
@@ -27,6 +27,8 @@ type Props = {
   spellcheck: boolean;
   /** Where pasted images are written, relative to the repository root. */
   imageFolder: string;
+  /** `@name` written into new comments and replies; "" when git has no name. */
+  author: string;
   onChange: (markdown: string) => void;
 };
 
@@ -94,6 +96,7 @@ export function Editor({
   initialValue,
   spellcheck,
   imageFolder,
+  author,
   onChange,
 }: Props) {
   const hostRef = useRef<HTMLDivElement | null>(null);
@@ -129,6 +132,7 @@ export function Editor({
     if (!root) return;
     htmlContext.repo = repo;
     htmlContext.relPath = relPath;
+    htmlContext.author = author;
     imageContext.repo = repo;
     imageContext.relPath = relPath;
     imageContext.folder = imageFolder;
@@ -234,10 +238,15 @@ export function Editor({
      * line — which is the shape the parser would have produced.
      */
     const nodesFor = (value: string, schema: import("@milkdown/kit/prose/model").Schema) =>
-      value
-        .split("\n")
-        .filter((line) => line.trim().length > 0)
-        .map((line) => schema.nodes.html.create({ value: line }));
+      // A complete comment stays one node, newlines and all: split per line its
+      // halves are not comments, and the card would not render until reopen.
+      // It serialises verbatim, so the file still gets the multi-line block.
+      isComment(value)
+        ? [schema.nodes.html.create({ value })]
+        : value
+            .split("\n")
+            .filter((line) => line.trim().length > 0)
+            .map((line) => schema.nodes.html.create({ value: line }));
 
     htmlBridge.apply = ({ from, to, value }) => {
       touched = true;
@@ -259,6 +268,27 @@ export function Editor({
         if (!nodes.length) return;
         const { from, to } = view.state.selection;
         view.dispatch(view.state.tr.replaceWith(from, to, nodes).scrollIntoView());
+      });
+    };
+
+    /**
+     * A comment goes in after the block the selection ends in, not at the
+     * cursor: an aside splitting a sentence in half is valid markdown and
+     * miserable to read as source. Anchoring is by proximity — the comment
+     * sits under the paragraph it is about, the way a person writes one.
+     */
+    htmlBridge.comment = (value) => {
+      touched = true;
+      crepe.editor.action((ctx) => {
+        const view = ctx.get(editorViewCtx);
+        const nodes = nodesFor(value, view.state.schema);
+        if (!nodes.length) return;
+        const { $to } = view.state.selection;
+        // After the top-level block; a selection at the document itself falls
+        // back to the end.
+        const at = $to.depth > 0 ? $to.after(1) : view.state.doc.content.size;
+        const para = view.state.schema.nodes.paragraph.create(null, nodes);
+        view.dispatch(view.state.tr.insert(at, para).scrollIntoView());
       });
     };
 
@@ -379,6 +409,7 @@ export function Editor({
       if (instance.current === crepe) instance.current = null;
       htmlBridge.apply = null;
       htmlBridge.insert = null;
+      htmlBridge.comment = null;
       /**
        * Do not touch the host here. destroy() resolves later, and React reuses
        * the same element for the next editor — clearing it then wipes the DOM
@@ -455,12 +486,19 @@ export function Editor({
     }
     htmlContext.repo = repo;
     htmlContext.relPath = relPath;
+    htmlContext.author = author;
     imageContext.repo = repo;
     imageContext.relPath = relPath;
     imageContext.folder = imageFolder;
     swap(initialValue);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [docKey]);
+
+  // The identity arrives from git after the editor is often already built, and
+  // changing it should never rebuild a document.
+  useEffect(() => {
+    htmlContext.author = author;
+  }, [author]);
 
   // Toggling spellcheck shouldn't rebuild the document, so it's set on the
   // live contenteditable rather than passed at construction.

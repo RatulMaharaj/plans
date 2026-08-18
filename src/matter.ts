@@ -61,6 +61,33 @@ export function joinFrontmatter(
   return `---\n${trimmed}\n---\n${body}`;
 }
 
+/**
+ * The value of one top-level key, read the way `matterKeys` reads — line by
+ * line, no YAML library, no nesting. The app recognises a few conventional
+ * keys (`status`, `owner`, `due`) and renders them read-only; anything it
+ * doesn't know is simply not rendered. The sheet stays the only writer.
+ */
+export function matterValue(matter: string, key: string): string | null {
+  for (const line of matter.split(/\r?\n/)) {
+    const m = line.match(/^([A-Za-z0-9_-]+)\s*:\s*(.*)$/);
+    if (!m || m[1].toLowerCase() !== key.toLowerCase()) continue;
+    const v = m[2].trim().replace(/^["']|["']$/g, "");
+    return v.length ? v : null;
+  }
+  return null;
+}
+
+/**
+ * A handful of statuses get a colour; everything else renders neutral.
+ * Recognised case-insensitively, rendered as written — the app reads
+ * conventions, it doesn't own a vocabulary.
+ */
+export function statusTone(status: string): "draft" | "active" | "done" | "blocked" | "other" {
+  const s = status.trim().toLowerCase();
+  if (s === "draft" || s === "active" || s === "done" || s === "blocked") return s;
+  return "other";
+}
+
 /** The keys, for the collapsed summary line. */
 export function matterKeys(matter: string): string[] {
   return matter

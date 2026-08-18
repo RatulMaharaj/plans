@@ -1874,3 +1874,41 @@ body.resizing .files-edge { pointer-events: auto; }
   color: var(--ink-2);
 }
 .update-settings-acts { display: flex; align-items: center; gap: 4px; }
+
+/* ---------------------------------------------------------------------------
+   Frontmatter, read: status / owner / due from a few conventional keys.
+   Rendered read-only — the sheet stays the only writer.
+   --------------------------------------------------------------------------- */
+.status-badge {
+  padding: 1px 7px;
+  border: 1px solid currentColor;
+  border-radius: 999px;
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.11em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+.tone-draft { color: var(--ink-3); }
+.tone-active { color: var(--git-staged); }
+.tone-done { color: var(--git-new); }
+.tone-blocked { color: var(--git-mod); }
+.tone-other { color: var(--ink-3); }
+
+.matter-owner,
+.matter-due {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  letter-spacing: 0.03em;
+  color: var(--ink-3);
+}
+.matter-due.overdue { color: var(--git-mod); }
+
+/* The status: dot on a tree row, riding after the name. */
+.status-dot {
+  flex: none;
+  width: 5px;
+  height: 5px;
+  border-radius: 999px;
+  background: currentColor;
+}

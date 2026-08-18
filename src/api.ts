@@ -18,6 +18,8 @@ export type PlanFile = {
   name: string;
   dir: string;
   modified: number;
+  /** The `status:` value from the file's frontmatter, if it has one. */
+  status: string | null;
 };
 
 export type StatusEntry = {
@@ -41,7 +43,13 @@ function camelRepo(r: any): RepoInfo {
   return { path: r.path, name: r.name, branch: r.branch, planDirs: r.plan_dirs };
 }
 function camelFile(f: any): PlanFile {
-  return { relPath: f.rel_path, name: f.name, dir: f.dir, modified: f.modified };
+  return {
+    relPath: f.rel_path,
+    name: f.name,
+    dir: f.dir,
+    modified: f.modified,
+    status: f.status ?? null,
+  };
 }
 function camelStatus(s: any): GitStatus {
   return {
@@ -162,6 +170,10 @@ export const api = {
     invoke<string>("git_create_branch", { repo, name }),
 
   gitFetch: (repo: string) => invoke<string>("git_fetch", { repo }),
+
+  /** Who git says the user is — name and email may be empty when unset. */
+  gitIdentity: (repo: string) =>
+    invoke<{ name: string; email: string }>("git_identity", { repo }),
 
   gitCheckout: (repo: string, branch: string) =>
     invoke<string>("git_checkout", { repo, branch }),

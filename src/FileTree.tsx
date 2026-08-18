@@ -7,6 +7,7 @@
  */
 import { memo, useEffect, useMemo, useRef, useState } from "react";
 import { trace } from "./perf";
+import { statusTone } from "./matter";
 import type { PlanFile, RepoInfo } from "./api";
 
 export type Mark = "clean" | "new" | "mod" | "staged";
@@ -440,6 +441,14 @@ export const FileTree = memo(function FileTree(p: Props) {
         <span className="row-name" title={mark === "clean" ? undefined : MARK_WORD[mark]}>
           {displayName(node.name, p.showExtensions)}
         </span>
+        {/* The status: from the file's frontmatter, as a quiet tinted dot. */}
+        {node.file.status && (
+          <span
+            className={`status-dot tone-${statusTone(node.file.status)}`}
+            title={node.file.status}
+            aria-hidden
+          />
+        )}
       </button>
     );
   };

@@ -79,6 +79,8 @@ pub struct PlanFile {
     name: String,
     dir: String,
     modified: u64,
+    /// The `status:` value from the file's frontmatter, if it has one.
+    status: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -172,6 +174,61 @@ fn open_repo(path: String) -> R<RepoInfo> {
     })
 }
 
+/// The `status:` line from a file's YAML frontmatter, read from the head of
+/// the file only — the block must open the file, so 2KB is plenty.
+///
+/// The poll lists every markdown file every few seconds, and opening each one
+/// to look for a status would turn a directory walk into a full read of the
+/// repository. The cache makes the steady state free: a file is only re-read
+/// when its mtime moves.
+fn frontmatter_status(path: &Path, modified: u64) -> Option<String> {
+    use std::collections::HashMap;
+    use std::io::Read;
+    use std::sync::{Mutex, OnceLock};
+
+    static CACHE: OnceLock<Mutex<HashMap<PathBuf, (u64, Option<String>)>>> = OnceLock::new();
+    let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+
+    if let Ok(map) = cache.lock() {
+        if let Some((at, status)) = map.get(path) {
+            if *at == modified {
+                return status.clone();
+            }
+        }
+    }
+
+    let status = (|| {
+        let mut head = [0u8; 2048];
+        let mut f = std::fs::File::open(path).ok()?;
+        let n = f.read(&mut head).ok()?;
+        let text = String::from_utf8_lossy(&head[..n]);
+        let mut lines = text.lines();
+        if lines.next()?.trim_end() != "---" {
+            return None;
+        }
+        for line in lines {
+            if line.trim_end() == "---" {
+                return None;
+            }
+            // A line without a colon (a list item, say) is skipped, not fatal.
+            let Some((key, value)) = line.split_once(':') else {
+                continue;
+            };
+            // Top-level keys only — an indented `status:` belongs to something else.
+            if !key.starts_with(char::is_whitespace) && key.trim().eq_ignore_ascii_case("status") {
+                let v = value.trim().trim_matches('"').trim_matches('\'').to_string();
+                return (!v.is_empty()).then_some(v);
+            }
+        }
+        None
+    })();
+
+    if let Ok(mut map) = cache.lock() {
+        map.insert(path.to_path_buf(), (modified, status.clone()));
+    }
+    status
+}
+
 /// Walking a repository for markdown.
 ///
 /// This was a hand-rolled recursive read_dir followed by one
@@ -238,12 +295,14 @@ fn walk_markdown(root: &Path, include_ignored: bool) -> Vec<PlanFile> {
                 .rsplit_once('/')
                 .map(|(d, _)| d.to_string())
                 .unwrap_or_default();
+            let status = frontmatter_status(path, modified);
             if let Ok(mut out) = found.lock() {
                 out.push(PlanFile {
                     rel_path: rel,
                     name,
                     dir,
                     modified,
+                    status,
                 });
             }
             WalkState::Continue
@@ -862,6 +921,28 @@ fn git_fetch(repo: String) -> R<String> {
     git(&repo, &["fetch", "--prune"])
 }
 
+/// Who git says the user is, per repository — the only identity the app has.
+/// Unset is not an error: comments are then written unattributed.
+#[derive(Serialize)]
+pub struct Identity {
+    name: String,
+    email: String,
+}
+
+#[tauri::command]
+fn git_identity(repo: String) -> R<Identity> {
+    Ok(Identity {
+        name: git(&repo, &["config", "user.name"])
+            .unwrap_or_default()
+            .trim()
+            .to_string(),
+        email: git(&repo, &["config", "user.email"])
+            .unwrap_or_default()
+            .trim()
+            .to_string(),
+    })
+}
+
 #[tauri::command]
 fn git_log(repo: String, scope: Vec<String>, limit: u32) -> R<String> {
     let n = format!("-{limit}");
@@ -955,6 +1036,7 @@ pub fn run() {
             git_create_branch,
             git_fetch,
             git_log,
+            git_identity,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
@@ -1053,6 +1135,34 @@ mod tests {
         // And "absent" must not collide with the stamp of an empty file, or
         // creating a file would look like no change at all.
         assert_ne!(missing, stamp_of(b""));
+    }
+
+    // --- frontmatter status: read from the head, cached by mtime ------------
+
+    #[test]
+    fn status_is_read_from_the_frontmatter_head() {
+        let dir = std::env::temp_dir().join("plans-status-test");
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let with = dir.join("with.md");
+        std::fs::write(&with, "---\ntitle: x\nStatus: \"Active\"\n- item\n---\n# hi\n").unwrap();
+        assert_eq!(frontmatter_status(&with, 1), Some("Active".into()));
+
+        // A status outside a frontmatter block is prose, not metadata.
+        let without = dir.join("without.md");
+        std::fs::write(&without, "# hi\nstatus: nope\n").unwrap();
+        assert_eq!(frontmatter_status(&without, 1), None);
+
+        // An indented status belongs to something nested, and is not the file's.
+        let nested = dir.join("nested.md");
+        std::fs::write(&nested, "---\nmeta:\n  status: inner\n---\n").unwrap();
+        assert_eq!(frontmatter_status(&nested, 1), None);
+
+        // Cached by mtime: an unchanged stamp returns the old answer without a
+        // read; a moved stamp sees the new text.
+        std::fs::write(&with, "---\nstatus: done\n---\n").unwrap();
+        assert_eq!(frontmatter_status(&with, 1), Some("Active".into()));
+        assert_eq!(frontmatter_status(&with, 2), Some("done".into()));
     }
 
     // --- what counts as markdown, and what is skipped -----------------------

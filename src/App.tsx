@@ -19,8 +19,8 @@ import { RELEASE_NOTES, RELEASE_VERSION } from "./release-notes";
 import { checkForUpdate, installUpdate, isNewer, runningVersion, type Available } from "./update";
 import { PerfHud } from "./PerfHud";
 import { start, tick, trace } from "./perf";
-import { htmlBridge, type HtmlEdit } from "./html-view";
-import { joinFrontmatter, splitFrontmatter } from "./matter";
+import { authorSlug, htmlBridge, type HtmlEdit } from "./html-view";
+import { joinFrontmatter, matterValue, splitFrontmatter, statusTone } from "./matter";
 import {
   applySettings,
   DEFAULTS,
@@ -219,6 +219,23 @@ export default function App() {
 
   /** A fragment of HTML open for editing, or null. */
   const [htmlEdit, setHtmlEdit] = useState<HtmlEdit | null>(null);
+  /** Right-click on the page: one item, patterned on the tree's menu. */
+  const [pageMenu, setPageMenu] = useState<null | { x: number; y: number }>(null);
+  useEffect(() => {
+    if (!pageMenu) return;
+    const close = () => setPageMenu(null);
+    const key = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setPageMenu(null);
+    };
+    window.addEventListener("mousedown", close);
+    window.addEventListener("resize", close);
+    window.addEventListener("keydown", key);
+    return () => {
+      window.removeEventListener("mousedown", close);
+      window.removeEventListener("resize", close);
+      window.removeEventListener("keydown", key);
+    };
+  }, [pageMenu]);
   /** A file being moved, which is a different question from being renamed. */
   const [moving, setMoving] = useState<null | { repo: string; path: string }>(null);
   /**
@@ -255,12 +272,54 @@ export default function App() {
   /** What is actually running, which is not always what was bundled with. */
   const [appVersion, setAppVersion] = useState(RELEASE_VERSION);
 
+  /**
+   * Who git says the user is, per repository — the app's only identity. The
+   * repo plus access to it has everything collaboration needs; sign-in is
+   * `git config`, where it always was. Fetched once per repo and kept.
+   */
+  const [identityByRepo, setIdentityByRepo] = useState<Record<string, string>>({});
+  useEffect(() => {
+    for (const r of repos) {
+      if (identityByRepo[r.path] !== undefined) continue;
+      void api.gitIdentity(r.path).then(
+        (id) => setIdentityByRepo((m) => ({ ...m, [r.path]: authorSlug(id.name) })),
+        () => setIdentityByRepo((m) => ({ ...m, [r.path]: "" })),
+      );
+    }
+  }, [repos, identityByRepo]);
+
   const activeRepo = useMemo(
     () => repos.find((r) => r.path === activeRepoPath) ?? null,
     [repos, activeRepoPath],
   );
 
   const status = activeRepoPath ? (statusByRepo[activeRepoPath] ?? null) : null;
+
+  /** Whoever git says is here, as the `@name` a comment carries. */
+  const author = activeRepoPath ? (identityByRepo[activeRepoPath] ?? "") : "";
+
+  /**
+   * Select some prose, comment on it. The comment goes in after the paragraph
+   * the selection ends in — an aside under the thing it is about, the way a
+   * person writes one — through `htmlBridge.comment`.
+   */
+  const newComment = useCallback(() => {
+    const me = author;
+    setAsking({
+      title: "New comment",
+      placeholder: "What needs saying?",
+      note: me
+        ? `Lands after the paragraph, as <!-- @${me}: … -->. ⌘⇧M from anywhere in the page.`
+        : "Lands after the paragraph as an HTML comment. git config user.name would sign it.",
+      confirm: "Comment",
+      multiline: true,
+      run: (value) => {
+        const text = value.trim();
+        if (!text) return;
+        htmlBridge.comment?.(me ? `<!-- @${me}: ${text} -->` : `<!-- ${text} -->`);
+      },
+    });
+  }, [author]);
 
   const notify = useCallback((text: string, kind: "info" | "error" = "info") => {
     setToast({ text, kind });
@@ -1488,6 +1547,10 @@ export default function App() {
       if (mod && e.shiftKey && e.key.toLowerCase() === "o") {
         e.preventDefault();
         void addRepo();
+      } else if (mod && e.shiftKey && e.key.toLowerCase() === "m") {
+        // The convention every app that comments uses.
+        e.preventDefault();
+        if (view === "write" && activePath) newComment();
       } else if (mod && !e.shiftKey && e.key.toLowerCase() === "n") {
         e.preventDefault();
         newPlan();
@@ -1554,6 +1617,7 @@ export default function App() {
     openFile,
     addRepo,
     newPlan,
+    newComment,
     settings.showGit,
     settings.showIndex,
     settings.treeSize,
@@ -1812,6 +1876,45 @@ export default function App() {
                         Diff
                       </button>
                     </span>
+                    {/* Read from a few conventional frontmatter keys and shown
+                        read-only; the sheet stays the only writer. */}
+                    {matter !== null &&
+                      (() => {
+                        const s = matterValue(matter, "status");
+                        const who =
+                          matterValue(matter, "owner") ?? matterValue(matter, "assignee");
+                        const due = matterValue(matter, "due");
+                        const overdue =
+                          !!due && !Number.isNaN(Date.parse(due)) && Date.parse(due) < Date.now();
+                        return (
+                          <>
+                            {s && (
+                              <span
+                                className={`status-badge tone-${statusTone(s)}`}
+                                title="status: from this file's frontmatter"
+                              >
+                                {s}
+                              </span>
+                            )}
+                            {who && (
+                              <span
+                                className="matter-owner"
+                                title="owner: from this file's frontmatter"
+                              >
+                                @{who}
+                              </span>
+                            )}
+                            {due && (
+                              <span
+                                className={`matter-due ${overdue ? "overdue" : ""}`}
+                                title="due: from this file's frontmatter"
+                              >
+                                due {due}
+                              </span>
+                            )}
+                          </>
+                        );
+                      })()}
                     {/* Only where there is one to edit. */}
                     {matter !== null && (
                       <button
@@ -1892,7 +1995,14 @@ export default function App() {
                     every glance at the source, which is what made switching
                     feel slow; hiding costs a little memory and nothing else.
                   */}
-                  <div className={`surface ${view === "write" ? "" : "aside"}`}>
+                  <div
+                    className={`surface ${view === "write" ? "" : "aside"}`}
+                    onContextMenu={(e) => {
+                      if (view !== "write") return;
+                      e.preventDefault();
+                      setPageMenu({ x: e.clientX, y: e.clientY });
+                    }}
+                  >
                     <Editor
                       docKey={docKey}
                       repo={activeRepo?.path ?? ""}
@@ -1900,6 +2010,7 @@ export default function App() {
                       initialValue={content}
                       spellcheck={settings.spellcheck}
                       imageFolder={settings.imageFolder}
+                      author={author}
                       onChange={onChange}
                     />
                   </div>
@@ -1971,6 +2082,25 @@ export default function App() {
           )}
           <span>⌘G git · ⌘D diff · ⌘, settings</span>
         </footer>
+      )}
+
+      {pageMenu && (
+        <div
+          className="ctx"
+          style={{ left: pageMenu.x, top: pageMenu.y }}
+          onMouseDown={(e) => e.stopPropagation()}
+        >
+          {/* One item, until something else earns a place on it. */}
+          <button
+            className="ctx-item"
+            onClick={() => {
+              setPageMenu(null);
+              newComment();
+            }}
+          >
+            New comment…
+          </button>
+        </div>
       )}
 
       {htmlEdit && (
@@ -2077,6 +2207,7 @@ export default function App() {
         onMoveFile={() =>
           activeRepoPath && activePath && setMoving({ repo: activeRepoPath, path: activePath })
         }
+        onNewComment={newComment}
         onInsertHtml={() =>
           setAsking({
             title: "Insert HTML",
