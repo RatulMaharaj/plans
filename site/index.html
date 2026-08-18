@@ -1,0 +1,264 @@
+<!doctype html>
+<html lang="en" data-paper="day">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Plans — the markdown in your repos, in one place</title>
+    <meta
+      name="description"
+      content="A small desktop app for reading and editing the markdown in your local git repositories — without opening the whole repo in an editor."
+    />
+    <meta property="og:title" content="Plans" />
+    <meta
+      property="og:description"
+      content="A small desktop app for reading and editing the markdown in your local git repositories."
+    />
+    <meta property="og:type" content="website" />
+    <meta property="og:url" content="https://plans.ratulmaharaj.com/" />
+    <meta property="og:image" content="https://plans.ratulmaharaj.com/plans-day.png" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <link rel="canonical" href="https://plans.ratulmaharaj.com/" />
+    <link rel="icon" href="icon.png" />
+    <style>
+      @font-face {
+        font-family: "Vollkorn";
+        font-style: normal;
+        font-weight: 400 700;
+        font-display: swap;
+        src: url(fonts/vollkorn-latin-3.woff2) format("woff2");
+      }
+      @font-face {
+        font-family: "Work Sans";
+        font-style: normal;
+        font-weight: 300 700;
+        font-display: swap;
+        src: url(fonts/work-sans-latin-3.woff2) format("woff2");
+      }
+      @font-face {
+        font-family: "Space Mono";
+        font-style: normal;
+        font-weight: 400;
+        font-display: swap;
+        src: url(fonts/space-mono-latin-5.woff2) format("woff2");
+      }
+
+      /* The three papers, as in the app's Aa menu. */
+      :root,
+      [data-paper="day"] {
+        --paper: #fbfbf9;
+        --ink: #17181b;
+        --tint: #f2f1ec;
+        --accent: #2f6f4e;
+      }
+      [data-paper="sepia"] {
+        --paper: #e9dfcb;
+        --ink: #33291f;
+        --tint: #e0d4bb;
+        --accent: #6b5426;
+      }
+      [data-paper="night"] {
+        --paper: #121316;
+        --ink: #c8c5be;
+        --tint: #1b1d21;
+        --accent: #8fb99b;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root:not([data-paper="day"]):not([data-paper="sepia"]) {
+          --paper: #121316;
+          --ink: #c8c5be;
+          --tint: #1b1d21;
+          --accent: #8fb99b;
+        }
+      }
+      :root {
+        --rule: color-mix(in srgb, var(--ink) 14%, transparent);
+        --soft: color-mix(in srgb, var(--ink) 62%, transparent);
+        --faint: color-mix(in srgb, var(--ink) 38%, transparent);
+      }
+
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        background: var(--paper);
+        color: var(--ink);
+        font: 18px/1.65 Vollkorn, ui-serif, Georgia, serif;
+        -webkit-font-smoothing: antialiased;
+        transition: background 250ms ease, color 250ms ease;
+      }
+      main { max-width: 46rem; margin: 0 auto; padding: 4.5rem 1.5rem 5rem; }
+
+      /* Header */
+      header { text-align: center; }
+      header img { width: 68px; height: 68px; }
+      h1 {
+        font-size: clamp(2.6rem, 7vw, 3.6rem);
+        letter-spacing: -0.025em;
+        margin: 1.1rem 0 0.6rem;
+      }
+      .tagline {
+        font-size: 1.2rem;
+        color: var(--soft);
+        margin: 0 auto 2rem;
+        max-width: 30rem;
+        text-wrap: balance;
+      }
+      .btn {
+        display: inline-block;
+        padding: 0.75rem 1.5rem;
+        border-radius: 0.5rem;
+        background: var(--ink);
+        color: var(--paper);
+        text-decoration: none;
+        font: 500 0.95rem/1.2 "Work Sans", ui-sans-serif, system-ui, sans-serif;
+        transition: transform 120ms ease, opacity 120ms ease;
+      }
+      .btn:hover { transform: translateY(-1px); opacity: 0.9; }
+      .under {
+        margin: 0.85rem 0 0;
+        font: 400 0.85rem/1.5 "Work Sans", ui-sans-serif, system-ui, sans-serif;
+        color: var(--faint);
+      }
+      .under a { color: inherit; text-underline-offset: 3px; }
+
+      /* Paper switcher */
+      .papers {
+        display: flex;
+        justify-content: center;
+        gap: 0.5rem;
+        margin: 2.75rem 0 1.25rem;
+      }
+      .papers button {
+        width: 1.6rem;
+        height: 1.6rem;
+        padding: 0;
+        border-radius: 50%;
+        border: 1px solid var(--rule);
+        cursor: pointer;
+        outline-offset: 3px;
+      }
+      .papers button[aria-pressed="true"] { outline: 1.5px solid var(--faint); }
+
+      /* The app itself, from `pnpm shots` */
+      .shot { margin: 0; }
+      .shot img {
+        display: block;
+        width: 100%;
+        height: auto;
+        border: 1px solid var(--rule);
+        border-radius: 0.7rem;
+        box-shadow: 0 18px 50px -28px color-mix(in srgb, var(--ink) 55%, transparent);
+      }
+
+      @media (max-width: 34rem) {
+        .shot img { border-radius: 0.45rem; }
+      }
+
+      /* Points */
+      .points {
+        display: grid;
+        gap: 1.75rem 2.5rem;
+        grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+        margin: 4rem 0 0;
+      }
+      .points h2 {
+        font: 600 0.72rem/1 "Space Mono", ui-monospace, Menlo, monospace;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+        color: var(--faint);
+        margin: 0 0 0.4rem;
+      }
+      .points p { margin: 0; font-size: 0.95rem; color: var(--soft); }
+
+      footer {
+        margin-top: 4rem;
+        padding-top: 1.5rem;
+        border-top: 1px solid var(--rule);
+        text-align: center;
+        font: 400 0.85rem/1.6 "Work Sans", ui-sans-serif, system-ui, sans-serif;
+        color: var(--faint);
+      }
+      footer a { color: inherit; text-underline-offset: 3px; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <header>
+        <img src="icon.png" alt="" />
+        <h1>Plans</h1>
+        <p class="tagline">
+          A small desktop app for reading and editing the markdown in your local
+          git repositories — without opening the whole repo in an editor.
+        </p>
+        <a class="btn" href="https://github.com/RatulMaharaj/plans/releases/latest">Download for macOS</a>
+        <p class="under">
+          Free and open source ·
+          <a href="https://github.com/RatulMaharaj/plans">GitHub</a>
+        </p>
+      </header>
+
+      <div class="papers" role="group" aria-label="Paper">
+        <button type="button" data-set="day" aria-label="Day" aria-pressed="true" style="background:#FBFBF9"></button>
+        <button type="button" data-set="sepia" aria-label="Sepia" aria-pressed="false" style="background:#E9DFCB"></button>
+        <button type="button" data-set="night" aria-label="Night" aria-pressed="false" style="background:#121316"></button>
+      </div>
+
+      <figure class="shot">
+        <img id="shot" src="plans-day.png" width="1180" height="780"
+          alt="The Plans window: markdown from two repositories in one tree on the left, the open document rendered as a page on the right, and the file marked as edited since the last commit." />
+      </figure>
+
+      <section class="points">
+        <div>
+          <h2>Every repo at once</h2>
+          <p>
+            Add any local git repository. All their markdown shows up in one tree,
+            remembered between launches.
+          </p>
+        </div>
+        <div>
+          <h2>Nothing is lost</h2>
+          <p>
+            The file on disk is the only buffer, and every save is checked against
+            the version you read — so an edit from elsewhere is caught, not clobbered.
+          </p>
+        </div>
+        <div>
+          <h2>Page, source, diff</h2>
+          <p>
+            Three ways to look at the same file, all editable, all the same buffer.
+          </p>
+        </div>
+        <div>
+          <h2>Git, built in</h2>
+          <p>
+            Branches, pull and push, staging, undo and commit — shelling out to
+            your own git, with your own keys and hooks.
+          </p>
+        </div>
+      </section>
+
+      <footer>
+        Built with <a href="https://tauri.app">Tauri</a> and
+        <a href="https://milkdown.dev">Milkdown</a>. Type is Vollkorn, Work Sans,
+        and Space Mono, from <a href="https://open-foundry.com">Open Foundry</a>.
+      </footer>
+    </main>
+
+    <script>
+      const root = document.documentElement;
+      for (const b of document.querySelectorAll(".papers button")) {
+        b.addEventListener("click", () => {
+          root.dataset.paper = b.dataset.set;
+          document.getElementById("shot").src = `plans-${b.dataset.set}.png`;
+          localStorage.setItem("paper", b.dataset.set);
+          for (const o of document.querySelectorAll(".papers button"))
+            o.setAttribute("aria-pressed", String(o === b));
+        });
+      }
+      const saved = localStorage.getItem("paper");
+      if (saved) document.querySelector(`.papers [data-set="${saved}"]`)?.click();
+      else if (matchMedia("(prefers-color-scheme: dark)").matches)
+        document.querySelector('.papers [data-set="night"]').click();
+    </script>
+  </body>
+</html>
