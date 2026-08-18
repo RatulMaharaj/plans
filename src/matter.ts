@@ -104,9 +104,12 @@ export function setMatterValue(matter: string, key: string, value: string | null
  * Recognised case-insensitively, rendered as written — the app reads
  * conventions, it doesn't own a vocabulary.
  */
-export function statusTone(status: string): "draft" | "active" | "done" | "blocked" | "other" {
+export function statusTone(
+  status: string,
+): "draft" | "triage" | "active" | "done" | "blocked" | "other" {
   const s = status.trim().toLowerCase();
-  if (s === "draft" || s === "active" || s === "done" || s === "blocked") return s;
+  if (s === "draft" || s === "triage" || s === "active" || s === "done" || s === "blocked")
+    return s;
   return "other";
 }
 

@@ -110,7 +110,7 @@ export const DEFAULTS: Settings = {
   showIgnored: false,
   showExtensions: true,
   showFrontmatter: true,
-  statuses: "draft, active, done, blocked",
+  statuses: "draft, triage, active, done, blocked",
   imageFolder: "assets",
   sourceLineNumbers: true,
   sourceWrap: true,

@@ -1890,6 +1890,7 @@ body.resizing .files-edge { pointer-events: auto; }
   color: var(--ink-3);
 }
 .tone-draft { color: var(--ink-3); }
+.tone-triage { color: var(--git-mod); }
 .tone-active { color: var(--git-staged); }
 .tone-done { color: var(--git-new); }
 .tone-blocked { color: var(--git-mod); }
