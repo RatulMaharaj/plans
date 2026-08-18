@@ -5,7 +5,7 @@
  * `<picture>` block or an `<!-- aside -->` shows up as literal characters in
  * the middle of the prose. This replaces that view with two behaviours:
  *
- *   - comments become a quiet margin marker that opens the note on click;
+ *   - comments become a quiet margin marker that opens the comment on click;
  *   - everything else is rendered, with relative image paths resolved against
  *     the repository so a README cover actually appears.
  *
@@ -31,7 +31,7 @@ export function commentAuthor(body: string): string | null {
  * A thread is one comment with more than one voice in it: one line per turn,
  * each "@name: what they said". The strict reading — *every* non-empty line
  * must match — is what keeps prose that merely mentions an @handle rendering
- * as the single note it is.
+ * as the single comment it is.
  */
 export type CommentTurn = { who: string | null; text: string };
 
@@ -58,7 +58,7 @@ export function authorSlug(name: string): string {
 
 /**
  * A reply appended to a comment's source. The first reply promotes a one-line
- * note to the block form — one line per turn — which is also how a person
+ * comment to the block form — one line per turn — which is also how a person
  * would write it by hand.
  */
 export function withReply(value: string, author: string, text: string): string {
@@ -93,7 +93,7 @@ function commentCard(
   const mark = document.createElement("button");
   mark.className = "md-comment-mark";
   mark.type = "button";
-  mark.textContent = turns.length > 1 ? `note ×${turns.length}` : "note";
+  mark.textContent = turns.length > 1 ? `comment +${turns.length}` : "comment";
   mark.title = body;
 
   const card = document.createElement("span");
