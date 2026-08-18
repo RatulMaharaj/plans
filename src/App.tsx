@@ -29,6 +29,12 @@ import {
   saveSettings,
   type Settings,
 } from "./settings";
+import {
+  resumeAnalytics,
+  setAppVersion as stampVersion,
+  stopAnalytics,
+  track,
+} from "./analytics";
 import "./App.css";
 
 const KEY = {
@@ -96,14 +102,36 @@ type Toast = { text: string; kind: "info" | "error" } | null;
 type View = "write" | "source" | "diff" | "settings";
 
 
+/**
+ * A slider fires a change per step; one event per press is what's wanted. The
+ * name of the setting is held for a beat and sent once things go quiet.
+ */
+const settleTimers = new Map<string, number>();
+function noteSettingChange(key: string) {
+  // Not settings in the sense a person would recognise — window furniture and
+  // bookkeeping the app writes to itself.
+  if (key === "treeWidth" || key === "lastSeenVersion") return;
+  const had = settleTimers.get(key);
+  if (had) clearTimeout(had);
+  settleTimers.set(
+    key,
+    window.setTimeout(() => {
+      settleTimers.delete(key);
+      track("setting_changed", { setting: key });
+    }, 1500),
+  );
+}
+
 export default function App() {
   // Counts renders of the whole app, which is the cost a keystroke used to pay.
   tick("render App");
   const [settings, setSettings] = useState<Settings>(loadSettings);
-  const set = useCallback(
-    (patch: Partial<Settings>) => setSettings((s) => ({ ...s, ...patch })),
-    [],
-  );
+  const set = useCallback((patch: Partial<Settings>) => {
+    setSettings((s) => ({ ...s, ...patch }));
+    // Which knobs get turned, never what they were turned to — a font size is
+    // harmless, but "imageFolder" is a path, so only the name goes.
+    for (const key of Object.keys(patch)) noteSettingChange(key);
+  }, []);
 
   const [repos, setRepos] = useState<RepoInfo[]>([]);
   const [activeRepoPath, setActiveRepoPath] = useState<string | null>(null);
@@ -237,9 +265,20 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    track("view_changed", { view });
+  }, [view]);
+
+  useEffect(() => {
     applySettings(settings);
     saveSettings(settings);
   }, [settings]);
+
+  // The toggle takes effect on the press, not on the next launch: someone who
+  // turns it off has usually just decided they want it off now.
+  useEffect(() => {
+    if (settings.telemetry) resumeAnalytics();
+    else stopAnalytics();
+  }, [settings.telemetry]);
 
   /**
    * Ask the feed. An automatic check that fails says nothing — offline, a
@@ -293,6 +332,7 @@ export default function App() {
       }
       if (!alive) return;
       setAppVersion(running);
+      stampVersion(running);
       const seen = settings.lastSeenVersion;
       if (seen && !isNewer(running, seen)) return;
       // A fresh install shows nothing: there is nothing new about the version
@@ -536,10 +576,13 @@ export default function App() {
       );
       setActiveRepoPath(info.path);
       setExpanded((prev) => new Set(prev).add(`${info.path}::`));
+      // The count, not the name — how many repositories someone keeps open is
+      // a product question; which ones they are is nobody's business.
+      track("repo_added", { repos: repos.length + 1 });
     } catch (e) {
       notify(String(e), "error");
     }
-  }, [notify]);
+  }, [notify, repos.length]);
 
   const forgetRepo = useCallback(
     (path: string) => {
@@ -611,6 +654,7 @@ export default function App() {
       // write is refused rather than clobbering whatever arrived.
       stamp.current = await api.writePlan(p.repo, p.path, p.text, stamp.current ?? undefined);
       setDirty(false);
+      track("file_saved", { autosave: settings.autosave, chars: p.text.length });
       setSavedAt(
         new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
       );
@@ -644,7 +688,7 @@ export default function App() {
     } finally {
       writing.current = false;
     }
-  }, [notify, refreshStatus]);
+  }, [notify, refreshStatus, settings.autosave]);
 
   const onChange = useCallback(
     (markdown: string) => {

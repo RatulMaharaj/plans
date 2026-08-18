@@ -392,6 +392,19 @@ export function SettingsPage({
           </div>
         </Group>
 
+        {/* ---- privacy -------------------------------------------------- */}
+        <Group
+          name="Privacy"
+          hint="Plans counts which features get used, so it can be improved by something other than guesswork. Nobody is identified, and no file name, path, or word of your writing ever leaves this machine."
+        >
+          <Toggle
+            label="Send anonymous usage data"
+            hint="Counts and setting names only. Off means nothing is sent at all."
+            on={s.telemetry}
+            onChange={(telemetry) => onChange({ telemetry })}
+          />
+        </Group>
+
         {/* ---- library -------------------------------------------------- */}
         <Group
           name="Repositories"

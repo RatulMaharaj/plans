@@ -144,13 +144,13 @@
         display: block;
         width: 100%;
         height: auto;
-        border: 1px solid var(--rule);
-        border-radius: 0.7rem;
+        /* The frame is in the picture itself, so the page adds only depth. */
+        border-radius: 0.35rem;
         box-shadow: 0 18px 50px -28px color-mix(in srgb, var(--ink) 55%, transparent);
       }
 
       @media (max-width: 34rem) {
-        .shot img { border-radius: 0.45rem; }
+        .shot img { border-radius: 0.25rem; }
       }
 
       /* Points */
@@ -189,7 +189,7 @@
           A small desktop app for reading and editing the markdown in your local
           git repositories — without opening the whole repo in an editor.
         </p>
-        <a class="btn" href="https://github.com/RatulMaharaj/plans/releases/latest">Download for macOS</a>
+        <a class="btn" id="download" href="https://github.com/RatulMaharaj/plans/releases/latest">Download for macOS</a>
         <p class="under">
           Free and open source ·
           <a href="https://github.com/RatulMaharaj/plans">GitHub</a>
@@ -241,18 +241,39 @@
         Built with <a href="https://tauri.app">Tauri</a> and
         <a href="https://milkdown.dev">Milkdown</a>. Type is Vollkorn, Work Sans,
         and Space Mono, from <a href="https://open-foundry.com">Open Foundry</a>.
+        <br />
+        This site and the app count anonymous usage. Nobody is identified, and
+        no file name, path, or word of your writing ever leaves your machine —
+        the app's Settings → Privacy turns it off.
       </footer>
     </main>
+
+    <!-- Usage counts for the page, so the app can be improved by something
+         other than guesswork. Honours Do Not Track. -->
+    <script>
+      !function(t,e){var o,n,p,r;e.__SV||(window.posthog=e,e._i=[],e.init=function(i,s,a){function g(t,e){var o=e.split(".");2==o.length&&(t=t[o[0]],e=o[1]),t[e]=function(){t.push([e].concat(Array.prototype.slice.call(arguments,0)))}}(p=t.createElement("script")).type="text/javascript",p.crossOrigin="anonymous",p.async=!0,p.src=s.api_host+"/static/array.js",(r=t.getElementsByTagName("script")[0]).parentNode.insertBefore(p,r);var u=e;for(void 0!==a?u=e[a]=[]:a="posthog",u.people=u.people||[],u.toString=function(t){var e="posthog";return"posthog"!==a&&(e+="."+a),t||(e+=" (stub)"),e},u.people.toString=function(){return u.toString(1)+".people (stub)"},o="init capture register register_once unregister opt_out_capturing has_opted_out_capturing opt_in_capturing reset group identify".split(" "),n=0;n<o.length;n++)g(u,o[n]);e._i.push([i,s,a])},e.__SV=1)}(document,window.posthog||[]);
+      posthog.init("phc_zzvmaX77Jr8e7H97MYxhejaEGMGH3nZfuTTirH8PrQrf", {
+        api_host: "https://us.i.posthog.com",
+        person_profiles: "identified_only",
+        respect_dnt: true,
+      });
+      document.getElementById("download").addEventListener("click", () => {
+        posthog.capture("download_clicked", { platform: "macos" });
+      });
+    </script>
 
     <script>
       const root = document.documentElement;
       for (const b of document.querySelectorAll(".papers button")) {
-        b.addEventListener("click", () => {
+        b.addEventListener("click", (ev) => {
           root.dataset.paper = b.dataset.set;
           document.getElementById("shot").src = `plans-${b.dataset.set}.png`;
           localStorage.setItem("paper", b.dataset.set);
           for (const o of document.querySelectorAll(".papers button"))
             o.setAttribute("aria-pressed", String(o === b));
+          // Restoring the saved paper on load calls click() itself; only a
+          // real press is a preview.
+          if (ev.isTrusted) posthog.capture("paper_previewed", { paper: b.dataset.set });
         });
       }
       const saved = localStorage.getItem("paper");

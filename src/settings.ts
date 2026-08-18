@@ -74,6 +74,11 @@ export type Settings = {
    */
   updates: "notify" | "off";
   /**
+   * Anonymous usage counts, so the app can be improved by something other than
+   * guesswork. Never file names, paths, or text. Off means nothing is sent.
+   */
+  telemetry: boolean;
+  /**
    * The version whose release notes have been shown. Anything older than what
    * is running means the notes open once, by themselves, after an update.
    */
@@ -109,6 +114,7 @@ export const DEFAULTS: Settings = {
   showStatusBar: true,
   watchSeconds: 4,
   updates: "notify",
+  telemetry: true,
   // Empty rather than the current version: a settings blob from an older build
   // merged over these defaults reads as "never seen", and shows the notes once.
   lastSeenVersion: "",
