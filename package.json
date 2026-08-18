@@ -15,7 +15,8 @@
     "version": "changeset version && node scripts/sync-version.mjs",
     "version:check": "node scripts/sync-version.mjs --check",
     "test": "playwright test",
-    "test:ui": "playwright test --ui"
+    "test:ui": "playwright test --ui",
+    "shots": "SHOTS=1 playwright test e2e/shots.spec.ts"
   },
   "dependencies": {
     "@codemirror/commands": "^6.11.0",

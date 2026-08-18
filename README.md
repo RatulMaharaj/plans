@@ -16,8 +16,8 @@ repositories** — without opening the whole repo in an editor.
 <br />
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/plans-night.svg" />
-  <img src="docs/plans-day.svg" width="760" alt="The Plans window: a file tree of markdown across repositories on the left, the open document rendered as a page on the right, with an uncommitted change tinted green." />
+  <source media="(prefers-color-scheme: dark)" srcset="site/plans-night.png" />
+  <img src="site/plans-day.png" width="760" alt="The Plans window: a file tree of markdown across repositories on the left, the open document rendered as a page on the right, with the file edited since the last commit marked in the tree." />
 </picture>
 
 </div>
