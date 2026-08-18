@@ -224,6 +224,13 @@ jobs:
       # latest.json is what an installed copy actually fetches; tauri-action
       # attaches it to the release rather than to the workflow artifact, so it
       # has to be checked on the draft itself.
+      #
+      # This asks as an authenticated user, because a draft's assets are not
+      # readable any other way — so it proves the file is attached, not that the
+      # world can read it. Anonymous readability is a property of the repository
+      # rather than of a build: on a private repo every asset URL 404s for
+      # everyone, and no green run here would tell you. If Plans ever goes
+      # private again, the updater stops working and this check stays green.
       - name: Check latest.json is on the release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
