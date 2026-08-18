@@ -144,7 +144,11 @@ export function loadSettings(): Settings {
   try {
     const raw = localStorage.getItem(KEY);
     // Merge over defaults so a settings file from an older build still opens.
-    return raw ? { ...DEFAULTS, ...(JSON.parse(raw) as Partial<Settings>) } : DEFAULTS;
+    const s = raw ? { ...DEFAULTS, ...(JSON.parse(raw) as Partial<Settings>) } : DEFAULTS;
+    // A saved list that still matches the pre-triage default hasn't been
+    // customised; move it to the current default. Edited lists are untouched.
+    if (s.statuses === "draft, active, done, blocked") s.statuses = DEFAULTS.statuses;
+    return s;
   } catch {
     return DEFAULTS;
   }
