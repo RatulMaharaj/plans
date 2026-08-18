@@ -813,6 +813,34 @@ fn git_log(repo: String, scope: Vec<String>, limit: u32) -> R<String> {
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
+/// In development, wear a different face.
+///
+/// A dev build and an installed one are the same window with the same title,
+/// and the wrong one gets typed into. The icon is the only part of an app you
+/// see without looking at it, so that is where the difference goes: the same
+/// page, with the mark in Night's red instead of amber.
+///
+/// Only macOS, because that is where this is developed, and only in debug
+/// builds — a shipped bundle takes its icon from Info.plist and never reaches
+/// this function.
+#[cfg(all(debug_assertions, target_os = "macos"))]
+fn wear_the_development_face() {
+    use objc2::AllocAnyThread;
+    use objc2_app_kit::{NSApplication, NSImage};
+    use objc2_foundation::{MainThreadMarker, NSData};
+
+    // AppKit is main-thread-only, and a wrong icon is not worth a panic over.
+    let Some(mtm) = MainThreadMarker::new() else {
+        return;
+    };
+    let data = NSData::with_bytes(include_bytes!("../icons/icon-dev.png"));
+    let Some(icon) = NSImage::initWithData(NSImage::alloc(), &data) else {
+        return;
+    };
+    // SAFETY: on the main thread, per the marker above.
+    unsafe { NSApplication::sharedApplication(mtm).setApplicationIconImage(Some(&icon)) };
+}
+
 pub fn run() {
     let builder = tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
@@ -856,8 +884,17 @@ pub fn run() {
             git_fetch,
             git_log,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|_app, _event| {
+            // On `Ready` rather than in `setup`: AppKit finishes launching
+            // after setup runs and puts its own icon back, so an icon set any
+            // earlier is overwritten before anyone sees it.
+            #[cfg(all(debug_assertions, target_os = "macos"))]
+            if matches!(_event, tauri::RunEvent::Ready) {
+                wear_the_development_face();
+            }
+        });
 }
 
 // ---------------------------------------------------------------------------

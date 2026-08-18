@@ -38,6 +38,17 @@ PAPERS = {
         "mark": (216, 171, 82, 255),
         "edge": (65, 66, 74, 255),
     },
+    # The development build, which is Night with the mark in Night's own red
+    # (--diff-del). Amber means "this differs from what's committed"; red means
+    # "this one is not the app you installed" — a distinction you want to make
+    # from the dock, without looking.
+    "dev": {
+        "paper": (15, 16, 19, 255),
+        "ink": (230, 227, 220, 255),
+        "ink2": (165, 162, 154, 255),
+        "mark": (232, 119, 110, 255),
+        "edge": (65, 66, 74, 255),
+    },
     # Ink on paper with no colour at all, for the argument that the mark should
     # be weight rather than hue.
     "quiet": {
@@ -131,6 +142,15 @@ def main() -> None:
                 # A small copy too, since that is where an icon is really judged.
                 img.resize((128, 128), Image.LANCZOS).save(f"{out}/{name}@128.png")
                 print(f"wrote {out}/{name}.png")
+        return
+
+    if len(sys.argv) > 1 and sys.argv[1] == "--dev":
+        # Straight to where the binary embeds it from. This one never goes
+        # through `tauri icon`: it is read at runtime, in debug builds only,
+        # and never enters a bundle.
+        out = "src-tauri/icons/icon-dev.png"
+        build("dev").resize((1024, 1024), Image.LANCZOS).save(out)
+        print(f"wrote {out} (dev)")
         return
 
     theme = sys.argv[1] if len(sys.argv) > 1 else "day"
