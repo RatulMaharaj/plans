@@ -216,7 +216,11 @@ fn frontmatter_status(path: &Path, modified: u64) -> Option<String> {
             };
             // Top-level keys only — an indented `status:` belongs to something else.
             if !key.starts_with(char::is_whitespace) && key.trim().eq_ignore_ascii_case("status") {
-                let v = value.trim().trim_matches('"').trim_matches('\'').to_string();
+                let v = value
+                    .trim()
+                    .trim_matches('"')
+                    .trim_matches('\'')
+                    .to_string();
                 return (!v.is_empty()).then_some(v);
             }
         }
@@ -693,7 +697,10 @@ fn folder_census(repo: String, rel_path: String) -> R<FolderCensus> {
         Ok(())
     }
     let p = safe_join(&repo, &rel_path)?;
-    let mut c = FolderCensus { files: 0, hidden: 0 };
+    let mut c = FolderCensus {
+        files: 0,
+        hidden: 0,
+    };
     walk(&p, &mut c).map_err(|e| e.to_string())?;
     Ok(c)
 }
@@ -1145,7 +1152,11 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
 
         let with = dir.join("with.md");
-        std::fs::write(&with, "---\ntitle: x\nStatus: \"Active\"\n- item\n---\n# hi\n").unwrap();
+        std::fs::write(
+            &with,
+            "---\ntitle: x\nStatus: \"Active\"\n- item\n---\n# hi\n",
+        )
+        .unwrap();
         assert_eq!(frontmatter_status(&with, 1), Some("Active".into()));
 
         // A status outside a frontmatter block is prose, not metadata.
