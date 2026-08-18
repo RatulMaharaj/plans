@@ -29,6 +29,7 @@ which the card already does (`html-view.ts:175`).
 <!--
 @ratul-maharaj: This is a test comment
 @ratul-maharaj: I think something more than this could be another comment in a thread
+@ratul-maharaj: Another comment
 -->
 
 More of this exists than the draft assumes. Today:
