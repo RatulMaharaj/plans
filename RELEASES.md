@@ -2,7 +2,9 @@
 
 Plans ships as a signed and notarized macOS `.dmg`, built by
 [`.github/workflows/release.yml`](.github/workflows/release.yml). This document
-covers the one-time setup and the per-release routine.
+covers the per-release routine. The one-time setup — certificates, the App
+Store Connect key, the updater keypair — is done, and lives in this file's
+history if it ever needs doing again.
 
 Signing and notarization are not optional polish: an unsigned build downloaded
 from the internet is quarantined by Gatekeeper and shows up as *"Plans is
@@ -11,93 +13,62 @@ that a broken signature fails CI rather than a user's machine.
 
 ---
 
-## One-time setup
+## The secrets it runs on
 
-### 1. Developer ID Application certificate
+Set under **Settings → Secrets and variables → Actions**. Creating them was a
+one-time job and is done; this is here so a failure has a name to point at.
 
-Notarization requires that specific certificate type — an *Apple Development*
-or *Apple Distribution* cert will **not** work.
+| Secret                               | Value                                               |
+| ------------------------------------ | --------------------------------------------------- |
+| `MACOS_CERTIFICATE_P12_BASE64`       | base64 of the Developer ID Application `.p12`       |
+| `MACOS_CERTIFICATE_PASSWORD`         | the password set when exporting the `.p12`          |
+| `APPLE_SIGNING_IDENTITY`             | e.g. `Developer ID Application: Your Name (TEAMID)` |
+| `APPLE_API_KEY_ID`                   | App Store Connect key id                            |
+| `APPLE_API_ISSUER_ID`                | issuer id for that key                              |
+| `APPLE_API_PRIVATE_KEY_BASE64`       | base64 of the `.p8` private key                     |
+| `TAURI_SIGNING_PRIVATE_KEY`          | contents of `~/.tauri/plans.key`                    |
+| `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` | the password set when generating it, or empty       |
 
-1. Create one at [developer.apple.com/account/resources/certificates](https://developer.apple.com/account/resources/certificates).
+Two of these expire or are unrecoverable, which is the whole reason the table
+survived the setup being done:
 
-2. Download it, double-click to add it to your login keychain.
-
-3. In Keychain Access, find it, right-click → **Export** → `.p12`, and set a
-   password. Export the certificate *with its private key*.
-
-4. Base64 it for GitHub:
-
-   ```sh
-   base64 -i Certificates.p12 | pbcopy
-   ```
-
-5. Note the identity string exactly as it appears:
-
-   ```sh
-   security find-identity -v -p codesigning | grep "Developer ID Application"
-   # -> "Developer ID Application: Your Name (TEAMID)"
-   ```
-
-### 2. App Store Connect API key
-
-Notarization uses an API key rather than an Apple ID and app-specific password:
-it isn't tied to a personal account, survives 2FA changes, and can be revoked on
-its own.
-
-1. Create a key at [appstoreconnect.apple.com/access/integrations/api](https://appstoreconnect.apple.com/access/integrations/api)
-   with the **Developer** role.
-2. Download the `.p8` — **Apple only lets you download it once.**
-3. Note the **Key ID** and the **Issuer ID** shown on that page.
-4. Base64 it:
-
-   ```sh
-   base64 -i AuthKey_XXXXXXXX.p8 | pbcopy
-   ```
-
-### 3. Updater signing keypair
-
-The updater has its own keypair, unrelated to the Apple one. Apple's signature
-says the bundle came from a known developer; the updater's says *this specific
-archive is the one we published*. Both are needed, and they fail differently.
-
-```sh
-pnpm tauri signer generate -w ~/.tauri/plans.key
-```
-
-The **public** key is pinned in `src-tauri/tauri.conf.json` and compiled into
-the binary. The private key goes into the secrets below.
-
-> **Back the private key up somewhere that is not this repo.** The updater
-> verifies the signature before it replaces anything on disk, so a compromised
-> feed cannot install a payload — but that property holds only while the private
-> key stays in CI, and losing it is unrecoverable. A new keypair means every
-> installed copy stops seeing updates, silently, forever.
-
-### 4. Repo secrets
-
-Add these under **Settings → Secrets and variables → Actions** on
-`RatulMaharaj/plans`. This is a personal repo, so the `loopedautomation` org
-secrets used by `whisper` and `meet` do not reach it — the values can be the
-same if it's the same Developer ID team, but they have to be set here too.
-
-| Secret                         | Value                                               |
-| ------------------------------ | --------------------------------------------------- |
-| `MACOS_CERTIFICATE_P12_BASE64` | base64 of the Developer ID Application `.p12`       |
-| `MACOS_CERTIFICATE_PASSWORD`   | the password you set when exporting the `.p12`      |
-| `APPLE_SIGNING_IDENTITY`       | e.g. `Developer ID Application: Your Name (TEAMID)` |
-| `APPLE_API_KEY_ID`             | App Store Connect key id                            |
-| `APPLE_API_ISSUER_ID`          | issuer id for that key                              |
-| `APPLE_API_PRIVATE_KEY_BASE64` | base64 of the `.p8` private key                     |
-| `TAURI_SIGNING_PRIVATE_KEY`    | contents of `~/.tauri/plans.key`                    |
-| `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` | the password set when generating it, or empty |
-
-Certificates expire (typically 5 years) and the workflow will start failing at
-the signing step when yours does. Regenerate and update the two `MACOS_*`
-secrets.
+- **The Apple certificate expires**, typically after five years, and the
+  workflow starts failing at the signing step when it does. Regenerate it and
+  update the two `MACOS_*` secrets.
+- **The updater private key cannot be regenerated.** Its public half is pinned
+  in `src-tauri/tauri.conf.json` and compiled into every binary ever shipped. A
+  new keypair means every installed copy stops seeing updates, silently and
+  permanently. Keep the backup of `~/.tauri/plans.key` somewhere that is not
+  this repo.
 
 ---
 
 ## Cutting a release
+
+```mermaid
+flowchart TD
+    A["pnpm run version<br/><i>changesets → version, CHANGELOG,<br/>tauri.conf.json, Cargo.toml, release-notes.ts</i>"]
+    B["Read what it wrote<br/><i>this text becomes the release body<br/>and the sheet the app opens</i>"]
+    C["git commit · git tag vX.Y.Z · git push origin main vX.Y.Z"]
+    D["release.yml<br/><i>universal build → sign → notarize → staple</i>"]
+    E["Draft release<br/><i>.dmg + .app.tar.gz + .sig + latest.json</i>"]
+    F{"verify job<br/><i>codesign · spctl · artifacts present</i>"}
+    G["Install the .dmg by hand<br/><i>no Gatekeeper prompt at all</i>"]
+    H(["Press Publish"])
+    I["Every installed copy sees it<br/><i>latest.json resolves to published releases only</i>"]
+    X["Do not publish<br/><i>see Troubleshooting</i>"]
+
+    A --> B --> C --> D --> E --> F
+    F -->|green| G --> H --> I
+    F -->|red| X
+
+    style H fill:#2f6f4f,stroke:#1d4632,color:#fff
+    style X fill:#7a2f2f,stroke:#4a1c1c,color:#fff
+```
+
+Everything above the **Publish** press is reversible: a draft release can be
+deleted and the tag moved. That press is the only step that is not, because it
+is the one the updater feed can see.
 
 1. Collect the changesets into a version and a changelog:
 
@@ -145,8 +116,8 @@ secrets.
 
 Run the workflow manually from the Actions tab (`workflow_dispatch`). It builds
 and signs exactly as a tagged run does, but creates no release — the `.dmg`
-lands as a workflow artifact you can download and test. Use this to validate
-secrets before your first real tag.
+lands as a workflow artifact you can download and test. Use it to check a
+signing change without spending a version number on it.
 
 ---
 
