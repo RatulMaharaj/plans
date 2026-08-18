@@ -159,7 +159,8 @@ update.
 
 - [x] Generate the updater keypair; add both secrets; back the key up off-repo
 - [x] `createUpdaterArtifacts: true`, `plugins.updater` block with pubkey and endpoint
-- [ ] Manual `workflow_dispatch` run; confirm `.app.tar.gz`, `.sig`, `latest.json` exist
+- [x] Confirm `.app.tar.gz`, `.sig`, `latest.json` exist — the v0.1.0 tag did it,
+      and the `verify` job now fails without them
 - [x] Extend the `verify` job to require all three
 - [x] Register the updater and process plugins in `lib.rs`; update capabilities
 - [x] Manual *Check for updates* command in `Palette.tsx`, result reported either way
