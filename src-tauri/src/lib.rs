@@ -814,9 +814,19 @@ fn git_log(repo: String, scope: Vec<String>, limit: u32) -> R<String> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let builder = tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
-        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_dialog::init());
+
+    // The updater downloads and replaces the running bundle; `process` is what
+    // relaunches it afterwards. Both are desktop-only, and the check itself is
+    // driven from the frontend so it never sits on the path to first paint.
+    #[cfg(desktop)]
+    let builder = builder
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init());
+
+    builder
         .invoke_handler(tauri::generate_handler![
             open_repo,
             list_plans,

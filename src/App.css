@@ -1776,3 +1776,93 @@ body.resizing .files-edge { pointer-events: auto; }
   box-shadow: inset 2px 0 0 var(--ink);
 }
 .row.over .row-name, .row.over .repo-name { color: var(--ink); }
+
+/* ===========================================================================
+   Updates: a banner above the status bar, and the notes it leads to
+   =========================================================================== */
+
+.update-banner {
+  position: fixed;
+  bottom: calc(var(--bar) + 14px);
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  background: var(--raised);
+  border: 1px solid var(--rule-strong);
+  border-radius: 4px;
+  padding: 9px 10px 9px 16px;
+  box-shadow: var(--shadow);
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  color: var(--ink-2);
+  max-width: min(680px, 82vw);
+  animation: sheet-in 150ms ease;
+}
+.update-text { display: flex; align-items: baseline; gap: 10px; min-width: 0; }
+.update-text b { color: var(--ink); font-weight: 500; }
+.update-notes {
+  color: var(--ink-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.update-acts { display: flex; align-items: center; gap: 4px; flex: none; }
+
+.update-progress {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: none;
+  width: 190px;
+}
+.update-progress::before {
+  content: "";
+  position: absolute;
+  inset: auto 0 auto 0;
+  height: 2px;
+  background: var(--rule);
+}
+.update-bar {
+  position: relative;
+  height: 2px;
+  width: 0;
+  background: var(--ink);
+  transition: width 120ms linear;
+}
+/* No content-length means no fraction to show; say so by moving rather than
+   by inventing a number. */
+.update-bar.unknown { width: 40%; animation: update-sweep 1.1s ease-in-out infinite; }
+@keyframes update-sweep {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(250%); }
+}
+.update-pct { margin-left: auto; color: var(--ink-3); flex: none; }
+
+.release-version { font-family: var(--mono); font-size: 10px; color: var(--ink-3); }
+.release-body {
+  padding: 14px 16px;
+  max-height: 52vh;
+  overflow-y: auto;
+}
+.release-head {
+  margin: 0 0 8px;
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.11em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+.release-head:not(:first-child) { margin-top: 18px; }
+.release-list { margin: 0; padding-left: 18px; }
+.release-list li, .release-para {
+  margin: 0 0 8px;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--ink-2);
+}
+.update-settings-acts { display: flex; align-items: center; gap: 4px; }

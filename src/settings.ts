@@ -65,6 +65,19 @@ export type Settings = {
   showStatusBar: boolean;
   /** Poll interval for picking up outside edits, in seconds. 0 turns it off. */
   watchSeconds: number;
+
+  // Updates
+  /**
+   * Whether the app looks for a new version of itself. There is no "auto":
+   * replacing a running editor's binary without being asked is not a thing to
+   * do to someone who has unsaved text in it.
+   */
+  updates: "notify" | "off";
+  /**
+   * The version whose release notes have been shown. Anything older than what
+   * is running means the notes open once, by themselves, after an update.
+   */
+  lastSeenVersion: string;
 };
 
 export const DEFAULTS: Settings = {
@@ -95,6 +108,10 @@ export const DEFAULTS: Settings = {
   showGit: false,
   showStatusBar: true,
   watchSeconds: 4,
+  updates: "notify",
+  // Empty rather than the current version: a settings blob from an older build
+  // merged over these defaults reads as "never seen", and shows the notes once.
+  lastSeenVersion: "",
 };
 
 export const RANGES = {

@@ -13,6 +13,10 @@ import { NameSheet } from "./NameSheet";
 import { MoveSheet } from "./MoveSheet";
 import { TextPrompt } from "./TextPrompt";
 import { SourceView } from "./SourceView";
+import { ReleaseSheet } from "./ReleaseSheet";
+import { UpdateBanner } from "./UpdateBanner";
+import { RELEASE_NOTES, RELEASE_VERSION } from "./release-notes";
+import { checkForUpdate, installUpdate, isNewer, runningVersion, type Available } from "./update";
 import { PerfHud } from "./PerfHud";
 import { start, tick, trace } from "./perf";
 import { htmlBridge, type HtmlEdit } from "./html-view";
@@ -211,6 +215,15 @@ export default function App() {
   });
   const [conflict, setConflict] = useState<null | { theirs: string }>(null);
 
+  // --- updates -------------------------------------------------------------
+  const [update, setUpdate] = useState<Available | null>(null);
+  const [installing, setInstalling] = useState(false);
+  const [progress, setProgress] = useState<number | null>(null);
+  /** The version whose notes are on screen; null when the sheet is closed. */
+  const [notesFor, setNotesFor] = useState<string | null>(null);
+  /** What is actually running, which is not always what was bundled with. */
+  const [appVersion, setAppVersion] = useState(RELEASE_VERSION);
+
   const activeRepo = useMemo(
     () => repos.find((r) => r.path === activeRepoPath) ?? null,
     [repos, activeRepoPath],
@@ -227,6 +240,94 @@ export default function App() {
     applySettings(settings);
     saveSettings(settings);
   }, [settings]);
+
+  /**
+   * Ask the feed. An automatic check that fails says nothing — offline, a
+   * proxy, GitHub having a bad afternoon are none of the reader's problem to
+   * solve. A check the reader asked for reports either way, including "you're
+   * up to date", because silence there reads as a broken button.
+   */
+  const lookForUpdate = useCallback(
+    async (asked: boolean) => {
+      try {
+        const found = await checkForUpdate();
+        if (found) setUpdate(found);
+        else if (asked) notify(`Plans ${await runningVersion()} is the latest version`);
+      } catch (e) {
+        if (asked) notify(String(e), "error");
+      }
+    },
+    [notify],
+  );
+
+  // On launch, after a delay, and then on an interval for the sessions that
+  // stay open for days — which is the normal way an editor gets used. Never on
+  // the path to first paint.
+  useEffect(() => {
+    if (settings.updates === "off") return;
+    const first = setTimeout(() => void lookForUpdate(false), 8_000);
+    const every = setInterval(() => void lookForUpdate(false), 6 * 60 * 60 * 1000);
+    return () => {
+      clearTimeout(first);
+      clearInterval(every);
+    };
+  }, [settings.updates, lookForUpdate]);
+
+  /**
+   * After an update, the notes open by themselves — once. A changelog that
+   * interrupts twice is one people learn to dismiss unread, and then the one
+   * release where it mattered goes unread too.
+   *
+   * The running binary is the authority on its own version; the bundled notes
+   * only describe what they were built from.
+   */
+  useEffect(() => {
+    let alive = true;
+    void (async () => {
+      let running = RELEASE_VERSION;
+      try {
+        running = await runningVersion();
+      } catch {
+        // Not in a Tauri window (a browser test run): the bundled version is
+        // the best answer available and nothing here is load-bearing.
+      }
+      if (!alive) return;
+      setAppVersion(running);
+      const seen = settings.lastSeenVersion;
+      if (seen && !isNewer(running, seen)) return;
+      // A fresh install shows nothing: there is nothing new about the version
+      // you just chose to install. Remember it and wait for the next one.
+      if (seen) setNotesFor(running);
+      set({ lastSeenVersion: running });
+    })();
+    return () => {
+      alive = false;
+    };
+    // Once, on boot — later changes to lastSeenVersion are this effect's own.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  /** On demand, from the palette: the notes for whatever is actually running. */
+  const showNotes = useCallback(async () => {
+    try {
+      setNotesFor(await runningVersion());
+    } catch {
+      setNotesFor(RELEASE_VERSION);
+    }
+  }, []);
+
+  const install = useCallback(async () => {
+    if (!update) return;
+    setInstalling(true);
+    setProgress(0);
+    try {
+      await installUpdate(update, setProgress);
+    } catch (e) {
+      setInstalling(false);
+      setProgress(null);
+      notify(`Update failed: ${e}`, "error");
+    }
+  }, [update, notify]);
 
   // Double-clicking any rendered HTML asks to edit its source.
   useEffect(() => {
@@ -1497,6 +1598,9 @@ export default function App() {
               activeRepoPath={activeRepoPath}
               onAddRepo={addRepo}
               onForgetRepo={forgetRepo}
+              version={appVersion}
+              onCheckUpdates={() => void lookForUpdate(true)}
+              onReleaseNotes={() => void showNotes()}
             />
           ) : (
             <>
@@ -1864,6 +1968,8 @@ export default function App() {
         }
         onOpenAt={(r, f) => void openFile(r, f)}
         onPerf={() => setPerf(true)}
+        onCheckUpdates={() => void lookForUpdate(true)}
+        onReleaseNotes={() => void showNotes()}
         gitCommands={gitCommands}
         hasMatter={matter !== null}
         canEdit={!!activePath}
@@ -1874,6 +1980,26 @@ export default function App() {
       />
 
       {perf && <PerfHud onClose={() => setPerf(false)} />}
+
+      {notesFor && (
+        <ReleaseSheet
+          version={notesFor}
+          notes={RELEASE_NOTES}
+          onClose={() => setNotesFor(null)}
+        />
+      )}
+
+      {/* The toast is transient and the banner is not, so they never share the
+          spot above the status bar. */}
+      {update && !toast && (
+        <UpdateBanner
+          found={update}
+          progress={progress}
+          installing={installing}
+          onInstall={() => void install()}
+          onDismiss={() => setUpdate(null)}
+        />
+      )}
 
       {toast && <div className={`toast ${toast.kind}`}>{toast.text}</div>}
     </div>

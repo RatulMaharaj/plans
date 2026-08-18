@@ -12,7 +12,7 @@ hands the result to the GitHub release, to `CHANGELOG.md`, and to the app
 itself.
 
 This is one half of the release pipeline. The other half is
-[`auto-updates.md`](./auto-updates.md): changesets produce the notes and the
+[`4_auto-updates.md`](./4_auto-updates.md): changesets produce the notes and the
 version bump, the updater ships them and opens them on first launch.
 
 ## Approach
@@ -146,13 +146,14 @@ to reconcile.
 
 ## Next
 
-- [ ] `pnpm add -D @changesets/cli`, `changeset init`, set `privatePackages`
-- [ ] `scripts/sync-version.mjs` with a `--check` mode
-- [ ] Wire the `version` script; add the check to `ci.yml`
-- [ ] Write a changeset for the current unreleased work and dry-run `changeset version`
-- [ ] Slice `CHANGELOG.md` into `releaseBody` in `release.yml`
-- [ ] Emit the current version's section as a bundled asset at build time
-- [ ] Release notes sheet, plus the `Palette.tsx` command
-- [ ] `lastSeenVersion` in `settings.ts` and the open-once-on-launch check
-- [ ] Update `RELEASES.md`: `changeset version` replaces "bump the version in both"
+- [x] `pnpm add -D @changesets/cli`, `changeset init`, set `privatePackages`
+- [x] `scripts/sync-version.mjs` with a `--check` mode
+- [x] Wire the `version` script; add the check to `ci.yml`
+- [x] Write a changeset for the current unreleased work and dry-run `changeset version`
+- [x] Slice `CHANGELOG.md` into `releaseBody` in `release.yml`
+- [x] Emit the current version's section as a bundled asset at build time
+- [x] Release notes sheet, plus the `Palette.tsx` command
+- [x] `lastSeenVersion` in `settings.ts` and the open-once-on-launch check
+- [x] Update `RELEASES.md`: `changeset version` replaces "bump the version in both"
 - [ ] <br />
+

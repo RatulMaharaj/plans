@@ -54,7 +54,26 @@ its own.
    base64 -i AuthKey_XXXXXXXX.p8 | pbcopy
    ```
 
-### 3. Repo secrets
+### 3. Updater signing keypair
+
+The updater has its own keypair, unrelated to the Apple one. Apple's signature
+says the bundle came from a known developer; the updater's says *this specific
+archive is the one we published*. Both are needed, and they fail differently.
+
+```sh
+pnpm tauri signer generate -w ~/.tauri/plans.key
+```
+
+The **public** key is pinned in `src-tauri/tauri.conf.json` and compiled into
+the binary. The private key goes into the secrets below.
+
+> **Back the private key up somewhere that is not this repo.** The updater
+> verifies the signature before it replaces anything on disk, so a compromised
+> feed cannot install a payload — but that property holds only while the private
+> key stays in CI, and losing it is unrecoverable. A new keypair means every
+> installed copy stops seeing updates, silently, forever.
+
+### 4. Repo secrets
 
 Add these under **Settings → Secrets and variables → Actions** on
 `RatulMaharaj/plans`. This is a personal repo, so the `loopedautomation` org
@@ -69,6 +88,8 @@ same if it's the same Developer ID team, but they have to be set here too.
 | `APPLE_API_KEY_ID`             | App Store Connect key id                            |
 | `APPLE_API_ISSUER_ID`          | issuer id for that key                              |
 | `APPLE_API_PRIVATE_KEY_BASE64` | base64 of the `.p8` private key                     |
+| `TAURI_SIGNING_PRIVATE_KEY`    | contents of `~/.tauri/plans.key`                    |
+| `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` | the password set when generating it, or empty |
 
 Certificates expire (typically 5 years) and the workflow will start failing at
 the signing step when yours does. Regenerate and update the two `MACOS_*`
@@ -78,27 +99,47 @@ secrets.
 
 ## Cutting a release
 
-1. Bump the version in **both** `package.json` and `src-tauri/tauri.conf.json` —
-   they are separate fields and Tauri uses the latter for the bundle.
-
-2. Commit, then tag and push:
+1. Collect the changesets into a version and a changelog:
 
    ```sh
+   pnpm run version
+   ```
+
+   That runs `changeset version` — which consumes everything in `.changeset/`,
+   bumps `package.json`, and writes `CHANGELOG.md` — and then
+   `scripts/sync-version.mjs`, which copies the new version into
+   `src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml` and `Cargo.lock`, and
+   regenerates `src/release-notes.ts` so the app can show its own notes offline.
+
+   Read what it wrote. The changelog section becomes the GitHub release body and
+   the sheet the app opens after updating, so this is the moment to fix a note
+   that reads badly. CI fails the build if the versions ever disagree
+   (`pnpm run version:check`).
+
+2. Commit, then tag and push the version that was just cut:
+
+   ```sh
+   git commit -am "Release 0.2.0"
    git tag v0.2.0
-   git push origin v0.2.0
+   git push origin main v0.2.0
    ```
 
 3. The workflow builds, signs, notarizes, staples, and creates a **draft**
    release. Notarization is Apple-side and usually takes a few minutes.
 
 4. The `verify` job mounts the real `.dmg` and runs `codesign` and `spctl`
-   against it. If it goes red, do not publish — see *Troubleshooting*.
+   against it, and checks that the release carries `latest.json`, the
+   `.app.tar.gz` and its `.sig`. If it goes red, do not publish — see
+   *Troubleshooting*. A release missing its updater artifacts looks completely
+   fine and is simply invisible to every installed copy.
 
 5. Download the `.dmg` from the draft release, open it, drag Plans to
    Applications, and launch it once. It should open with no Gatekeeper prompt
    at all.
 
-6. Edit the release notes and **Publish**.
+6. The release body is already written, from `CHANGELOG.md`. Read it, then
+   **Publish** — that press is what makes the release visible to
+   `releases/latest/download/latest.json`, and so to every installed copy.
 
 ### Building without releasing
 
@@ -117,7 +158,8 @@ secrets before your first real tag.
 | `tauri-action` with `APPLE_CERTIFICATE*`            | Tauri imports the `.p12` into a temporary keychain and signs the app with hardened runtime enabled.                                                      |
 | `.p8` written to `$RUNNER_TEMP`                     | Tauri wants the notarization key as a file on disk. `$RUNNER_TEMP` is wiped when the job ends and never lands in an artifact.                            |
 | Notarize + staple                                   | Stapling embeds Apple's ticket in the bundle so the app launches offline without a Gatekeeper round-trip.                                                |
-| Draft release                                       | Nothing reaches users until someone opens it, checks the installer, and publishes.                                                                       |
+| Draft release                                       | Nothing reaches users until someone opens it, checks the installer, and publishes — which is the update gate too, since the feed only sees published releases. |
+| Updater artifacts + `latest.json`                   | The `.app.tar.gz` and its signature are what an installed copy downloads; `latest.json` is the feed it reads. The `.dmg` remains the first-install path. |
 | Separate `verify` job                               | Signing fails subtly — wrong identity, or notarized without stapling. Verifying the real artifact with Apple's own tooling beats trusting the build log. |
 
 Signing degrades gracefully: with no certificate secrets the build still runs
@@ -149,6 +191,21 @@ flag on something Tauri bundled.
 The app is signed but the notarization ticket wasn't stapled — the app will work
 on the build machine and fail on a machine that's offline or has never seen it.
 
+**Nobody is getting the update**
+Check the published release actually has `latest.json`, `*.app.tar.gz` and
+`*.app.tar.gz.sig` attached, and that the release is *published* rather than a
+draft — the feed only ever resolves to a published release.
+
+```sh
+curl -sL https://github.com/RatulMaharaj/plans/releases/latest/download/latest.json
+```
+
+**`Signature error` when installing an update**
+The updater public key in `tauri.conf.json` does not match the private key that
+signed the archive. If `TAURI_SIGNING_PRIVATE_KEY` was regenerated, the pinned
+public key has to change with it — and every copy installed before that change
+will never update again.
+
 **"Plans is damaged and can't be opened" on a user's Mac**
 That's the quarantine message for an unsigned or unnotarized download. Confirm
 against the shipped artifact:
@@ -165,9 +222,13 @@ xcrun stapler validate /Applications/Plans.app
 - **Windows and Linux.** `bundle.targets` is `"all"`, but the workflow is
   macOS-only by design, not by omission. Both need their own runner and, for
   Windows, a separate code-signing certificate.
-- **Auto-update.** There's no updater plugin or update feed, so users upgrade by
-  downloading a new `.dmg`. Adding it means enabling `createUpdaterArtifacts`,
-  generating an updater signing keypair, and publishing `latest.json`.
+- **Staged rollout.** `latest.json` can carry a percentage, which is real
+  insurance against shipping a bad build to everyone at once and meaningless
+  with a handful of users. Revisit when there are enough installs for a
+  percentage to mean anything.
+- **Per-arch updates.** Every update is a universal binary, so it is both
+  architectures. Per-arch feeds halve the download at the cost of a second build
+  matrix and a second thing to get wrong.
 - **Homebrew cask.** `looped/whisper` pushes a cask to a tap on each release;
   Plans has no tap wired up.
 

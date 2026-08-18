@@ -66,7 +66,7 @@ than a general-purpose markdown editor.
 Git operations shell out to your system `git`, so your existing credentials,
 SSH keys, commit signing, and hooks all apply.
 
-## Keys
+## Hotkeys
 
 | Key            | What                                                            |
 | -------------- | --------------------------------------------------------------- |
@@ -102,6 +102,21 @@ dispatching from its own update hook, four repositories walked at once behind
 someone's typing — invisible until measured. The budgets fail when a change
 makes the app worse and stay quiet otherwise.
 
+## Releasing
+
+Every change carries its own note, written when the change is made:
+
+```sh
+pnpm changeset     # a bump level and a sentence, committed with the change
+pnpm run version   # collects them: bumps every version, writes CHANGELOG.md
+```
+
+Cutting a release is then a tag. The build signs, notarizes, and attaches both
+the `.dmg` and the updater's `.app.tar.gz` to a **draft** release; publishing it
+is what makes an installed copy see it. Installed copies check GitHub on their
+own and offer the update in a banner — never a modal, and never without a press.
+[`RELEASES.md`](RELEASES.md) has the whole routine.
+
 ## Requirements
 
 - [Node.js](https://nodejs.org) 20+ and [pnpm](https://pnpm.io)
@@ -134,6 +149,8 @@ pnpm app:build   # produces a bundled .app / installer under src-tauri/target/re
 | `src/code-theme.ts`                       | Syntax highlighting, in the current paper's ink                    |
 | `src/matter.ts`                           | Splitting and rejoining frontmatter, losslessly                    |
 | `src/settings.ts`                         | Every setting, its range, and how it is applied                    |
+| `src/update.ts`                           | Checking the feed, downloading, and relaunching into the new one   |
+| `scripts/sync-version.mjs`                | One version across four files, and the bundled release notes       |
 | `src/fonts.ts`, `scripts/fetch-fonts.mjs` | Typeface registry and the vendoring script                         |
 
 ## Notes

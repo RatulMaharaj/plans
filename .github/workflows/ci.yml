@@ -32,6 +32,11 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
+      # The version lives in four files and is bumped by one script. Automation
+      # that can be bypassed by editing one file by hand is not a guarantee.
+      - name: Version is the same everywhere
+        run: pnpm run version:check
+
       - name: Types
         run: pnpm exec tsc --noEmit
 

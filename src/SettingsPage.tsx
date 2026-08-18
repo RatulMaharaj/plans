@@ -12,6 +12,10 @@ type Props = {
   activeRepoPath: string | null;
   onAddRepo: () => void;
   onForgetRepo: (path: string) => void;
+  /** The version actually running, and the two things you can do about it. */
+  version: string;
+  onCheckUpdates: () => void;
+  onReleaseNotes: () => void;
 };
 
 /**
@@ -38,6 +42,9 @@ export function SettingsPage({
   activeRepoPath,
   onAddRepo,
   onForgetRepo,
+  version,
+  onCheckUpdates,
+  onReleaseNotes,
 }: Props) {
   const [q, setQ] = useState("");
   return (
@@ -352,6 +359,37 @@ export function SettingsPage({
             {...RANGES.watchSeconds}
             onChange={(watchSeconds) => onChange({ watchSeconds })}
           />
+        </Group>
+
+        {/* ---- updates -------------------------------------------------- */}
+        <Group
+          name="Updates"
+          hint="Plans checks GitHub for a new version of itself. Nothing downloads or installs without a press."
+        >
+          <Choice
+            label="New versions"
+            hint="Off means never asking, and never being told."
+            value={s.updates}
+            options={[
+              { value: "notify", label: "Tell me" },
+              { value: "off", label: "Off" },
+            ]}
+            onChange={(v) => onChange({ updates: v as Settings["updates"] })}
+          />
+          <div className="setting-row static">
+            <span className="setting-label">
+              Version
+              <span className="setting-hint">{version}</span>
+            </span>
+            <span className="update-settings-acts">
+              <button className="act" onClick={onCheckUpdates}>
+                Check now
+              </button>
+              <button className="act quiet" onClick={onReleaseNotes}>
+                Release notes
+              </button>
+            </span>
+          </div>
         </Group>
 
         {/* ---- library -------------------------------------------------- */}

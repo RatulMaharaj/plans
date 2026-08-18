@@ -12,7 +12,7 @@ Almost everything the updater needs already exists.
 `.github/workflows/release.yml` produces signed, notarized universal builds and
 gates them behind a draft release that a human has to publish. This plan adds
 the feed and the client, not a new release process. The notes shown alongside
-an update come from [`changesets.md`](./changesets.md).
+an update come from [`5_changesets.md`](./5_changesets.md).
 
 ## Approach
 
@@ -157,15 +157,17 @@ update.
 
 ## Next
 
-- [ ] Generate the updater keypair; add both secrets; back the key up off-repo
-- [ ] `createUpdaterArtifacts: true`, `plugins.updater` block with pubkey and endpoint
+- [x] Generate the updater keypair; add both secrets; back the key up off-repo
+- [x] `createUpdaterArtifacts: true`, `plugins.updater` block with pubkey and endpoint
 - [ ] Manual `workflow_dispatch` run; confirm `.app.tar.gz`, `.sig`, `latest.json` exist
-- [ ] Extend the `verify` job to require all three
-- [ ] Register the updater and process plugins in `lib.rs`; update capabilities
-- [ ] Manual *Check for updates* command in `Palette.tsx`, result reported either way
-- [ ] Update banner with notes, progress, and relaunch
-- [ ] `updates` setting; launch check behind it; interval check via a `setup` hook
-- [ ] Make the check inert in `e2e/fake-backend.ts`
+- [x] Extend the `verify` job to require all three
+- [x] Register the updater and process plugins in `lib.rs`; update capabilities
+- [x] Manual *Check for updates* command in `Palette.tsx`, result reported either way
+- [x] Update banner with notes, progress, and relaunch
+- [x] `updates` setting; launch check behind it, and an interval check beside it
+      — driven from the frontend rather than a Rust `setup` hook, which nothing
+      else needed once the check stopped being on the path to first paint
+- [x] Make the check inert in `e2e/fake-backend.ts`
 - [ ] End-to-end test: install 0.1.0 from the `.dmg`, publish 0.1.1, update in place
-- [ ] Update `RELEASES.md` — auto-update moves out of *Not yet covered*
+- [x] Update `RELEASES.md` — auto-update moves out of *Not yet covered*
 - [ ] <br />

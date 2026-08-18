@@ -15,6 +15,13 @@ name: Release
 #   APPLE_API_KEY_ID              App Store Connect key id
 #   APPLE_API_ISSUER_ID           issuer id for that key
 #   APPLE_API_PRIVATE_KEY_BASE64  base64 of the .p8 private key
+#   TAURI_SIGNING_PRIVATE_KEY     contents of ~/.tauri/plans.key (updater key)
+#   TAURI_SIGNING_PRIVATE_KEY_PASSWORD  password for it (empty if none)
+#
+# The updater key is not the Apple one and they fail differently: Apple's
+# signature says the bundle came from a known developer, the updater's says this
+# archive is the one we published. Losing the updater private key is
+# unrecoverable — every installed copy stops seeing updates, silently, forever.
 #
 # Notarization uses an App Store Connect API key rather than an Apple ID and
 # app-specific password: it isn't tied to a personal account, survives 2FA
@@ -115,6 +122,20 @@ jobs:
             echo "no bundled lld at $GCC_LD; using the system linker" >&2
           fi
 
+      # The release body is written when the changes are made, not at publish
+      # time: changesets collected them into CHANGELOG.md, and this lifts out
+      # the section for the version being tagged.
+      - name: Collect release notes
+        id: notes
+        run: |
+          set -euo pipefail
+          {
+            echo "body<<PLANS_NOTES_EOF"
+            node scripts/sync-version.mjs --notes
+            echo ""
+            echo "PLANS_NOTES_EOF"
+          } >> "$GITHUB_OUTPUT"
+
       - name: Build, sign, notarize
         uses: tauri-apps/tauri-action@v0
         env:
@@ -127,6 +148,11 @@ jobs:
           APPLE_API_KEY: ${{ steps.signing.outputs.notarize == 'true' && secrets.APPLE_API_KEY_ID || '' }}
           APPLE_API_ISSUER: ${{ steps.signing.outputs.notarize == 'true' && secrets.APPLE_API_ISSUER_ID || '' }}
           APPLE_API_KEY_PATH: ${{ steps.signing.outputs.notarize == 'true' && format('{0}/apple-api-key.p8', runner.temp) || '' }}
+          # Signs the .app.tar.gz the updater consumes. Without these the build
+          # still succeeds and simply produces no updater artifacts, which the
+          # verify job below is there to catch.
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           args: --target universal-apple-darwin
           # Only publish for a tag — a manual run builds artifacts to inspect
@@ -135,6 +161,7 @@ jobs:
           # and publishes.
           tagName: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || '' }}
           releaseName: ${{ startsWith(github.ref, 'refs/tags/v') && format('Plans {0}', github.ref_name) || '' }}
+          releaseBody: ${{ steps.notes.outputs.body }}
           releaseDraft: true
           prerelease: false
 
@@ -148,7 +175,10 @@ jobs:
           name: plans-macOS
           if-no-files-found: error
           retention-days: 14
-          path: src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg
+          path: |
+            src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg
+            src-tauri/target/universal-apple-darwin/release/bundle/macos/*.app.tar.gz
+            src-tauri/target/universal-apple-darwin/release/bundle/macos/*.app.tar.gz.sig
 
   # Signing is easy to get subtly wrong — a build can be "signed" with the
   # wrong identity, or notarized without the ticket being stapled — and the
@@ -159,11 +189,48 @@ jobs:
     needs: build
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: macos-14
+    permissions:
+      # Draft releases are only visible to a token that can write them.
+      contents: write
     steps:
       - uses: actions/download-artifact@v4
         with:
           name: plans-macOS
           path: dist
+
+      # A release missing its updater artifacts looks completely fine — the
+      # .dmg is there, signed and notarized, the notes read well, the publish
+      # succeeds — and is simply invisible to every installed copy. The failure
+      # has no symptom until someone asks why they never got the update.
+      - name: Check the updater artifacts exist
+        run: |
+          set -euo pipefail
+          missing=false
+          for want in "dist/*.app.tar.gz" "dist/*.app.tar.gz.sig"; do
+            # shellcheck disable=SC2086
+            if [ -z "$(ls $want 2>/dev/null)" ]; then
+              echo "::error title=No updater artifact::$want is missing — this release would be invisible to installed copies. Check TAURI_SIGNING_PRIVATE_KEY and bundle.createUpdaterArtifacts."
+              missing=true
+            fi
+          done
+          [ "$missing" = false ]
+
+      # latest.json is what an installed copy actually fetches; tauri-action
+      # attaches it to the release rather than to the workflow artifact, so it
+      # has to be checked on the draft itself.
+      - name: Check latest.json is on the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # The job never checks out, so gh needs telling which repo it is in.
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          assets="$(gh release view "${{ github.ref_name }}" --json assets --jq '.assets[].name')"
+          echo "$assets"
+          if ! grep -qx "latest.json" <<< "$assets"; then
+            echo "::error title=No update feed::latest.json is not attached to ${{ github.ref_name }} — installed copies will never see this release."
+            exit 1
+          fi
 
       - name: Check signature and notarization
         run: |

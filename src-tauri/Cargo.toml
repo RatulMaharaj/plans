@@ -21,3 +21,8 @@ serde_json = "1"
 base64 = "0.23.1"
 ignore = "0.4.33"
 
+# Update in place, and relaunch afterwards. Desktop only: there is nothing to
+# update on a mobile target, and neither plugin builds for one.
+[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
+tauri-plugin-updater = "2"
+tauri-plugin-process = "2"

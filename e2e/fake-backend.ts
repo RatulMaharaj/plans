@@ -22,8 +22,11 @@ export type FakeRepo = {
   modified?: string[];
 };
 
+/** A version the feed should claim is available, for the updater's own tests. */
+export type FakeUpdate = { version: string; notes: string };
+
 /** Installed before any app code runs, so the app never sees a real backend. */
-export function installFakeBackend(repos: FakeRepo[]) {
+export function installFakeBackend(repos: FakeRepo[], update?: FakeUpdate) {
   const state = {
     repos: repos.map((r) => ({ ...r, files: { ...r.files } })),
     /** Every command the app has issued, for asserting on writes. */
@@ -154,6 +157,16 @@ export function installFakeBackend(repos: FakeRepo[]) {
     }),
     read_asset: () => "data:image/png;base64,iVBORw0KGgo=",
     perf_log: () => null,
+
+    // The updater has to be genuinely inert here, not merely never triggered:
+    // a test run that reaches out to GitHub is flaky by construction, and one
+    // that starts downloading a build is worse. null is the plugin's own way
+    // of saying "nothing newer", so the app takes the ordinary path.
+    "plugin:updater|check": () =>
+      update
+        ? { available: true, currentVersion: "0.0.0-test", version: update.version, body: update.notes, rid: 1, rawJson: {} }
+        : null,
+    "plugin:app|version": () => "0.0.0-test",
   };
 
   // Every other command answers plainly rather than throwing, so a test is

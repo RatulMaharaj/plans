@@ -55,6 +55,8 @@ type Props = {
   onOpenAt: (repoPath: string, relPath: string) => void;
   searchRepo: string | null;
   onPerf: () => void;
+  onCheckUpdates: () => void;
+  onReleaseNotes: () => void;
   /** Built in App, since they need the repo, its status and its branches. */
   gitCommands: { id: string; label: string; hint?: string; run: () => void }[];
   canNewFolder: boolean;
@@ -156,6 +158,20 @@ function buildCommands(p: Props): Command[] {
     label: "Profiler",
     hint: "⌘⌃P",
     run: p.onPerf,
+  });
+  add({
+    id: "update.check",
+    group: "Go",
+    label: "Check for updates",
+    terms: "version upgrade new release",
+    run: p.onCheckUpdates,
+  });
+  add({
+    id: "update.notes",
+    group: "Go",
+    label: "Release notes",
+    terms: "changelog what's new version",
+    run: p.onReleaseNotes,
   });
   add({
     id: "zen",

@@ -60,7 +60,7 @@ milliseconds. An agent run takes minutes, so this is the app's first genuinely
 long-lived child process, and the first thing that needs to stream rather than
 return: progress goes back as Tauri events, which means `lib.rs` grows a
 `setup` hook and `.manage(...)` state it does not have today. That is the same
-structural addition [`auto-updates.md`](./auto-updates.md) needs, and either
+structural addition [`4_auto-updates.md`](./completed/4_auto-updates.md) needs, and either
 one can land it.
 
 ## On embedding a terminal
