@@ -1,7 +1,26 @@
+<div align="center">
+
+<img src="site/icon.png" width="72" alt="" />
+
 # Plans
 
-A small desktop app for reading and editing the markdown in your local git
-repositories — without opening the whole repo in an editor.
+**A small desktop app for reading and editing the markdown in your local git
+repositories** — without opening the whole repo in an editor.
+
+<sub>
+
+[**Download for macOS**](https://github.com/RatulMaharaj/plans/releases/latest) · free and open source
+
+</sub>
+
+<br />
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/plans-night.svg" />
+  <img src="docs/plans-day.svg" width="760" alt="The Plans window: a file tree of markdown across repositories on the left, the open document rendered as a page on the right, with an uncommitted change tinted green." />
+</picture>
+
+</div>
 
 The files it shows are usually written by something else: Claude Code in a
 terminal, an agent, a script. So the app is built to be a good way to *live

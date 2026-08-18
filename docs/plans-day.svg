@@ -1,0 +1,48 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="880" height="440" viewBox="0 0 880 440" font-family="Georgia, 'Times New Roman', serif">
+  <defs>
+    <clipPath id="win"><rect x="20" y="14" width="840" height="406" rx="12"/></clipPath>
+  </defs>
+  <!-- window -->
+  <rect x="20" y="14" width="840" height="406" rx="12" fill="#fbfbf9" stroke="#17181b" stroke-opacity="0.14"/>
+  <g clip-path="url(#win)">
+    <!-- chrome -->
+    <rect x="20" y="14" width="840" height="36" fill="#f2f1ec"/>
+    <line x1="20" y1="50" x2="860" y2="50" stroke="#17181b" stroke-opacity="0.14"/>
+    <circle cx="44" cy="32" r="5" fill="#17181b" fill-opacity="0.38"/>
+    <circle cx="60" cy="32" r="5" fill="#17181b" fill-opacity="0.38"/>
+    <circle cx="76" cy="32" r="5" fill="#17181b" fill-opacity="0.38"/>
+    <text x="96" y="36" font-family="'Space Mono', Menlo, monospace" font-size="11" fill="#17181b" fill-opacity="0.62">plans / 5_changesets.md</text>
+    <!-- tree -->
+    <rect x="20" y="50" width="200" height="370" fill="#f2f1ec"/>
+    <line x1="220" y1="50" x2="220" y2="420" stroke="#17181b" stroke-opacity="0.14"/>
+    <g font-family="'Space Mono', Menlo, monospace" font-size="10" letter-spacing="1" fill="#17181b" fill-opacity="0.38">
+      <text x="38" y="82">PLANS</text>
+      <text x="38" y="216">NOTES</text>
+    </g>
+    <g font-family="'Work Sans', -apple-system, sans-serif" font-size="12.5" fill="#17181b" fill-opacity="0.62">
+      <text x="38" y="106">README.md</text>
+      <text x="38" y="130">BUGS.md <tspan fill="#2f6f4e" fill-opacity="1" font-weight="700">•</tspan></text>
+      <rect x="30" y="140" width="180" height="24" rx="5" fill="#17181b" fill-opacity="0.09"/>
+      <text x="38" y="157" fill-opacity="1" fill="#17181b">5_changesets.md <tspan fill="#2f6f4e" font-weight="700">•</tspan></text>
+      <text x="38" y="184">4_updater.md</text>
+      <text x="38" y="240">inbox.md</text>
+      <text x="38" y="264">reading.md</text>
+    </g>
+    <!-- document -->
+    <text x="256" y="102" font-size="22" font-weight="700" fill="#17181b" letter-spacing="-0.3">Changesets, and what a release knows</text>
+    <g font-size="14.5" fill="#17181b" fill-opacity="0.85">
+      <text x="256" y="136">Every change carries its own note, written when the change is</text>
+      <text x="256" y="162">made. Cutting a release is then <tspan font-style="italic">a tag and nothing else</tspan> — the</text>
+      <text x="256" y="188">notes are already there, waiting to be collected.</text>
+    </g>
+    <rect x="252" y="204" width="330" height="26" rx="4" fill="#2f6f4e" fill-opacity="0.22"/>
+    <text x="256" y="222" font-size="14.5" fill="#17181b">The build signs, notarizes, and drafts.</text>
+    <g font-size="14.5" fill="#17181b" fill-opacity="0.62">
+      <text x="256" y="262">– publishing the draft is what makes an</text>
+      <text x="276" y="288">installed copy see it</text>
+      <text x="256" y="314">– never a modal, never without a press</text>
+    </g>
+    <line x1="256" y1="344" x2="600" y2="344" stroke="#17181b" stroke-opacity="0.14"/>
+    <text x="256" y="376" font-family="'Space Mono', Menlo, monospace" font-size="11" fill="#17181b" fill-opacity="0.38">⌘1 page · ⌘2 source · ⌘3 diff</text>
+  </g>
+</svg>
