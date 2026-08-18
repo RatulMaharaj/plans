@@ -31,6 +31,12 @@ export function installFakeBackend(repos: FakeRepo[], update?: FakeUpdate) {
     repos: repos.map((r) => ({ ...r, files: { ...r.files } })),
     /** Every command the app has issued, for asserting on writes. */
     calls: [] as { cmd: string; args: Record<string, unknown> }[],
+    /**
+     * Folders that exist with nothing in them. The fake filesystem is a map of
+     * files, so an empty folder would otherwise vanish the moment it is made —
+     * whereas on disk it is a real directory that `existing_dirs` can see.
+     */
+    dirs: new Set<string>(),
   };
 
   const hash = (s: string) => {
@@ -89,6 +95,39 @@ export function installFakeBackend(repos: FakeRepo[], update?: FakeUpdate) {
       if (r) delete r.files[relPath];
       return null;
     },
+    // A folder exists here if any file sits under it — the fake filesystem
+    // has no directory entries of its own, exactly like the real one.
+    existing_dirs: ({ repo: p, relPaths }) => {
+      const r = repo(p);
+      if (!r) return [];
+      const files = Object.keys(r.files);
+      return (relPaths as string[]).filter(
+        (d) => state.dirs.has(`${p}::${d}`) || files.some((f) => f.startsWith(`${d}/`)),
+      );
+    },
+    folder_census: ({ repo: p, relPath }) => {
+      const r = repo(p);
+      const under = Object.keys(r?.files ?? {}).filter((f) => f.startsWith(`${relPath}/`));
+      return {
+        files: under.length,
+        hidden: under.filter((f) => !/\.(md|markdown)$/i.test(f)).length,
+      };
+    },
+    delete_folder: ({ repo: p, relPath }) => {
+      const r = repo(p);
+      if (!r) throw new Error("no such repository");
+      for (const f of Object.keys(r.files)) {
+        if (f.startsWith(`${relPath}/`)) delete r.files[f];
+      }
+      for (const d of state.dirs) {
+        if (d === `${p}::${relPath}` || d.startsWith(`${p}::${relPath}/`)) state.dirs.delete(d);
+      }
+      return null;
+    },
+    reveal_in_finder: () => null,
+    // Git's idea of who you are, which is the only identity the app has. A
+    // fixed answer, so a comment written in a test is attributed predictably.
+    git_identity: () => ({ name: "Test Person", email: "test@example.com" }),
     create_folder: ({ repo: p, relPath }) => {
       const r = repo(p);
       if (!r) throw new Error("no such repository");
@@ -96,6 +135,7 @@ export function installFakeBackend(repos: FakeRepo[], update?: FakeUpdate) {
       if (Object.keys(r.files).some((f) => f.startsWith(`${relPath}/`))) {
         throw new Error(`${relPath} already exists`);
       }
+      state.dirs.add(`${p}::${relPath}`);
       return null;
     },
     rename_plan: ({ repo: p, from, to }) => {
