@@ -12,6 +12,8 @@ type Props = {
   activeRepoPath: string | null;
   onAddRepo: () => void;
   onForgetRepo: (path: string) => void;
+  /** Write the bundled agent skill into this repository. */
+  onInstallSkill: (path: string) => void;
   /** The version actually running, and the two things you can do about it. */
   version: string;
   onCheckUpdates: () => void;
@@ -42,6 +44,7 @@ export function SettingsPage({
   activeRepoPath,
   onAddRepo,
   onForgetRepo,
+  onInstallSkill,
   version,
   onCheckUpdates,
   onReleaseNotes,
@@ -415,7 +418,7 @@ export function SettingsPage({
         {/* ---- library -------------------------------------------------- */}
         <Group
           name="Repositories"
-          hint="Forgetting a repository removes it from this list only. Nothing on disk changes."
+          hint="Forgetting a repository removes it from this list only. Nothing on disk changes. Install skill writes the plan-writing conventions to .claude/skills/plans/SKILL.md in that repository, where coding agents find them."
         >
           {repos.length === 0 && <p className="none">None yet.</p>}
           {repos.map((r) => (
@@ -432,6 +435,9 @@ export function SettingsPage({
                     : "no plans folder found"}
                 </span>
               </span>
+              <button className="act" onClick={() => onInstallSkill(r.path)}>
+                Install skill
+              </button>
               <button className="act" onClick={() => onForgetRepo(r.path)}>
                 Forget
               </button>

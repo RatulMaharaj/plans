@@ -11,8 +11,6 @@ Remember to add changesets for any patched bugs - fixed bugs belong in the chang
 
 ## Open
 
-- [ ] Hitting esc should unfocus the editor so I can use Cmd + B, maybe the visual clue is the selected tab colour when selected vs when focused/editing
-- [ ] Write / source / diff state doesn’t seem to be at a buffer level. So we should move those 3 buttons up into tab row.
 - [ ] When we create a new file, the cursor should be put on a new line automatically and the file focused.
 
 ## Watch for

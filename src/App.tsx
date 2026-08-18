@@ -5,6 +5,7 @@ import { Editor } from "./Editor";
 import { GitPanel } from "./GitPanel";
 import { DiffView } from "./DiffView";
 import { SettingsPage } from "./SettingsPage";
+import { installSkill } from "./skill";
 import { Palette } from "./Palette";
 import { Dropdown } from "./Dropdown";
 import { FileTree, displayName, MARK_WORD, type Mark } from "./FileTree";
@@ -50,8 +51,14 @@ const KEY = {
   dirs: "plans.dirs.v1",
 };
 
-/** An open buffer. The text lives on disk; this is only what is on the bar. */
-type Tab = { repo: string; path: string };
+/** How a buffer is being looked at. The settings page is not a view of a
+ *  buffer, so it lives apart, as `settingsOpen`. */
+type View = "write" | "source" | "diff";
+
+/** An open buffer. The text lives on disk; this is only what is on the bar.
+ *  `view` is the mode the buffer was left in; absent means write, which also
+ *  covers every tab stored before modes were per-buffer. */
+type Tab = { repo: string; path: string; view?: View };
 
 function stored<T>(key: string, fallback: T): T {
   try {
@@ -105,7 +112,6 @@ function sameStatus(
 }
 
 type Toast = { text: string; kind: "info" | "error" } | null;
-type View = "write" | "source" | "diff" | "settings";
 
 
 /**
@@ -155,7 +161,7 @@ export default function App() {
   const [filter, setFilter] = useState("");
   const [busy, setBusy] = useState<string | null>(null);
   const [toast, setToast] = useState<Toast>(null);
-  const [view, setView] = useState<View>("write");
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [epoch, setEpoch] = useState(0);
   const [palette, setPalette] = useState<null | { commands: boolean }>(null);
   /** So the open path can call itself once after refreshing a stale tree. */
@@ -175,6 +181,20 @@ export default function App() {
    * copy of the file — there is only ever one buffer, and it is the file.
    */
   const [tabs, setTabs] = useState<Tab[]>(() => stored<Tab[]>(KEY.tabs, []));
+  /** The mode belongs to the buffer, so it is a derivation of the tab, not
+   *  state of its own — which is also what makes it survive a restart. */
+  const view: View =
+    tabs.find((t) => t.repo === activeRepoPath && t.path === activePath)?.view ?? "write";
+  const setBufferView = useCallback(
+    (next: View) => {
+      setTabs((prev) =>
+        prev.map((t) =>
+          t.repo === activeRepoPath && t.path === activePath ? { ...t, view: next } : t,
+        ),
+      );
+    },
+    [activeRepoPath, activePath],
+  );
   /**
    * Folders made here that hold no markdown yet.
    *
@@ -866,17 +886,15 @@ export default function App() {
 
   const goto = useCallback(
     (next: View) => {
-      setView((prev) => {
-        if (next === "source" && prev !== "source") sourceOnEntry.current = source;
-        if (next === "write" && prev === "source" && activePath) {
-          const changed = sourceOnEntry.current !== null && sourceOnEntry.current !== source;
-          if (changed) setDocKey(`${activeRepoPath}::${activePath}::${Date.now()}`);
-          sourceOnEntry.current = null;
-        }
-        return next;
-      });
+      if (next === "source" && view !== "source") sourceOnEntry.current = source;
+      if (next === "write" && view === "source" && activePath) {
+        const changed = sourceOnEntry.current !== null && sourceOnEntry.current !== source;
+        if (changed) setDocKey(`${activeRepoPath}::${activePath}::${Date.now()}`);
+        sourceOnEntry.current = null;
+      }
+      setBufferView(next);
     },
-    [activePath, activeRepoPath, source],
+    [activePath, activeRepoPath, source, view, setBufferView],
   );
 
   /** Editing the metadata block saves on the same terms as editing the prose. */
@@ -982,6 +1000,9 @@ export default function App() {
         setMatter(split.matter);
         setContent(split.body);
         setDocKey(`${repoPath}::${relPath}::${Date.now()}`);
+        // The entry snapshot belongs to the previous buffer; a fresh open
+        // rebuilds the editor anyway, so a stale one must not linger.
+        sourceOnEntry.current = null;
         setDirty(false);
         setSavedAt(null);
         setMatterOpen(false);
@@ -990,7 +1011,7 @@ export default function App() {
             ? prev
             : [...prev, { repo: repoPath, path: relPath }],
         );
-        setView((v) => (v === "settings" ? "write" : v));
+        setSettingsOpen(false);
         // Open every folder on the way down to it.
         setExpanded((prev) => {
           const next = new Set(prev).add(`${repoPath}::`);
@@ -1558,6 +1579,24 @@ export default function App() {
   }, [activeRepo, branches, status, onRun]);
 
   // --- keys ----------------------------------------------------------------
+  // Whether keystrokes go to the document or to the app, held as state rather
+  // than probed from activeElement on every keydown. focusin/focusout bubble
+  // from every editable surface; on focusout the target that matters is where
+  // focus went, which is relatedTarget (null when focus leaves entirely).
+  const [editing, setEditing] = useState(false);
+  useEffect(() => {
+    const inSurface = (el: EventTarget | null) =>
+      el instanceof Element && !!el.closest(".milkdown, .source, .diff-surface");
+    const focusIn = (e: FocusEvent) => setEditing(inSurface(e.target));
+    const focusOut = (e: FocusEvent) => setEditing(inSurface(e.relatedTarget));
+    window.addEventListener("focusin", focusIn);
+    window.addEventListener("focusout", focusOut);
+    return () => {
+      window.removeEventListener("focusin", focusIn);
+      window.removeEventListener("focusout", focusOut);
+    };
+  }, []);
+
   useEffect(() => {
     const h = (e: KeyboardEvent) => {
       // While the palette is up it owns its own keys — don't also act on them.
@@ -1627,10 +1666,7 @@ export default function App() {
          * while you are writing, the sidebar gets it everywhere else. ⌘⌃B
          * always toggles, for when the caret is in the page and you want it.
          */
-        const inEditor = !!(document.activeElement as HTMLElement | null)?.closest(
-          ".milkdown, .source, .diff-surface",
-        );
-        if (inEditor && !e.ctrlKey) return;
+        if (editing && !e.ctrlKey) return;
         e.preventDefault();
         set({ showIndex: !settings.showIndex });
       } else if (mod && e.shiftKey && e.key.toLowerCase() === "l") {
@@ -1641,14 +1677,20 @@ export default function App() {
         set({ showGit: !settings.showGit });
       } else if (mod && e.key.toLowerCase() === "d") {
         e.preventDefault();
-        setView((v) => (v === "diff" ? "write" : "diff"));
+        goto(view === "diff" ? "write" : "diff");
       } else if (mod && e.key === ",") {
         e.preventDefault();
-        setView((v) => (v === "settings" ? "write" : "settings"));
+        setSettingsOpen((o) => !o);
+      } else if (e.key === "Escape" && editing) {
+        // Hand focus back to the app. In zen there is no tab row, so this
+        // blurs only — a second Esc then leaves zen via the branch below.
+        e.preventDefault();
+        (document.activeElement as HTMLElement | null)?.blur();
+        document.querySelector<HTMLElement>(".tab.on .tab-name")?.focus();
       } else if (e.key === "Escape" && zen) {
         setZen(false);
-      } else if (e.key === "Escape" && view === "settings") {
-        setView("write");
+      } else if (e.key === "Escape" && settingsOpen) {
+        setSettingsOpen(false);
       }
     };
     window.addEventListener("keydown", h);
@@ -1672,6 +1714,8 @@ export default function App() {
     view,
     palette,
     zen,
+    editing,
+    settingsOpen,
   ]);
 
   const allFiles = useMemo(
@@ -1701,8 +1745,8 @@ export default function App() {
   }, [marks, dirty, activeKey]);
 
   // Zen keeps the page and nothing else — but Settings needs its chrome back.
-  const zenOn = zen && view !== "settings";
-  const gitOpen = settings.showGit && !!activeRepo && view !== "settings" && !zenOn;
+  const zenOn = zen && !settingsOpen;
+  const gitOpen = settings.showGit && !!activeRepo && !settingsOpen && !zenOn;
   const treeOpen = settings.showIndex && !zenOn;
 
   return (
@@ -1764,10 +1808,10 @@ export default function App() {
           {changeCount > 0 && <span className="count">{changeCount}</span>}
         </button>
         <button
-          className={`rail-btn ${view === "settings" ? "on" : ""}`}
-          onClick={() => setView((v) => (v === "settings" ? "write" : "settings"))}
+          className={`rail-btn ${settingsOpen ? "on" : ""}`}
+          onClick={() => setSettingsOpen((o) => !o)}
           title="Settings (⌘,)"
-          aria-pressed={view === "settings"}
+          aria-pressed={settingsOpen}
         >
           <span className="aa">Aa</span>
         </button>
@@ -1791,7 +1835,7 @@ export default function App() {
               repos={repos}
               filesByRepo={filesByRepo}
               marks={liveMarks}
-              activeRepoPath={view === "settings" ? null : activeRepoPath}
+              activeRepoPath={settingsOpen ? null : activeRepoPath}
               activePath={activePath}
               expanded={expanded}
               onToggle={toggleNode}
@@ -1828,7 +1872,7 @@ export default function App() {
 
         {/* --- page -------------------------------------------------------- */}
         <main className="page">
-          {view === "settings" ? (
+          {settingsOpen ? (
             <SettingsPage
               settings={settings}
               onChange={set}
@@ -1837,6 +1881,19 @@ export default function App() {
               activeRepoPath={activeRepoPath}
               onAddRepo={addRepo}
               onForgetRepo={forgetRepo}
+              onInstallSkill={(path) =>
+                void installSkill(path).then(
+                  (r) =>
+                    notify(
+                      r === "current"
+                        ? "Agent skill already up to date"
+                        : r === "installed"
+                          ? "Agent skill installed"
+                          : "Agent skill updated — review it in the git panel",
+                    ),
+                  (e) => notify(String(e), "error"),
+                )
+              }
               version={appVersion}
               onCheckUpdates={() => void lookForUpdate(true)}
               onReleaseNotes={() => void showNotes()}
@@ -1845,13 +1902,17 @@ export default function App() {
             <>
               {/* Zen is one buffer and nothing else — no tabs, no header. */}
               {tabs.length > 0 && !zenOn && (
+                <div className="tab-row">
                 <div className="tabs" role="tablist">
                   {tabs.map((t) => {
                     const on = t.repo === activeRepoPath && t.path === activePath;
                     const mark = liveMarks.get(`${t.repo}::${t.path}`) ?? "clean";
                     const name = t.path.split("/").pop() ?? t.path;
                     return (
-                      <span className={`tab ${on ? "on" : ""} ${mark}`} key={`${t.repo}::${t.path}`}>
+                      <span
+                        className={`tab ${on ? "on" : ""}${on && editing ? " editing" : ""} ${mark}`}
+                        key={`${t.repo}::${t.path}`}
+                      >
                         <button
                           className="tab-name"
                           role="tab"
@@ -1874,6 +1935,30 @@ export default function App() {
                       </span>
                     );
                   })}
+                </div>
+                {/* The mode belongs to the buffer, so its switch lives with
+                    the buffers — pinned right while the tabs scroll. */}
+                {activePath && (
+                  <span className="segmented small view-switch">
+                    <button className={view === "write" ? "on" : ""} onClick={() => goto("write")}>
+                      Write
+                    </button>
+                    <button
+                      className={view === "source" ? "on" : ""}
+                      onClick={() => goto("source")}
+                      title="The raw markdown, exactly as it is on disk"
+                    >
+                      Source
+                    </button>
+                    <button
+                      className={view === "diff" ? "on" : ""}
+                      onClick={() => goto("diff")}
+                      title="Live diff against the last commit (⌘D)"
+                    >
+                      Diff
+                    </button>
+                  </span>
+                )}
                 </div>
               )}
 
@@ -1901,28 +1986,6 @@ export default function App() {
                       </span>
                     )}
 
-                    <span className="segmented small">
-                      <button
-                        className={view === "write" ? "on" : ""}
-                        onClick={() => goto("write")}
-                      >
-                        Write
-                      </button>
-                      <button
-                        className={view === "source" ? "on" : ""}
-                        onClick={() => goto("source")}
-                        title="The raw markdown, exactly as it is on disk"
-                      >
-                        Source
-                      </button>
-                      <button
-                        className={view === "diff" ? "on" : ""}
-                        onClick={() => goto("diff")}
-                        title="Live diff against the last commit (⌘D)"
-                      >
-                        Diff
-                      </button>
-                    </span>
                     {/* Read from a few conventional frontmatter keys and shown
                         read-only; the sheet stays the only writer. */}
                     {matter !== null &&
@@ -2095,7 +2158,16 @@ export default function App() {
             onRun={onRun}
             notify={notify}
             onOpen={(p) => {
-              void openFile(activeRepo!.path, p).then(() => setView("diff"));
+              // Set the mode on that tab, not on whichever buffer was active
+              // when the click happened.
+              const repo = activeRepo!.path;
+              void openFile(repo, p).then(() =>
+                setTabs((prev) =>
+                  prev.map((t) =>
+                    t.repo === repo && t.path === p ? { ...t, view: "diff" } : t,
+                  ),
+                ),
+              );
             }}
           />
         )}
@@ -2104,7 +2176,7 @@ export default function App() {
       {/* --- bar ----------------------------------------------------------- */}
       {settings.showStatusBar && !zenOn && (
         <footer className="bar">
-          {activePath && view !== "settings" ? (
+          {activePath && !settingsOpen ? (
             <>
               {/* The bar says it in words; the dot repeats it in colour. */}
               <span className={`bar-dot ${activeMark}`} aria-hidden />
@@ -2237,7 +2309,7 @@ export default function App() {
           if (saveTimer.current) clearTimeout(saveTimer.current);
           void flush();
         }}
-        onView={goto}
+        onView={(v) => (v === "settings" ? setSettingsOpen(true) : goto(v))}
         zen={zen}
         onZen={() => setZen((z) => !z)}
         canInsertHtml={view === "write" && !!activePath}

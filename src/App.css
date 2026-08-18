@@ -1559,16 +1559,28 @@ body.resizing .files-edge { pointer-events: auto; }
    dirty dot is the same one the tree uses.
    =========================================================================== */
 
-.tabs {
+.tab-row {
   box-sizing: border-box;
   height: var(--strip);
   display: flex;
   align-items: stretch;
-  gap: 0;
-  overflow-x: auto;
   border-bottom: 1px solid var(--rule);
   background: var(--paper);
   flex: 0 0 auto;
+}
+.tabs {
+  display: flex;
+  align-items: stretch;
+  gap: 0;
+  overflow-x: auto;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+/* The buffer's mode switch: pinned to the right edge while the tabs scroll. */
+.tab-row .view-switch {
+  flex: 0 0 auto;
+  align-self: center;
+  margin: 0 10px 0 8px;
 }
 .tab {
   display: flex;
@@ -1592,7 +1604,9 @@ body.resizing .files-edge { pointer-events: auto; }
 }
 .tab:hover .tab-name { color: var(--ink-2); }
 .tab.on .tab-name { color: var(--ink); }
-/* The open tab is marked by a rule along its top edge, like a card in a file. */
+/* The open tab is marked by a rule along its top edge, like a card in a file.
+   The rule is also a cursor for the tab row: bright while keystrokes go to the
+   document, dim while they go to the app. */
 .tab.on::before {
   content: "";
   position: absolute;
@@ -1600,8 +1614,9 @@ body.resizing .files-edge { pointer-events: auto; }
   left: 0;
   right: 0;
   height: 2px;
-  background: var(--ink);
+  background: var(--rule-strong);
 }
+.tab.on.editing::before { background: var(--ink); }
 .tab.new .tab-name { color: var(--git-new); }
 .tab.mod .tab-name { color: var(--git-mod); }
 .tab.staged .tab-name { color: var(--git-staged); }
@@ -1890,10 +1905,9 @@ body.resizing .files-edge { pointer-events: auto; }
   color: var(--ink-3);
 }
 .tone-draft { color: var(--ink-3); }
-.tone-triage { color: var(--git-mod); }
-.tone-active { color: var(--git-staged); }
+.tone-ready { color: var(--git-staged); }
+.tone-busy { color: var(--git-mod); }
 .tone-done { color: var(--git-new); }
-.tone-blocked { color: var(--git-mod); }
 .tone-other { color: var(--ink-3); }
 
 .matter-owner,
