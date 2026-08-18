@@ -11,4 +11,4 @@ folder: it bumps the version, syncs it into `src-tauri/`, and writes the notes
 into `CHANGELOG.md`. From there they reach the GitHub release and the app's own
 release-notes sheet.
 
-See `src-tauri/plans/5_changesets.md` for why, and `RELEASES.md` for the steps.
+See `plans/completed/5_changesets.md` for why, and `RELEASES.md` for the steps.
