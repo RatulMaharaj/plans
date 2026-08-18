@@ -206,13 +206,15 @@ jobs:
       # .dmg is there, signed and notarized, the notes read well, the publish
       # succeeds — and is simply invisible to every installed copy. The failure
       # has no symptom until someone asks why they never got the update.
+      # Searched rather than globbed at a fixed depth: uploading several paths
+      # makes upload-artifact keep the tree below their common ancestor, so
+      # these arrive under dmg/ and macos/ rather than side by side.
       - name: Check the updater artifacts exist
         run: |
           set -euo pipefail
           missing=false
-          for want in "dist/*.app.tar.gz" "dist/*.app.tar.gz.sig"; do
-            # shellcheck disable=SC2086
-            if [ -z "$(ls $want 2>/dev/null)" ]; then
+          for want in "*.app.tar.gz" "*.app.tar.gz.sig"; do
+            if [ -z "$(find dist -name "$want" -type f)" ]; then
               echo "::error title=No updater artifact::$want is missing — this release would be invisible to installed copies. Check TAURI_SIGNING_PRIVATE_KEY and bundle.createUpdaterArtifacts."
               missing=true
             fi
@@ -239,7 +241,7 @@ jobs:
       - name: Check signature and notarization
         run: |
           set -euo pipefail
-          dmg="$(ls dist/*.dmg | head -1)"
+          dmg="$(find dist -name '*.dmg' -type f | head -1)"
           echo "Verifying $dmg"
 
           hdiutil attach "$dmg" -nobrowse -mountpoint /tmp/plans-verify
