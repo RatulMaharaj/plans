@@ -46,7 +46,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Pinned, as in ci.yml: the action refuses to guess a version, and this
+      # repo has no "packageManager" field for it to read.
       - uses: pnpm/action-setup@v4
+        with:
+          version: 11
 
       - uses: actions/setup-node@v4
         with:
