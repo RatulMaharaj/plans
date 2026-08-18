@@ -186,7 +186,9 @@ fn frontmatter_status(path: &Path, modified: u64) -> Option<String> {
     use std::io::Read;
     use std::sync::{Mutex, OnceLock};
 
-    static CACHE: OnceLock<Mutex<HashMap<PathBuf, (u64, Option<String>)>>> = OnceLock::new();
+    /// Path to the mtime it was read at, and what it said.
+    type Cache = HashMap<PathBuf, (u64, Option<String>)>;
+    static CACHE: OnceLock<Mutex<Cache>> = OnceLock::new();
     let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
 
     if let Ok(map) = cache.lock() {
