@@ -78,6 +78,28 @@ export function matterValue(matter: string, key: string): string | null {
 }
 
 /**
+ * Set, replace or remove one top-level key, touching nothing else. The same
+ * line-based reading `matterValue` does: an existing key keeps its place and
+ * its spelling, a new one goes at the end, and `null` removes the line.
+ */
+export function setMatterValue(matter: string, key: string, value: string | null): string {
+  const lines = matter.length ? matter.split(/\r?\n/) : [];
+  const at = lines.findIndex((l) => {
+    const m = l.match(/^([A-Za-z0-9_-]+)\s*:/);
+    return !!m && m[1].toLowerCase() === key.toLowerCase();
+  });
+  if (value === null) {
+    if (at !== -1) lines.splice(at, 1);
+  } else if (at !== -1) {
+    const name = lines[at].match(/^([A-Za-z0-9_-]+)/)![1];
+    lines[at] = `${name}: ${value}`;
+  } else {
+    lines.push(`${key}: ${value}`);
+  }
+  return lines.join("\n");
+}
+
+/**
  * A handful of statuses get a colour; everything else renders neutral.
  * Recognised case-insensitively, rendered as written — the app reads
  * conventions, it doesn't own a vocabulary.

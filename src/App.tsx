@@ -20,7 +20,13 @@ import { checkForUpdate, installUpdate, isNewer, runningVersion, type Available 
 import { PerfHud } from "./PerfHud";
 import { start, tick, trace } from "./perf";
 import { authorSlug, htmlBridge, type HtmlEdit } from "./html-view";
-import { joinFrontmatter, matterValue, splitFrontmatter, statusTone } from "./matter";
+import {
+  joinFrontmatter,
+  matterValue,
+  setMatterValue,
+  splitFrontmatter,
+  statusTone,
+} from "./matter";
 import {
   applySettings,
   DEFAULTS,
@@ -894,6 +900,47 @@ export default function App() {
     },
     [activeRepo, activePath, content, flush, settings.autosave, settings.autosaveDelay],
   );
+
+  /** The palette's status choices, from settings — a convention, not a schema. */
+  const statusChoices = useMemo(
+    () =>
+      settings.statuses
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean),
+    [settings.statuses],
+  );
+
+  /**
+   * Write `status:` without opening the sheet. Setting it on a file with no
+   * frontmatter creates the block; clearing the last key removes it — a block
+   * holding nothing is noise the file never asked for.
+   */
+  const setStatus = useCallback(
+    (value: string | null) => {
+      const next = setMatterValue(matter ?? "", "status", value);
+      onMatterChange(next.trim().length ? next : null);
+    },
+    [matter, onMatterChange],
+  );
+
+  /**
+   * Scaffold the conventional keys in one stroke — the ones the header reads —
+   * then open the sheet so the blanks can be filled. Existing keys keep their
+   * values; this only adds what is missing.
+   */
+  const scaffoldMatter = useCallback(() => {
+    let m = matter ?? "";
+    if (!matterValue(m, "title") && activePath) {
+      const name = activePath.split("/").pop() ?? activePath;
+      m = setMatterValue(m, "title", displayName(name, false));
+    }
+    if (!matterValue(m, "status")) m = setMatterValue(m, "status", statusChoices[0] ?? "draft");
+    if (!matterValue(m, "owner") && author) m = setMatterValue(m, "owner", author);
+    if (!matterValue(m, "due")) m = setMatterValue(m, "due", "");
+    onMatterChange(m);
+    setMatterOpen(true);
+  }, [matter, activePath, statusChoices, author, onMatterChange]);
 
   // "onBlur": the window losing focus is the cue, as in an IDE.
   useEffect(() => {
@@ -2236,6 +2283,10 @@ export default function App() {
           if (matter === null) onMatterChange("");
           setMatterOpen(true);
         }}
+        statuses={statusChoices}
+        currentStatus={matter !== null ? matterValue(matter, "status") : null}
+        onSetStatus={setStatus}
+        onScaffoldMatter={scaffoldMatter}
       />
 
       {perf && <PerfHud onClose={() => setPerf(false)} />}

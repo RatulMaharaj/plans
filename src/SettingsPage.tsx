@@ -271,6 +271,13 @@ export function SettingsPage({
             on={s.showFrontmatter}
             onChange={(showFrontmatter) => onChange({ showFrontmatter })}
           />
+          <Field
+            label="Statuses"
+            hint="What the palette offers for status:, comma-separated. Files may still say anything."
+            value={s.statuses}
+            placeholder={DEFAULTS.statuses}
+            onChange={(statuses) => onChange({ statuses })}
+          />
         </Group>
 
         {/* ---- source ---------------------------------------------------- */}

@@ -70,6 +70,12 @@ type Props = {
   hasMatter: boolean;
   canEdit: boolean;
   onMatter: () => void;
+  /** From settings: what `status:` may be set to from here. */
+  statuses: string[];
+  /** The open file's current status, so it is not offered again. */
+  currentStatus: string | null;
+  onSetStatus: (value: string | null) => void;
+  onScaffoldMatter: () => void;
 };
 
 const onOff = (b: boolean) => (b ? "on" : "off");
@@ -118,6 +124,35 @@ function buildCommands(p: Props): Command[] {
       label: p.hasMatter ? "Edit frontmatter" : "Add frontmatter",
       run: p.onMatter,
     });
+    add({
+      id: "matter.scaffold",
+      group: "Plans",
+      label: "Scaffold frontmatter",
+      hint: "title · status · owner · due",
+      terms: "template yaml metadata",
+      run: p.onScaffoldMatter,
+    });
+    // One command per configured status, so "draft" is two keys from anywhere.
+    for (const s of p.statuses) {
+      if (p.currentStatus?.toLowerCase() === s.toLowerCase()) continue;
+      add({
+        id: `status.${s}`,
+        group: "Plans",
+        label: `Status: ${s}`,
+        hint: "written into the frontmatter",
+        terms: "state stage",
+        run: () => p.onSetStatus(s),
+      });
+    }
+    if (p.currentStatus) {
+      add({
+        id: "status.clear",
+        group: "Plans",
+        label: "Clear status",
+        hint: `now ${p.currentStatus}`,
+        run: () => p.onSetStatus(null),
+      });
+    }
   }
   if (p.canNewFolder) {
     add({

@@ -45,6 +45,12 @@ export type Settings = {
   showExtensions: boolean;
   /** Hold YAML frontmatter apart from the prose, above the page. */
   showFrontmatter: boolean;
+  /**
+   * The choices the palette offers for `status:`, comma-separated. A
+   * convention, not a schema — a file may say anything; these are only what
+   * the app offers to write.
+   */
+  statuses: string;
   /** Where a pasted image is written, relative to the repository root. */
   imageFolder: string;
 
@@ -104,6 +110,7 @@ export const DEFAULTS: Settings = {
   showIgnored: false,
   showExtensions: true,
   showFrontmatter: true,
+  statuses: "draft, active, done, blocked",
   imageFolder: "assets",
   sourceLineNumbers: true,
   sourceWrap: true,
