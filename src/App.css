@@ -1790,6 +1790,45 @@ body.resizing .files-edge { pointer-events: auto; }
 .setting-field:focus { outline: 0; border-bottom-color: var(--ink-3); }
 .setting-field::placeholder { color: var(--ink-3); }
 
+/* --- a list captured one badge at a time (statuses) ---------------------- */
+.tags-row { align-items: flex-start; }
+.setting-tags {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 4px;
+  max-width: 260px;
+}
+.setting-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 4px 1px 7px;
+  border: 1px solid var(--rule);
+  border-radius: 9px;
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.03em;
+  color: var(--ink-2);
+}
+.setting-tag button {
+  border: 0;
+  background: transparent;
+  padding: 0 2px;
+  cursor: pointer;
+  color: var(--ink-3);
+  font-size: 12px;
+  line-height: 1;
+}
+.setting-tag button:hover { color: var(--ink); }
+.setting-field.tags-input {
+  width: 90px;
+  text-align: left;
+  border-bottom-color: transparent;
+}
+.setting-field.tags-input:focus { border-bottom-color: var(--rule); }
+
 /* --- dragging a file or a folder into another folder --------------------- */
 
 /* What is being carried recedes; what would receive it is ruled. */

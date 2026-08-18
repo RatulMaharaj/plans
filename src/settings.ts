@@ -147,10 +147,15 @@ export function loadSettings(): Settings {
     const s = raw ? { ...DEFAULTS, ...(JSON.parse(raw) as Partial<Settings>) } : DEFAULTS;
     // A saved list that still matches an earlier default hasn't been
     // customised; move it to the current default. Edited lists are untouched.
+    const normalized = s.statuses
+      .split(",")
+      .map((t) => t.trim().toLowerCase())
+      .filter(Boolean)
+      .join(",");
     if (
-      s.statuses === "draft, active, done, blocked" ||
-      s.statuses === "draft, triage, active, done, blocked" ||
-      s.statuses === "draft, triage, active, busy, done, blocked"
+      normalized === "draft,active,done,blocked" ||
+      normalized === "draft,triage,active,done,blocked" ||
+      normalized === "draft,triage,active,busy,done,blocked"
     )
       s.statuses = DEFAULTS.statuses;
     return s;

@@ -274,11 +274,10 @@ export function SettingsPage({
             on={s.showFrontmatter}
             onChange={(showFrontmatter) => onChange({ showFrontmatter })}
           />
-          <Field
+          <TagsField
             label="Statuses"
-            hint="What the palette offers for status:, comma-separated. Files may still say anything."
+            hint="What the palette offers for status:. Files may still say anything."
             value={s.statuses}
-            placeholder={DEFAULTS.statuses}
             onChange={(statuses) => onChange({ statuses })}
           />
         </Group>
@@ -536,6 +535,74 @@ function Field({
         aria-label={label}
         onChange={(e) => onChange(e.target.value)}
       />
+    </div>
+  );
+}
+
+/**
+ * A short list captured one entry at a time: type, Enter, badge. The value is
+ * still the comma-separated string the rest of the app reads.
+ */
+function TagsField({
+  label,
+  hint,
+  value,
+  onChange,
+}: {
+  label: string;
+  hint?: string;
+  value: string;
+  onChange: (v: string) => void;
+}) {
+  const [draft, setDraft] = useState("");
+  const tags = value
+    .split(",")
+    .map((t) => t.trim())
+    .filter(Boolean);
+
+  const commit = () => {
+    const t = draft.trim().replace(/,+$/, "");
+    setDraft("");
+    if (!t || tags.some((x) => x.toLowerCase() === t.toLowerCase())) return;
+    onChange([...tags, t].join(", "));
+  };
+
+  return (
+    <div className="setting-row static tags-row">
+      <span className="setting-label">
+        {label}
+        {hint && <span className="setting-hint">{hint}</span>}
+      </span>
+      <span className="setting-tags">
+        {tags.map((t) => (
+          <span key={t} className="setting-tag">
+            {t}
+            <button
+              aria-label={`Remove ${t}`}
+              onClick={() => onChange(tags.filter((x) => x !== t).join(", "))}
+            >
+              ×
+            </button>
+          </span>
+        ))}
+        <input
+          className="setting-field tags-input"
+          value={draft}
+          placeholder={tags.length ? "" : "add a status…"}
+          spellCheck={false}
+          aria-label={label}
+          onChange={(e) => setDraft(e.target.value)}
+          onBlur={commit}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" || e.key === ",") {
+              e.preventDefault();
+              commit();
+            } else if (e.key === "Backspace" && !draft && tags.length) {
+              onChange(tags.slice(0, -1).join(", "));
+            }
+          }}
+        />
+      </span>
     </div>
   );
 }
