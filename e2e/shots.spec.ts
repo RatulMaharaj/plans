@@ -98,6 +98,29 @@ async function shoot(page: Page, theme: "day" | "sepia" | "night", file: string)
   await page.locator(".rail").first().click();
   await page.waitForTimeout(700);
 
+  /**
+   * A window, not a viewport. The picture sits on a README as well as on the
+   * site, and a README cannot draw a frame around it — so the frame is taken
+   * with the shot, in the app's own rule colour.
+   *
+   * Drawn as an overlay rather than a border on the app: the rail and the
+   * tree paint their own backgrounds over anything the root element draws.
+   *
+   * Square, not rounded: rounding would need a transparent ground, and the
+   * app's chrome is translucent, so the whole thing goes milky once the page
+   * behind it is taken away.
+   */
+  await page.addStyleTag({
+    content: `body::after {
+        content: "";
+        position: fixed;
+        inset: 0;
+        border: 1px solid var(--rule-strong);
+        pointer-events: none;
+        z-index: 9999;
+      }`,
+  });
+
   await page.screenshot({ path: `site/plans-${theme}.png`, scale: "css" });
 }
 
