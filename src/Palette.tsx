@@ -61,6 +61,7 @@ type Props = {
   onNewFolder: () => void;
   canRename: boolean;
   onRename: () => void;
+  onMoveFile: () => void;
   canInsertHtml: boolean;
   onInsertHtml: () => void;
   hasMatter: boolean;
@@ -128,9 +129,16 @@ function buildCommands(p: Props): Command[] {
     add({
       id: "rename",
       group: "Plans",
-      label: "Rename or move this file…",
-      terms: "move path folder",
+      label: "Rename this file…",
+      terms: "name title",
       run: p.onRename,
+    });
+    add({
+      id: "move",
+      group: "Plans",
+      label: "Move this file…",
+      terms: "folder directory path",
+      run: p.onMoveFile,
     });
   }
   if (p.canInsertHtml) {
@@ -209,7 +217,9 @@ function buildCommands(p: Props): Command[] {
       group: "Typeface",
       label: f.label,
       value: s.fontId === f.id ? "current" : f.note,
-      terms: "font typeface family serif sans reading",
+      // Everything a person might type looking for this: the word they use, the
+      // designer's name, and what the face is for.
+      terms: `font typeface family reading page prose ${f.note} ${f.designer}`,
       run: () => set({ fontId: f.id }),
     });
   }
@@ -220,7 +230,7 @@ function buildCommands(p: Props): Command[] {
       group: "Monospace",
       label: m.label,
       value: s.monoId === m.id ? "current" : m.note,
-      terms: "font mono monospace code chrome",
+      terms: `font mono monospace code chrome source ${m.note}`,
       run: () => set({ monoId: m.id }),
     });
   }

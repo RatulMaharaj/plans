@@ -106,7 +106,7 @@
 :root {
   --mono: "Space Mono", ui-monospace, SFMono-Regular, monospace;
   /* Overwritten at runtime by applyType(). */
-  --doc-font: "Vollkorn", Georgia, serif;
+  --doc-font: "Work Sans", system-ui, sans-serif;
   --doc-size: 16.32px;
   --doc-measure: 70ch;
 

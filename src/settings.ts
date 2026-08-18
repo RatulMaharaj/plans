@@ -69,7 +69,7 @@ export type Settings = {
 
 export const DEFAULTS: Settings = {
   theme: DEFAULT_THEME,
-  fontId: "vollkorn",
+  fontId: "work-sans",
   monoId: "space-mono",
   size: 16,
   measure: 70,

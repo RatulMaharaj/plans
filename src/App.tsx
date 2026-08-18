@@ -10,6 +10,7 @@ import { Dropdown } from "./Dropdown";
 import { FileTree, displayName, MARK_WORD, type Mark } from "./FileTree";
 import { FrontmatterSheet } from "./Frontmatter";
 import { NameSheet } from "./NameSheet";
+import { MoveSheet } from "./MoveSheet";
 import { TextPrompt } from "./TextPrompt";
 import { SourceView } from "./SourceView";
 import { PerfHud } from "./PerfHud";
@@ -158,7 +159,19 @@ export default function App() {
     run: (value: string) => void;
   }>(null);
   const [branches, setBranches] = useState<string[]>([]);
-  /** Every folder in the repository a new file is being placed in. */
+  /** Every folder in a repository, for the sheets that place a file. */
+  const foldersIn = useCallback(
+    (repo: string) => {
+      const seen = new Set<string>(emptyDirs[repo] ?? []);
+      for (const f of filesByRepo[repo] ?? []) {
+        const parts = f.relPath.split("/");
+        for (let i = 1; i < parts.length; i++) seen.add(parts.slice(0, i).join("/"));
+      }
+      return [...seen].sort();
+    },
+    [filesByRepo, emptyDirs],
+  );
+
   const folderChoices = useMemo(() => {
     if (!naming) return [];
     const seen = new Set<string>(emptyDirs[naming.repo] ?? []);
@@ -171,6 +184,8 @@ export default function App() {
 
   /** A fragment of HTML open for editing, or null. */
   const [htmlEdit, setHtmlEdit] = useState<HtmlEdit | null>(null);
+  /** A file being moved, which is a different question from being renamed. */
+  const [moving, setMoving] = useState<null | { repo: string; path: string }>(null);
   /**
    * The buffer model, in the manner of vim: the file is never locked, and what
    * we hold is a copy taken at `stamp`. Anything else — an agent in a terminal,
@@ -992,14 +1007,21 @@ export default function App() {
    */
   const renameFile = useCallback(
     (repoPath: string, relPath: string) => {
+      const dir = relPath.includes("/") ? relPath.slice(0, relPath.lastIndexOf("/")) : "";
+      const name = relPath.split("/").pop() ?? relPath;
       setAsking({
         title: "Rename",
-        placeholder: relPath,
-        initial: relPath,
-        note: "A path, not just a name — type a folder into it to move the file.",
+        placeholder: name,
+        initial: name,
+        note: dir ? `In ${dir}` : "At the repository root",
         confirm: "Rename",
         run: (next) => {
-          const to = next.endsWith(".md") || next.endsWith(".markdown") ? next : `${next}.md`;
+          // A name, not a path: moving is its own question, with its own sheet.
+          const bare = next.replace(/\//g, "-").trim();
+          if (!bare) return;
+          const named =
+            bare.endsWith(".md") || bare.endsWith(".markdown") ? bare : `${bare}.md`;
+          const to = dir ? `${dir}/${named}` : named;
           if (to === relPath) return;
           fileAction(repoPath, "Renamed", async () => {
             await api.renamePlan(repoPath, relPath, to);
@@ -1448,6 +1470,7 @@ export default function App() {
               onMove={moveTo}
               emptyDirs={emptyDirs}
               onRename={renameFile}
+              onMoveTo={(repo, path) => setMoving({ repo, path })}
               onSetOpen={setOpen}
             />
           </div>
@@ -1752,6 +1775,19 @@ export default function App() {
         />
       )}
 
+      {moving && (
+        <MoveSheet
+          relPath={moving.path}
+          folders={foldersIn(moving.repo)}
+          onCancel={() => setMoving(null)}
+          onMove={(dir) => {
+            const at = moving;
+            setMoving(null);
+            moveTo(at.repo, at.path, dir);
+          }}
+        />
+      )}
+
       {naming && (
         <NameSheet
           dir={naming.dir}
@@ -1806,6 +1842,9 @@ export default function App() {
         }
         canRename={!!activePath && !!activeRepoPath}
         onRename={() => activeRepoPath && activePath && renameFile(activeRepoPath, activePath)}
+        onMoveFile={() =>
+          activeRepoPath && activePath && setMoving({ repo: activeRepoPath, path: activePath })
+        }
         onInsertHtml={() =>
           setAsking({
             title: "Insert HTML",

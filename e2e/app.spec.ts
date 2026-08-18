@@ -196,10 +196,16 @@ test("pasting a link over a selection makes the selection a link", async ({ page
   const editor = page.locator(".milkdown .ProseMirror");
   await editor.click();
 
-  // Select the word "third" in the heading, then paste a URL over it.
+  /**
+   * Select the way a person does — click into the heading, then extend with the
+   * keyboard. Setting a DOM range directly leaves ProseMirror's own selection
+   * empty until it syncs, so a synthetic paste arriving immediately after sees
+   * nothing selected and the handler correctly declines.
+   */
+  // Select the word in the heading.
+  await page.locator(".milkdown .ProseMirror h1").click();
   await page.evaluate(() => {
-    const h = document.querySelector(".milkdown .ProseMirror h1");
-    const text = h?.firstChild;
+    const text = document.querySelector(".milkdown .ProseMirror h1")?.firstChild;
     if (!text) throw new Error("no heading to select");
     const range = document.createRange();
     range.setStart(text, 0);
@@ -208,6 +214,19 @@ test("pasting a link over a selection makes the selection a link", async ({ page
     sel?.removeAllRanges();
     sel?.addRange(range);
   });
+
+  /**
+   * ProseMirror takes the DOM selection into its own state on selectionchange,
+   * which is asynchronous. A synthetic paste dispatched immediately arrives
+   * while the editor still believes nothing is selected — and the handler then
+   * correctly declines, since pasting over nothing is an ordinary paste.
+   */
+  await expect
+    .poll(async () =>
+      page.evaluate(() => (window.getSelection()?.toString() ?? "").trim()),
+    )
+    .toBe("Third");
+  await page.waitForTimeout(250);
 
   await editor.evaluate((el) => {
     const data = new DataTransfer();
@@ -229,16 +248,17 @@ test("a file can be renamed, and moved by typing a path", async ({ page }) => {
   await open(page);
   await fileRow(page, "third").click();
   await page.locator(".row.file", { hasText: "third" }).first().click({ button: "right" });
-  await page.locator(".ctx-item", { hasText: "Rename or move" }).click();
+  await page.locator(".ctx-item", { hasText: "Rename…" }).click();
 
-  await page.locator(".name-field, .matter-body").first().fill("notes/moved/fourth.md");
+  // A name, not a path: slashes are not a way to move a file any more.
+  await page.locator(".name-field").fill("fourth.md");
   await page.keyboard.press("Enter");
 
   await expect
     .poll(async () =>
       page.evaluate(() => Object.keys((window as any).__fake.repos[0].files)),
     )
-    .toContain("notes/moved/fourth.md");
+    .toContain("notes/fourth.md");
 
   const gone = await page.evaluate(() =>
     Object.keys((window as any).__fake.repos[0].files).includes("notes/third.md"),
@@ -366,7 +386,7 @@ test("a renamed file can still be edited", async ({ page }) => {
   const faults = await open(page);
   await fileRow(page, "third").click();
   await page.locator(".row.file", { hasText: "third" }).first().click({ button: "right" });
-  await page.locator(".ctx-item", { hasText: "Rename or move" }).click();
+  await page.locator(".ctx-item", { hasText: "Rename…" }).click();
   await page.locator(".name-field").fill("renamed.md");
   await page.keyboard.press("Enter");
 
@@ -382,7 +402,8 @@ test("a renamed file can still be edited", async ({ page }) => {
     .poll(
       async () =>
         page.evaluate(
-          () => (window as any).__fake.repos[0].files["renamed.md"] as string | undefined,
+          // Renaming keeps the file where it is; only its name changes.
+          () => (window as any).__fake.repos[0].files["notes/renamed.md"] as string | undefined,
         ),
       { timeout: 15000 },
     )
@@ -513,4 +534,56 @@ test("a file with a standalone <br /> still opens, and switching works", async (
   await fileRow(page, "loose").click();
   await expect(page.locator(".milkdown")).toContainText("Body after the break");
   expect(faults, faults.join("\n")).toEqual([]);
+});
+
+test("searching for a font finds the typefaces", async ({ page }) => {
+  await open(page);
+  await page.keyboard.press("Meta+Shift+p");
+  await page.locator(".palette-input").fill(">font");
+
+  // The app calls them typefaces and papers; nobody searching types that.
+  const rows = page.locator(".palette-row");
+  await expect(rows.first()).toBeVisible();
+  const labels = (await rows.allInnerTexts()).join(" ").toLowerCase();
+  expect(labels).toContain("work sans");
+  expect(labels).toContain("space mono");
+});
+
+test("rename asks for a name; moving is a separate question", async ({ page }) => {
+  await open(page);
+  await page.locator(".row.file", { hasText: "second" }).first().click({ button: "right" });
+  await page.locator(".ctx-item", { hasText: "Rename…" }).click();
+
+  // The field holds the name alone, not the path it lives at.
+  await expect(page.locator(".name-field")).toHaveValue("second.md");
+  await page.locator(".name-field").fill("Second Thoughts");
+  await page.keyboard.press("Enter");
+
+  /**
+   * Exactly what was typed, in the folder it was already in. A rename edits a
+   * filename, so the name is taken literally — slugifying belongs to new files,
+   * where what is typed is a title rather than a name.
+   */
+  await expect
+    .poll(async () =>
+      page.evaluate(() => Object.keys((window as any).__fake.repos[0].files)),
+    )
+    .toContain("notes/Second Thoughts.md");
+
+  // Moving is its own action, with folders to choose from rather than a path.
+  await page
+    .locator(".row.file", { hasText: "second thoughts" })
+    .first()
+    .click({ button: "right" });
+  await page.locator(".ctx-item", { hasText: "Move to…" }).click();
+  // The sheet's own picker, not the repository dropdown in the rail.
+  await page.locator(".matter-sheet .dd-trigger").click();
+  await page.locator(".dd-item", { hasText: "repository root" }).click();
+  await page.locator(".matter-sheet .act", { hasText: "Move" }).click();
+
+  await expect
+    .poll(async () =>
+      page.evaluate(() => Object.keys((window as any).__fake.repos[0].files)),
+    )
+    .toContain("Second Thoughts.md");
 });

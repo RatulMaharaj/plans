@@ -554,10 +554,38 @@ fn create_folder(repo: String, rel_path: String) -> R<()> {
     std::fs::create_dir_all(&p).map_err(|e| format!("could not create {rel_path}: {e}"))
 }
 
+/// Do these differ only in case? On a case-insensitive filesystem — which is
+/// the macOS default — such a rename looks like renaming a file onto itself.
+fn case_only_rename(from: &str, to: &str) -> bool {
+    from != to && from.to_lowercase() == to.to_lowercase()
+}
+
 #[tauri::command]
 fn rename_plan(repo: String, from: String, to: String) -> R<()> {
     let a = safe_join(&repo, &from)?;
     let b = safe_join(&repo, &to)?;
+
+    /*
+     * Changing only the case of a name needs two moves.
+     *
+     * macOS is case-insensitive by default, so `plan.md` and `Plan.md` are the
+     * same file: the existence check below sees the destination already there
+     * and refuses, which is why renaming a file to its own name in different
+     * case failed. Going via a name that cannot collide makes it work on a
+     * case-insensitive filesystem, and is harmless on a case-sensitive one.
+     */
+    if case_only_rename(&from, &to) {
+        let mut temp = b.clone();
+        temp.set_file_name(format!(
+            ".plans-rename-{}",
+            b.file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_default()
+        ));
+        std::fs::rename(&a, &temp).map_err(|e| e.to_string())?;
+        return std::fs::rename(&temp, &b).map_err(|e| e.to_string());
+    }
+
     if b.exists() {
         return Err(format!("{to} already exists"));
     }
@@ -909,6 +937,17 @@ mod tests {
     }
 
     // --- what counts as markdown, and what is skipped -----------------------
+
+    #[test]
+    fn a_rename_that_only_changes_case_is_recognised() {
+        assert!(case_only_rename("plan.md", "Plan.md"));
+        assert!(case_only_rename("notes/plan.md", "notes/PLAN.md"));
+        // Not case-only: a different name, or the same one.
+        assert!(!case_only_rename("plan.md", "plans.md"));
+        assert!(!case_only_rename("plan.md", "plan.md"));
+        // A move is not a case change either, even with the same letters.
+        assert!(!case_only_rename("a/plan.md", "b/plan.md"));
+    }
 
     #[test]
     fn a_link_climbs_out_of_the_documents_folder() {

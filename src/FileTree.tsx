@@ -160,6 +160,7 @@ type Props = {
   /** dir is repo-relative, "" for the repo root. */
   onNewFile: (repoPath: string, dir: string) => void;
   onRename: (repoPath: string, relPath: string) => void;
+  onMoveTo: (repoPath: string, relPath: string) => void;
   onNewFolder: (repoPath: string, dir: string) => void;
   /** Dragged into a folder: dir is "" for the repository root. */
   onMove: (repoPath: string, relPath: string, dir: string) => void;
@@ -505,12 +506,20 @@ export const FileTree = memo(function FileTree(p: Props) {
           )}
 
           {menu.kind === "file" && (
-            <button
-              className="ctx-item"
-              onClick={() => act(() => p.onRename(menu.repo, menu.path))}
-            >
-              Rename or move…
-            </button>
+            <>
+              <button
+                className="ctx-item"
+                onClick={() => act(() => p.onRename(menu.repo, menu.path))}
+              >
+                Rename…
+              </button>
+              <button
+                className="ctx-item"
+                onClick={() => act(() => p.onMoveTo(menu.repo, menu.path))}
+              >
+                Move to…
+              </button>
+            </>
           )}
 
           <button

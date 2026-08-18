@@ -44,8 +44,9 @@ than a general-purpose markdown editor.
   — every setting, and git: branch, pull, push, fetch, commit, switch — and
   `?` to search *inside* files, which is the question notes usually pose.
 - **Files stay where you put them.** New file asks which repository and folder;
-  rename is a path, so typing a folder into it moves the file, and its tab
-  follows. A pasted or dropped image is written beside the document in
+  renaming edits the name, moving picks a folder — two questions, two answers,
+  and a tab that follows its file through either. Dragging a file or a folder
+  onto another folder moves it. A pasted or dropped image is written beside the document in
   `assets/` and linked relatively, never inlined as a data URL.
 - **Three papers.** Day, Sepia, and Night, in the manner of an e-reader. Colour
   discipline throughout: chrome is ink at varying opacity, and colour means "this
