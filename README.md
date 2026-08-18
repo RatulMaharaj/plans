@@ -9,7 +9,7 @@ repositories** — without opening the whole repo in an editor.
 
 <sub>
 
-[**Download for macOS**](https://github.com/RatulMaharaj/plans/releases/latest) · free and open source
+**[Download for macOS](https://github.com/RatulMaharaj/plans/releases/latest)** · free and open source
 
 </sub>
 
