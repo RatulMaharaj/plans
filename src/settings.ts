@@ -1,5 +1,6 @@
 import { FONTS, MONO_FONTS } from "./fonts";
 import { applyTheme, DEFAULT_THEME, type ThemeId } from "./theme";
+import { FLESH_OUT_PROMPT } from "./agent";
 
 /** Everything the reader can change, in one place. */
 export type Settings = {
@@ -79,16 +80,31 @@ export type Settings = {
    * configure is which agent answers.
    */
   chatCommand: string;
+  /**
+   * The instruction "Flesh out this plan" sends. Editable because it is the
+   * one piece of the feature that is about *your* house style, and a prompt
+   * you cannot see is a prompt you cannot argue with.
+   */
+  fleshOutPrompt: string;
 
   // Panels
   /** The file tree down the left. */
   showIndex: boolean;
   showGit: boolean;
-  /** The tmux pane along the bottom. Nothing polls while it is closed. */
+  /** The agent chat. Nothing runs while it is closed. */
   showMux: boolean;
   showStatusBar: boolean;
-  /** Height of the tmux pane in px, dragged by its top edge. */
+  /**
+   * Where the chat sits: a row under the document, or a column on the right.
+   * Two shapes because the panel is read two ways — a transcript you glance
+   * at while writing wants to be tall and narrow, one you are working *in*
+   * wants the width.
+   */
+  chatPlace: "bottom" | "side";
+  /** Height of the chat in px, when it is the bottom row. */
   muxHeight: number;
+  /** Width of the chat in px, when it is the right column. */
+  chatWidth: number;
   /** Poll interval for picking up outside edits, in seconds. 0 turns it off. */
   watchSeconds: number;
 
@@ -133,6 +149,7 @@ export const DEFAULTS: Settings = {
   statuses: "draft, ready, busy, done",
   agentCommand: "claude {prompt}",
   chatCommand: "claude",
+  fleshOutPrompt: FLESH_OUT_PROMPT,
   imageFolder: "assets",
   sourceLineNumbers: true,
   sourceWrap: true,
@@ -141,7 +158,9 @@ export const DEFAULTS: Settings = {
   showIndex: true,
   showGit: false,
   showMux: false,
+  chatPlace: "bottom",
   muxHeight: 260,
+  chatWidth: 380,
   showStatusBar: true,
   watchSeconds: 4,
   updates: "notify",
@@ -161,6 +180,7 @@ export const RANGES = {
   treeSize: { min: 9, max: 16, step: 0.5 },
   treeWidth: { min: 170, max: 480, step: 2 },
   muxHeight: { min: 120, max: 600, step: 10 },
+  chatWidth: { min: 260, max: 640, step: 10 },
 };
 
 const KEY = "plans.settings.v1";

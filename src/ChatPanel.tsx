@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { api, type ChatId } from "./api";
+import { track } from "./analytics";
 
 /**
  * A conversation with the agent about the open plan.
@@ -30,6 +31,8 @@ type Props = {
   /** The agent binary from settings; the flags are the Rust side's. */
   cmd: string;
   notify: (message: string, tone?: "error") => void;
+  /** Dragging the panel's own edge; which edge that is depends on placement. */
+  onResize: (e: React.PointerEvent<HTMLDivElement>) => void;
 };
 
 const keyOf = (repo: string, rel: string) => `plans.chat.v1::${repo}::${rel}`;
@@ -44,12 +47,20 @@ function load(key: string): Thread {
   return { messages: [], session: null };
 }
 
-export function ChatPanel({ repo, relPath, seed, onSeedUsed, cmd, notify }: Props) {
+export function ChatPanel({
+  repo,
+  relPath,
+  seed,
+  onSeedUsed,
+  cmd,
+  notify,
+  onResize,
+}: Props) {
   const key = relPath ? keyOf(repo, relPath) : null;
   const [thread, setThread] = useState<Thread>({ messages: [], session: null });
   const [input, setInput] = useState("");
   /** The turn in flight, if any, and which conversation it belongs to. */
-  const turn = useRef<{ id: ChatId; key: string } | null>(null);
+  const turn = useRef<{ id: ChatId; key: string; at: number } | null>(null);
   const [busy, setBusy] = useState(false);
   const logRef = useRef<HTMLDivElement>(null);
 
@@ -116,6 +127,10 @@ export function ChatPanel({ repo, relPath, seed, onSeedUsed, cmd, notify }: Prop
     const done = listen<{ id: number; session: string | null; ok: boolean }>("chat-done", (e) => {
       if (e.payload.id !== turn.current?.id) return;
       const k = turn.current.key;
+      track("chat_turn_finished", {
+        ok: e.payload.ok,
+        seconds: Math.round((Date.now() - turn.current.at) / 1000),
+      });
       turn.current = null;
       setBusy(false);
       commit(k, (t) => ({ ...t, session: e.payload.session ?? t.session }));
@@ -123,6 +138,10 @@ export function ChatPanel({ repo, relPath, seed, onSeedUsed, cmd, notify }: Prop
     const failed = listen<{ id: number; message: string }>("chat-error", (e) => {
       if (e.payload.id !== turn.current?.id) return;
       const k = turn.current.key;
+      track("chat_turn_finished", {
+        ok: false,
+        seconds: Math.round((Date.now() - turn.current.at) / 1000),
+      });
       turn.current = null;
       setBusy(false);
       say(k, "tool", `stopped — ${e.payload.message || "no answer"}`, false);
@@ -133,7 +152,7 @@ export function ChatPanel({ repo, relPath, seed, onSeedUsed, cmd, notify }: Prop
   }, [commit]);
 
   const send = useCallback(
-    async (text: string) => {
+    async (text: string, seeded = false) => {
       if (!key || !relPath || !text.trim() || turn.current || inflight.current) return;
       inflight.current = true;
       const t = threads.current.get(key) ?? load(key);
@@ -145,9 +164,11 @@ export function ChatPanel({ repo, relPath, seed, onSeedUsed, cmd, notify }: Prop
           `Edit files directly when asked, and keep answers brief.\n\n`;
       commit(key, (cur) => ({ ...cur, messages: [...cur.messages, { role: "user", text }] }));
       setBusy(true);
+      // The length and whether a button wrote it — never the message itself.
+      track("chat_message_sent", { seeded, chars: text.length, resumed: !!t.session });
       try {
         const id = await api.chatSend(repo, cmd, preamble + text, t.session);
-        turn.current = { id, key };
+        turn.current = { id, key, at: Date.now() };
       } catch (e) {
         setBusy(false);
         notify(String(e), "error");
@@ -166,7 +187,7 @@ export function ChatPanel({ repo, relPath, seed, onSeedUsed, cmd, notify }: Prop
     if (!seed || !key || seenSeed.current === seed) return;
     seenSeed.current = seed;
     onSeedUsed();
-    void send(seed);
+    void send(seed, true);
   }, [seed, key, send, onSeedUsed]);
 
   const stop = () => {
@@ -183,7 +204,9 @@ export function ChatPanel({ repo, relPath, seed, onSeedUsed, cmd, notify }: Prop
 
   return (
     <section className="mux chat" aria-label="Agent chat">
-      <div className="mux-head">
+      {/* First child, so it sits over the panel's leading edge either way. */}
+      <div className="chat-edge" onPointerDown={onResize} aria-hidden />
+      <div className="panel-head">
         <span className="chat-title">{relPath ?? "Agent"}</span>
         <span className="mux-spacer" />
         {busy && (

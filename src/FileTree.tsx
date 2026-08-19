@@ -10,19 +10,21 @@ import { trace } from "./perf";
 import { statusTone } from "./matter";
 import type { PlanFile, RepoInfo } from "./api";
 
-export type Mark = "clean" | "new" | "mod" | "staged";
+export type Mark = "clean" | "new" | "mod" | "staged" | "conflict";
 
 export const GLYPH: Record<Mark, string> = {
   clean: "·",
   new: "+",
   mod: "~",
   staged: "▲",
+  conflict: "!",
 };
 export const MARK_WORD: Record<Mark, string> = {
   clean: "committed",
   new: "new",
   mod: "edited",
   staged: "staged",
+  conflict: "conflicted",
 };
 
 type Dir = {
@@ -110,7 +112,7 @@ function squash(nodes: Node[]): Node[] {
  * to the least in need of attention: an unsaved edit outranks an untracked
  * file, which outranks something already staged.
  */
-const RANK: Record<Mark, number> = { mod: 3, new: 2, staged: 1, clean: 0 };
+const RANK: Record<Mark, number> = { conflict: 4, mod: 3, new: 2, staged: 1, clean: 0 };
 
 function rollUp(
   nodes: Node[],

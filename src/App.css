@@ -198,13 +198,40 @@ button, .rail, .bar, .tabs, .ctx {
 .body.with-git { grid-template-columns: var(--files-w) minmax(0, 1fr) var(--git-w); }
 
 /*
- * The tmux pane is a row under everything, not a fourth column.
+ * The chat sits in one of two places, and the setting picks which.
  *
- * Columns already come in four combinations (tree × git); a third one would
- * make eight. A row adds one rule, and a terminal view wants width anyway.
+ * Terminal style is a row under the document. It stops at the tree's edge
+ * rather than spanning the whole window: the tree is a fixture of the app,
+ * not of the page, and a panel that runs underneath it reads as a drawer for
+ * the window when it is a drawer for the plan.
  */
 .body.with-mux { grid-template-rows: minmax(0, 1fr) var(--mux-h, 260px); }
-.body.with-mux > .mux { grid-column: 1 / -1; }
+.body.with-mux > .mux { grid-column: 2 / -1; }
+/* The tree spans both rows, so its right border runs the full height of the
+   window and the chat has a wall on its left rather than a gap. */
+.body.with-mux > .files { grid-row: 1 / -1; }
+/* Nothing on the left to be pushed by, so it takes the width back. */
+.body.no-files.with-mux > .mux { grid-column: 1 / -1; }
+
+/*
+ * Sidebar style is a column on the right. Two rules rather than four: the
+ * chat and the git panel never share this side, so `with-git` cannot be on at
+ * the same time and the permutations that would have needed collapse to the
+ * tree being there or not.
+ */
+.body.with-chat-side { grid-template-columns: var(--files-w) minmax(0, 1fr) var(--chat-w, 380px); }
+.body.no-files.with-chat-side { grid-template-columns: minmax(0, 1fr) var(--chat-w, 380px); }
+/* Last column, whichever number that turns out to be. */
+.body.with-chat-side > .mux {
+  grid-column: -2 / -1;
+  border-top: none;
+  border-left: 1px solid var(--rule);
+  animation-name: chat-side-in;
+}
+@keyframes chat-side-in {
+  from { opacity: 0; transform: translateX(10px); }
+  to { opacity: 1; transform: none; }
+}
 
 /* Index collapsed (⌘⌃B) — the column leaves the grid entirely. */
 .body.no-files { grid-template-columns: minmax(0, 1fr); }
@@ -239,12 +266,13 @@ button, .rail, .bar, .tabs, .ctx {
   background: var(--rule);
 }
 
-.branch {
-  font-family: var(--mono);
-  font-size: 10px;
-  letter-spacing: 0.06em;
-  color: var(--ink-3);
-}
+/*
+ * The branch picker sits beside the repository picker, quieter than it: which
+ * repository you are in is the louder fact, and the branch was a plain label
+ * here before it could be changed from here.
+ */
+.branch-pick .dd-trigger { color: var(--ink-3); font-size: 10px; letter-spacing: 0.06em; }
+.branch-pick .dd-trigger:hover { color: var(--ink-2); }
 
 .rail-spacer { flex: 1; }
 
@@ -357,6 +385,12 @@ button, .rail, .bar, .tabs, .ctx {
 .row.file.new::before { background: var(--git-new); }
 .row.file.mod::before { background: var(--git-mod); }
 .row.file.staged::before { background: var(--git-staged); }
+/* A conflict is not a shade of "changed": it is the one mark that means the
+   file on disk is not yet a file, so it gets the loud colour and a ring. */
+.row.file.conflict::before {
+  background: var(--diff-del);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--diff-del) 25%, transparent);
+}
 
 /* Folders take the ledger voice, which is what distinguishes them from files
    now that there is no arrow. Open ones sit a shade stronger than closed. */
@@ -371,10 +405,12 @@ button, .rail, .bar, .tabs, .ctx {
 .row.dir.new .row-name { color: var(--git-new); }
 .row.dir.mod .row-name { color: var(--git-mod); }
 .row.dir.staged .row-name { color: var(--git-staged); }
+.row.dir.conflict .row-name { color: var(--diff-del); }
 
 .row.file { color: var(--ink-2); }
 .row.file:hover { color: var(--ink); }
 .row.file.active { color: var(--ink); }
+.row.file.conflict { color: var(--diff-del); }
 .row.file.new .row-name { color: var(--git-new); }
 .row.file.mod .row-name { color: var(--git-mod); }
 .row.file.staged .row-name { color: var(--git-staged); }
@@ -884,31 +920,40 @@ input[type="range"]::-webkit-slider-thumb {
   to { opacity: 1; transform: none; }
 }
 
-.git-head { padding: 14px 16px 12px; border-bottom: 1px solid var(--rule); }
+/*
+ * One header bar for every panel — the git panel, the chat, and the tree's
+ * search field all sit at the top of a column and must line up across them.
+ */
+.panel-head {
+  box-sizing: border-box;
+  height: var(--strip);
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 12px;
+  border-bottom: 1px solid var(--rule);
+}
 
-.branch-row { display: flex; align-items: center; gap: 8px; margin: 8px 0 12px; }
-/* The branch picker itself is .dd.wide — see the dropdown section. */
-
-.sync { display: flex; gap: 8px; }
-.ghost {
-  flex: 1;
+/* An action in a panel's header: a word, not a button-looking button. */
+.panel-act {
   background: transparent;
-  border: 1px solid var(--rule-strong);
+  font-size: 10px;
+  border: 0;
+  padding: 3px 6px;
   border-radius: 3px;
-  padding: 6px 8px;
   cursor: pointer;
   font-family: var(--mono);
-  font-size: 9.5px;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-  color: var(--ink-2);
-  transition: border-color 120ms ease, color 120ms ease;
+  letter-spacing: 0.06em;
+  color: var(--ink-3);
 }
-.ghost:hover:not(:disabled) { border-color: var(--ink); color: var(--ink); }
-.ghost:disabled { opacity: 0.4; cursor: default; }
-.ghost .n { font-variant-numeric: tabular-nums; color: var(--ink-3); margin-left: 4px; }
-
-.note { margin-top: 10px; line-height: 1.5; text-transform: none; letter-spacing: 0.02em; font-size: 10px; }
+/* The arrow carries the direction, so it is allowed to be the loud part. */
+.panel-act .arrow { font-size: 12px; line-height: 1; vertical-align: -1px; }
+/* A gap, or "Pull ↓2" reads as one word with a number stuck to it. */
+.panel-act .n { margin-left: 5px; color: var(--ink); }
+.panel-act:hover:not(:disabled) { color: var(--ink); background: var(--shade); }
+.panel-act:disabled { opacity: 0.4; cursor: default; }
+.panel-act .n { font-variant-numeric: tabular-nums; color: var(--ink-2); margin-left: 4px; }
 
 .git-section { padding: 12px 16px; border-bottom: 1px solid var(--rule); }
 .section-head {
@@ -979,7 +1024,19 @@ input[type="range"]::-webkit-slider-thumb {
 .diff .del { color: var(--git-mod); }
 .diff .hunk { color: var(--ink-3); }
 
-.commit { margin-top: auto; padding: 14px 16px; display: flex; flex-direction: column; gap: 10px; }
+/*
+ * Under the branch row rather than pinned to the bottom: the panel scrolls
+ * once a repository has more than a handful of changes, and a commit box that
+ * only exists past the end of the list is a box you have to go looking for.
+ */
+.commit {
+  flex: 0 0 auto;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--rule);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
 .commit textarea {
   background: transparent;
   border: 0;
@@ -1048,6 +1105,21 @@ input[type="range"]::-webkit-slider-thumb {
     top: 0;
     bottom: 0;
     width: var(--git-w);
+    box-shadow: var(--shadow);
+    z-index: 20;
+  }
+}
+
+/* Too narrow for a third column: the chat floats over the right, as git does. */
+@media (max-width: 1100px) {
+  .body.with-chat-side { grid-template-columns: var(--files-w) minmax(0, 1fr); }
+  .body.no-files.with-chat-side { grid-template-columns: minmax(0, 1fr); }
+  .body.with-chat-side > .mux {
+    position: absolute;
+    right: 0;
+    top: 0;
+    bottom: 0;
+    width: var(--chat-w, 380px);
     box-shadow: var(--shadow);
     z-index: 20;
   }
@@ -1224,7 +1296,6 @@ input[type="range"]::-webkit-slider-thumb {
 .dd-note { flex: 0 0 auto; font-size: 10px; color: var(--ink-3); }
 
 /* The branch picker in the git panel fills its row. */
-.dd.wide, .dd.wide .dd-trigger { display: flex; width: 100%; max-width: none; }
 
 /* ===========================================================================
    Zen — the page alone (⌘⌃Z)
@@ -1235,6 +1306,27 @@ input[type="range"]::-webkit-slider-thumb {
 .app.zen .rail { border-bottom-color: transparent; background: var(--paper); }
 .app.zen .rail .rail-btn { opacity: 0; transition: opacity 140ms ease; }
 .app.zen .rail:hover .rail-btn { opacity: 1; }
+
+/* Not an aside: an unfinished merge is the most important thing on screen. */
+.git-alarm {
+  margin: 0;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--rule);
+  background: color-mix(in srgb, var(--diff-del) 8%, transparent);
+  font-family: var(--mono);
+  font-size: 10px;
+  line-height: 1.7;
+  letter-spacing: 0.03em;
+  color: var(--ink-2);
+}
+.git-alarm code {
+  font-family: var(--mono);
+  color: var(--ink);
+  background: var(--code-bg);
+  border-radius: 3px;
+  padding: 1px 4px;
+}
+.change-name.conflicted { color: var(--diff-del); }
 
 .git-aside {
   margin: 0;
@@ -1481,6 +1573,16 @@ diffs-container {
 .source .cm-editor { height: 100%; }
 .source .cm-editor.cm-focused { outline: none; }
 
+/* A prompt is a paragraph: the row stops being a line and the field grows. */
+.setting-row.tall { align-items: start; }
+.setting-area { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; }
+.setting-area textarea.setting-field {
+  width: 100%;
+  resize: vertical;
+  line-height: 1.55;
+  padding: 8px 10px;
+}
+
 /* --- searching the settings --------------------------------------------- */
 
 .settings-filter {
@@ -1558,7 +1660,39 @@ body.resizing .files-edge::after {
 /* While dragging, nothing else should take the pointer or select text. */
 body.resizing { cursor: col-resize; user-select: none; }
 body.resizing * { pointer-events: none; }
-body.resizing .files-edge { pointer-events: auto; }
+body.resizing .files-edge,
+body.resizing .chat-edge { pointer-events: auto; }
+body.resizing.resizing-row, body.resizing.resizing-row .chat-edge { cursor: row-resize; }
+
+/* --- dragging the chat's edge -------------------------------------------- */
+
+/*
+ * The same widened-hairline idea as the tree's edge, on whichever side the
+ * panel's border is: the top when it is a row, the left when it is a column.
+ */
+.chat-edge {
+  position: absolute;
+  z-index: 12;
+  background: transparent;
+}
+.body.with-mux > .mux > .chat-edge {
+  left: 0;
+  right: 0;
+  top: -3px;
+  height: 7px;
+  cursor: row-resize;
+}
+.body.with-chat-side > .mux > .chat-edge {
+  top: 0;
+  bottom: 0;
+  left: -3px;
+  width: 7px;
+  cursor: col-resize;
+}
+.chat-edge::after { content: ""; position: absolute; background: var(--ink-3); opacity: 0; }
+.chat-edge:hover::after, body.resizing .chat-edge::after { opacity: 1; }
+.body.with-mux > .mux > .chat-edge::after { left: 0; right: 0; top: 3px; height: 1px; }
+.body.with-chat-side > .mux > .chat-edge::after { top: 0; bottom: 0; left: 3px; width: 1px; }
 
 /* ===========================================================================
    Tabs — the open buffers
@@ -1977,23 +2111,11 @@ body.resizing .files-edge { pointer-events: auto; }
 }
 
 
-/* An action in the page header, beside the view switch. */
-.page-act {
-  font: inherit;
-  font-size: 11px;
-  color: var(--ink-2);
-  background: transparent;
-  border: 1px solid var(--rule);
-  border-radius: 6px;
-  padding: 3px 9px;
-  cursor: pointer;
-}
-.page-act:hover { color: var(--ink); border-color: var(--ink-3); }
-
 /* --- agent chat: a conversation about the open plan ----------------------- */
 
 .mux {
   grid-column: 1 / -1;
+  position: relative;
   display: flex;
   flex-direction: column;
   min-height: 0;
@@ -2006,13 +2128,6 @@ body.resizing .files-edge { pointer-events: auto; }
   to { opacity: 1; transform: none; }
 }
 
-.mux-head {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 6px 12px;
-  border-bottom: 1px solid var(--rule);
-}
 .mux-spacer { flex: 1; }
 
 .chat-title {

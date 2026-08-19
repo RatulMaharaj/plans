@@ -20,6 +20,10 @@ export type FakeRepo = {
   files: Record<string, string>;
   /** Paths git should report as modified. */
   modified?: string[];
+  /** Paths git should report as conflicted ("UU"). */
+  conflicted?: string[];
+  /** An unfinished "merge" or "rebase", as git_status reports one. */
+  operation?: string;
 };
 
 /** A version the feed should claim is available, for the updater's own tests. */
@@ -203,7 +207,11 @@ export function installFakeBackend(repos: FakeRepo[], update?: FakeUpdate) {
         ahead: 0,
         behind: 0,
         has_upstream: true,
-        entries: (r?.modified ?? []).map((path) => ({ path, index: " ", worktree: "M" })),
+        operation: r?.operation ?? null,
+        entries: [
+          ...(r?.modified ?? []).map((path) => ({ path, index: " ", worktree: "M" })),
+          ...(r?.conflicted ?? []).map((path) => ({ path, index: "U", worktree: "U" })),
+        ],
       };
     },
     git_branches: ({ repo: p }) => ({

@@ -26,6 +26,8 @@ type Props = {
   className?: string;
   /** Shown when the value matches no choice. */
   placeholder?: string;
+  /** Called as the menu opens, for choices that are expensive to have ready. */
+  onOpen?: () => void;
 };
 
 export function Dropdown({
@@ -36,6 +38,7 @@ export function Dropdown({
   ariaLabel,
   className = "",
   placeholder = "—",
+  onOpen,
 }: Props) {
   const [open, setOpen] = useState(false);
   const [sel, setSel] = useState(0);
@@ -82,6 +85,7 @@ export function Dropdown({
     if (!open) {
       if (e.key === "Enter" || e.key === " " || e.key === "ArrowDown") {
         e.preventDefault();
+        onOpen?.();
         setOpen(true);
       }
       return;
@@ -125,7 +129,10 @@ export function Dropdown({
         aria-label={ariaLabel}
         aria-haspopup="listbox"
         aria-expanded={open}
-        onClick={() => setOpen((o) => !o)}
+        onClick={() => {
+          if (!open) onOpen?.();
+          setOpen((o) => !o);
+        }}
         onKeyDown={onKey}
       >
         <span className="dd-value">{current?.label ?? placeholder}</span>

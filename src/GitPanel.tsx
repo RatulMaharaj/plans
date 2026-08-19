@@ -1,6 +1,5 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { api, type GitStatus, type StatusEntry } from "./api";
-import { Dropdown } from "./Dropdown";
 
 type Props = {
   repo: string;
@@ -19,14 +18,6 @@ type Props = {
  */
 export function GitPanel({ repo, status, busy, onRun, notify, onOpen }: Props) {
   const [message, setMessage] = useState("");
-  const [branches, setBranches] = useState<string[]>([]);
-
-  useEffect(() => {
-    api
-      .gitBranches(repo)
-      .then((b) => setBranches(b.branches))
-      .catch(() => setBranches([]));
-  }, [repo, status?.branch]);
 
   if (!status) {
     return (
@@ -40,9 +31,28 @@ export function GitPanel({ repo, status, busy, onRun, notify, onOpen }: Props) {
   // source changes are none of its business, and "stage all" must never mean
   // "git add ." — it stages exactly the files listed above it.
   const mine = status.entries.filter((e) => /\.(md|markdown)$/i.test(e.path));
-  const staged = mine.filter((e) => e.index !== " " && e.index !== "?");
-  const unstaged = mine.filter((e) => e.worktree !== " ");
+  /**
+   * Conflicted files are neither staged nor merely modified: both sides are
+   * still sitting in the file. They come out of the two lists and into their
+   * own, because "Unstage" and "Discard" are the wrong verbs for them.
+   */
+  const isConflict = (e: StatusEntry) =>
+    e.index === "U" ||
+    e.worktree === "U" ||
+    e.index + e.worktree === "AA" ||
+    e.index + e.worktree === "DD";
+  const clashing = mine.filter(isConflict);
+  const settled = mine.filter((e) => !isConflict(e));
+  const staged = settled.filter((e) => e.index !== " " && e.index !== "?");
+  const unstaged = settled.filter((e) => e.worktree !== " ");
   const others = status.entries.length - mine.length;
+
+  /**
+   * An unfinished merge or rebase. The app cannot finish one — that is a
+   * terminal's job — so it says so plainly and takes away the two buttons
+   * that would make the situation worse.
+   */
+  const mid = status.operation;
 
   const commit = () => {
     if (!staged.length) return notify("Nothing staged to commit", "error");
@@ -54,43 +64,101 @@ export function GitPanel({ repo, status, busy, onRun, notify, onOpen }: Props) {
 
   return (
     <aside className="git">
-      <div className="git-head">
-        <span className="tag">Repository</span>
-        <div className="branch-row">
-          <Dropdown
-            className="wide"
-            ariaLabel="Branch"
-            value={status.branch}
-            disabled={!!busy}
-            onChange={(b) => onRun(`Switched to ${b}`, () => api.gitCheckout(repo, b))}
-            choices={(branches.length ? branches : [status.branch]).map((b) => ({
-              value: b,
-              label: b,
-            }))}
-          />
-        </div>
-        <div className="sync">
-          <button
-            className="ghost"
-            disabled={!!busy}
-            onClick={() => onRun("Pulled", () => api.gitPull(repo))}
-          >
-            Pull{status.behind ? <span className="n">{status.behind}</span> : null}
-          </button>
-          <button
-            className="ghost"
-            disabled={!!busy}
-            onClick={() => onRun("Pushed", () => api.gitPush(repo))}
-          >
-            Push{status.ahead ? <span className="n">{status.ahead}</span> : null}
-          </button>
-        </div>
-        {!status.hasUpstream && (
-          <p className="tag note">
-            This branch has no upstream. Push will create one on origin.
-          </p>
-        )}
+      {/*
+       * The same bar the chat and the tree carry, and for the same reason:
+       * these are columns side by side, and one of them starting a few pixels
+       * lower reads as a mistake. The repository's name is in the rail and
+       * the branch is beside it, so neither is repeated here — what belongs
+       * in a header is what you would press.
+       */}
+      <div className="panel-head">
+        <span className="tag">Changes</span>
+        <span className="mux-spacer" />
+        {/* The word says what it does, the arrow says which way, and the
+            count is what you actually read when there is one. */}
+        <button
+          className="panel-act"
+          disabled={!!busy || !!mid}
+          title={mid ? `Finish the ${mid} first` : status.behind ? `Pull ${status.behind} behind` : "Pull"}
+          aria-label="Pull"
+          onClick={() => onRun("Pulled", () => api.gitPull(repo))}
+        >
+          Pull <span className="arrow">↓</span>
+          {status.behind ? <span className="n"> {status.behind}</span> : null}
+        </button>
+        <button
+          className="panel-act"
+          disabled={!!busy || !!mid}
+          title={mid ? `Finish the ${mid} first` : status.ahead ? `Push ${status.ahead} ahead` : "Push"}
+          aria-label="Push"
+          onClick={() => onRun("Pushed", () => api.gitPush(repo))}
+        >
+          Push <span className="arrow">↑</span>
+          {status.ahead ? <span className="n"> {status.ahead}</span> : null}
+        </button>
       </div>
+      {mid && (
+        <p className="git-alarm">
+          A {mid} is unfinished{clashing.length ? `, and ${clashing.length} file${clashing.length > 1 ? "s" : ""} still hold both sides` : ""}. Resolve
+          the files, then <code>git {mid} --continue</code> or{" "}
+          <code>git {mid} --abort</code> in a terminal. Pull and push wait until
+          you have.
+        </p>
+      )}
+      {!mid && !status.hasUpstream && (
+        <p className="git-aside">
+          This branch has no upstream. Push will create one on origin.
+        </p>
+      )}
+
+      <div className="commit">
+        <textarea
+          placeholder="Describe this change"
+          value={message}
+          rows={3}
+          onChange={(e) => setMessage(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) commit();
+          }}
+        />
+        <button
+          className="solid"
+          onClick={commit}
+          disabled={!!busy || !staged.length || !message.trim()}
+        >
+          Commit {staged.length ? `${staged.length} file${staged.length > 1 ? "s" : ""}` : ""}
+        </button>
+      </div>
+
+      {clashing.length > 0 && (
+        <section className="git-section">
+          <div className="section-head">
+            <span className="tag">Conflicted</span>
+          </div>
+          {clashing.map((e) => (
+            <div className="change" key={`conflict-${e.path}`}>
+              <button
+                className="change-path"
+                onClick={() => onOpen(e.path)}
+                title="Open it and see both sides"
+              >
+                <span className="change-name conflicted">{e.path.split("/").pop()}</span>
+              </button>
+              {/* Staging is how git is told a conflict is settled, so it is
+                  the one action offered — after you have edited the file. */}
+              <span className="change-acts">
+                <button
+                  className="act"
+                  disabled={!!busy}
+                  onClick={() => onRun("Marked resolved", () => api.gitStage(repo, [e.path]))}
+                >
+                  Resolved
+                </button>
+              </span>
+            </div>
+          ))}
+        </section>
+      )}
 
       <Section
         title="Staged"
@@ -140,24 +208,6 @@ export function GitPanel({ repo, status, busy, onRun, notify, onOpen }: Props) {
         </p>
       )}
 
-      <div className="commit">
-        <textarea
-          placeholder="Describe this change"
-          value={message}
-          rows={3}
-          onChange={(e) => setMessage(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) commit();
-          }}
-        />
-        <button
-          className="solid"
-          onClick={commit}
-          disabled={!!busy || !staged.length || !message.trim()}
-        >
-          Commit {staged.length ? `${staged.length} file${staged.length > 1 ? "s" : ""}` : ""}
-        </button>
-      </div>
     </aside>
   );
 }

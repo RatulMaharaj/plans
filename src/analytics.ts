@@ -66,6 +66,16 @@ export function startAnalytics(enabled: boolean) {
   live = true;
 }
 
+/**
+ * Stamp every later event with how many repositories are open, so any event
+ * can be broken down by it — "how many repos at once" without a dedicated
+ * event to remember to send.
+ */
+export function setRepoCount(n: number) {
+  if (!live) return;
+  posthog.register({ repos_open: n });
+}
+
 /** Stamp every later event with the build that sent it. */
 export function setAppVersion(version: string) {
   if (!live) return;

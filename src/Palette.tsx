@@ -396,6 +396,16 @@ function buildCommands(p: Props): Command[] {
   toggle("showMux", "Panels", "Agent chat", "⌘J", "chat agent talk ask");
   toggle("showStatusBar", "Panels", "Status bar");
 
+  // Not a `toggle`: the label has to name where it is going, not what it is.
+  add({
+    id: "chatPlace",
+    group: "Panels",
+    label: `Move the chat ${s.chatPlace === "side" ? "below the page" : "beside the page"}`,
+    value: s.chatPlace === "side" ? "beside" : "below",
+    terms: "sidebar terminal bottom column row",
+    run: () => set({ chatPlace: s.chatPlace === "side" ? "bottom" : "side" }),
+  });
+
   add({
     id: "diffStyle",
     group: "Diff",
