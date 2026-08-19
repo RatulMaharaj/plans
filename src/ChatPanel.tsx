@@ -4,6 +4,7 @@ import { api, type AgentCommand, type ChatId, type ConfigOption } from "./api";
 import { track } from "./analytics";
 import { AgentOptions } from "./AgentOptions";
 import { Markdown } from "./chat-markdown";
+import { Dropdown } from "./Dropdown";
 
 /**
  * A conversation with the agent about the open plan.
@@ -84,16 +85,66 @@ type Props = {
 };
 
 /*
- * v3: a fresh start per repository, and nothing carried across.
+ * v4: several conversations per repository, and an index of them.
  *
- * v2 stored a Claude CLI session id, which means nothing to an ACP agent, and
- * flattened every tool call into grey text. An earlier version of this copied
- * those messages in as a record — but a transcript the agent has no memory of
- * is a conversation only on one side, and it filled the panel with something
- * that could not be continued. The old key is left on disk, untouched: not
- * shown is not the same as deleted.
+ * v3 kept exactly one, which made "start again" a thing you could only do by
+ * forgetting — and `/clear` looked broken, because it clears the *agent's*
+ * context while the transcript, which is ours, stayed on screen. A chat you
+ * can leave and come back to is the honest shape: the agent's session and our
+ * record of it begin and end together.
+ *
+ * Earlier keys are left on disk, untouched. Not shown is not the same as
+ * deleted.
  */
-const keyOf = (repo: string) => `plans.chat.v3::${repo}`;
+const indexKey = (repo: string) => `plans.chats.v4::${repo}`;
+const keyOf = (repo: string, id: string) => `plans.chat.v4::${repo}::${id}`;
+
+/** One conversation, as the picker sees it. */
+type ChatRef = { id: string; title: string; at: number };
+type Index = { current: string; list: ChatRef[] };
+
+/** Ids only have to be unique within a repository, and readable in storage. */
+const newId = () => `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+
+function saveIndex(repo: string, i: Index) {
+  localStorage.setItem(indexKey(repo), JSON.stringify(i));
+}
+
+function loadIndex(repo: string): Index {
+  try {
+    const raw = localStorage.getItem(indexKey(repo));
+    if (raw) {
+      const i = JSON.parse(raw) as Index;
+      if (i.current && Array.isArray(i.list) && i.list.length) return i;
+    }
+  } catch {
+    // A malformed index is a fresh one, not a crash.
+  }
+  /*
+   * Written the moment it is invented.
+   *
+   * Otherwise every caller mints a different id for the same empty state, the
+   * key moves under the panel, and a transcript is written to one address and
+   * read from another — which looks like the agent saying nothing at all.
+   */
+  const id = newId();
+  const made = { current: id, list: [{ id, title: "New chat", at: Date.now() }] };
+  saveIndex(repo, made);
+  return made;
+}
+
+/**
+ * A conversation's name, taken from the first thing said in it.
+ *
+ * Not asked for and not editable: naming a chat is a chore, and the first
+ * question is almost always what it was about.
+ */
+function titleOf(t: Thread): string {
+  const first = t.messages.find((m) => m.role === "user");
+  const text = first && "text" in first ? first.text.trim().replace(/\s+/g, " ") : "";
+  if (!text) return "New chat";
+  return text.length > 42 ? `${text.slice(0, 42)}…` : text;
+}
 
 function load(key: string): Thread {
   try {
@@ -130,7 +181,8 @@ export function ChatPanel({
   notify,
   onResize,
 }: Props) {
-  const key = repo ? keyOf(repo) : null;
+  const [index, setIndex] = useState<Index>(() => loadIndex(repo));
+  const key = repo ? keyOf(repo, index.current) : null;
   const [thread, setThread] = useState<Thread>({ messages: [], plan: null });
   const [input, setInput] = useState("");
   /** Which slash suggestion is highlighted, or -1 for "the list is closed". */
@@ -157,10 +209,24 @@ export function ChatPanel({
     const next = up(cur);
     threads.current.set(k, next);
     localStorage.setItem(k, JSON.stringify(next));
+    // The name follows the first thing said, so a chat stops being called
+    // "New chat" the moment it is about something.
+    const id = k.split("::").pop();
+    if (id) {
+      setIndex((prev) => {
+        const title = titleOf(next);
+        const at = prev.list.find((c) => c.id === id);
+        if (!at || at.title === title) return prev;
+        const list = prev.list.map((c) => (c.id === id ? { ...c, title } : c));
+        const merged = { ...prev, list };
+        saveIndex(k.split("::")[1] ?? "", merged);
+        return merged;
+      });
+    }
     if (keyRef.current === k) setThread(next);
   }, []);
 
-  // Switching repositories switches conversations, mid-stream or not.
+  // Switching repositories, or chats, switches conversations — mid-stream or not.
   useEffect(() => {
     keyRef.current = key;
     if (!key) {
@@ -171,6 +237,50 @@ export function ChatPanel({
     threads.current.set(key, t);
     setThread(t);
   }, [key]);
+
+  // A different repository has a different set of conversations.
+  useEffect(() => {
+    setIndex(loadIndex(repo));
+  }, [repo]);
+
+  /**
+   * Start again.
+   *
+   * The agent's session ends with the chat rather than outliving it: a new
+   * conversation that the agent still remembers the old one from would be a
+   * new conversation in name only. The old transcript stays in the list.
+   */
+  const newChat = useCallback(() => {
+    void api.agentStop(repo).catch(() => {});
+    turn.current = null;
+    setBusy(false);
+    const id = newId();
+    setIndex((prev) => {
+      const next = {
+        current: id,
+        list: [{ id, title: "New chat", at: Date.now() }, ...prev.list],
+      };
+      saveIndex(repo, next);
+      return next;
+    });
+  }, [repo]);
+
+  const openChat = useCallback(
+    (id: string) => {
+      if (id === index.current) return;
+      // Leaving a conversation ends its session too: the agent holds one
+      // context, and it belongs to whichever chat is on screen.
+      void api.agentStop(repo).catch(() => {});
+      turn.current = null;
+      setBusy(false);
+      setIndex((prev) => {
+        const next = { ...prev, current: id };
+        saveIndex(repo, next);
+        return next;
+      });
+    },
+    [repo, index.current],
+  );
 
   /** Add to a transcript: a new bubble, or more of the one being written. */
   const say = useCallback(
@@ -351,6 +461,18 @@ export function ChatPanel({
   const send = useCallback(
     async (text: string, seeded = false) => {
       if (!key || !text.trim() || turn.current || inflight.current) return;
+      /*
+       * `/clear` means what it says, here.
+       *
+       * Sent on to the agent it clears the agent's context and leaves our
+       * transcript untouched, which looks exactly like nothing happening. It
+       * is the same intent as New chat, so it is the same action — and the
+       * agent's session ends with it rather than being asked to forget.
+       */
+      if (text.trim() === "/clear") {
+        newChat();
+        return;
+      }
       inflight.current = true;
       const t = threads.current.get(key) ?? load(key);
       /*
@@ -405,7 +527,7 @@ export function ChatPanel({
         inflight.current = false;
       }
     },
-    [key, relPath, repo, cmd, commit, notify, say],
+    [key, relPath, repo, cmd, commit, notify, say, newChat],
   );
 
   // "Hand off" and friends arrive as a seeded message, sent as if typed.
@@ -477,16 +599,36 @@ export function ChatPanel({
       {/* First child, so it sits over the panel's leading edge either way. */}
       <div className="chat-edge" onPointerDown={onResize} aria-hidden />
       <div className="panel-head">
-        {/* The repository names the conversation; the plan is only what it
-            is currently pointed at, and that changes under it. */}
-        <span className="chat-title">{repo.split("/").pop() || "Agent"}</span>
-        {relPath && <span className="chat-where">{relPath}</span>}
+        {/*
+          * The chat names itself, from the first thing said in it. The
+          * repository is in the rail and the plan is in the status bar, so
+          * neither needs repeating here — what the header is for is knowing
+          * which conversation you are in, and leaving it.
+          */}
+        {index.list.length > 1 ? (
+          <Dropdown
+            className="chat-pick"
+            ariaLabel="Conversation"
+            value={index.current}
+            onChange={openChat}
+            choices={index.list.map((c) => ({ value: c.id, label: c.title }))}
+          />
+        ) : (
+          <span className="chat-title">{index.list[0]?.title ?? "New chat"}</span>
+        )}
         <span className="mux-spacer" />
         {busy && (
           <button className="mux-key" onClick={stop} title="Stop this answer">
             Stop
           </button>
         )}
+        <button
+          className="mux-key"
+          onClick={newChat}
+          title="Start a new conversation (the agent forgets this one)"
+        >
+          New
+        </button>
       </div>
 
       {/* The agent's own task list, when it keeps one — its plan for the

@@ -2139,6 +2139,17 @@ body.resizing.resizing-row, body.resizing.resizing-row .chat-edge { cursor: row-
 
 .mux-spacer { flex: 1; }
 
+/* The conversation's own name, which is the first thing that was said in it. */
+.chat-pick { min-width: 0; }
+.chat-pick .dd-trigger {
+  max-width: 220px;
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  color: var(--ink-2);
+}
+.chat-pick .dd-value { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chat-pick .dd-menu { max-width: min(360px, 80vw); width: max-content; }
+
 .chat-where {
   font-family: var(--mono);
   font-size: 10px;
@@ -2224,7 +2235,18 @@ body.resizing.resizing-row, body.resizing.resizing-row .chat-edge { cursor: row-
 .chat-tool.completed .chat-tool-dot { background: var(--git-new); }
 .chat-tool.failed .chat-tool-dot { background: var(--diff-del); }
 .chat-tool.interrupted .chat-tool-dot { background: transparent; box-shadow: inset 0 0 0 1px var(--ink-3); }
-.chat-tool .chat-where { color: var(--ink-3); opacity: 0.75; }
+.chat-tool /* The conversation's own name, which is the first thing that was said in it. */
+.chat-pick { min-width: 0; }
+.chat-pick .dd-trigger {
+  max-width: 220px;
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  color: var(--ink-2);
+}
+.chat-pick .dd-value { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chat-pick .dd-menu { max-width: min(360px, 80vw); width: max-content; }
+
+.chat-where { color: var(--ink-3); opacity: 0.75; }
 
 /* Reasoning, folded away: it is available, not in the way. */
 .chat-thought {

@@ -1640,3 +1640,72 @@ test("switching agents starts a new session, and says so", async ({ page }) => {
   await expect(page.locator(".chat-log")).toContainText("first");
   await expect(page.locator(".chat-log")).toContainText("Switched to codex");
 });
+
+/*
+ * Chats, of which there are now more than one per repository.
+ */
+
+test("New starts a fresh conversation and keeps the old one", async ({ page }) => {
+  await open(page);
+  await openPlan(page);
+  await page.keyboard.press("Meta+j");
+  await say(page, "the first conversation");
+  await expect.poll(() => calls(page, "agent_prompt")).toBe(1);
+  await finish(page, 1);
+
+  await page.locator(".mux-key", { hasText: "New" }).click();
+
+  // Blank, and the agent's session ends with it — a new conversation the
+  // agent still remembers the last one from is new in name only.
+  await expect(page.locator(".chat-msg.user")).toHaveCount(0);
+  await expect.poll(() => calls(page, "agent_stop")).toBe(1);
+
+  // The old one is still there, named after what it was about.
+  await page.locator('[aria-label="Conversation"]').click();
+  await expect(page.locator(".dd-item")).toContainText(["New chat", "the first conversation"]);
+});
+
+test("an old conversation can be opened again", async ({ page }) => {
+  await open(page);
+  await openPlan(page);
+  await page.keyboard.press("Meta+j");
+  await say(page, "remember this one");
+  await finish(page, 1);
+  await page.locator(".mux-key", { hasText: "New" }).click();
+  await say(page, "and this one");
+  await finish(page, 2);
+
+  await page.locator('[aria-label="Conversation"]').click();
+  await page.locator(".dd-item", { hasText: "remember this one" }).click();
+  await expect(page.locator(".chat-msg.user")).toContainText("remember this one");
+  await expect(page.locator(".chat-log")).not.toContainText("and this one");
+});
+
+test("/clear clears the chat, which is what it looks like it does", async ({ page }) => {
+  await open(page);
+  await openPlan(page);
+  await page.keyboard.press("Meta+j");
+  await say(page, "something to forget");
+  await expect.poll(() => calls(page, "agent_prompt")).toBe(1);
+  await finish(page, 1);
+
+  await say(page, "/clear");
+
+  // Not sent on: passed to the agent it clears the agent's context and leaves
+  // the transcript on screen, which looks exactly like nothing happening.
+  expect(await calls(page, "agent_prompt")).toBe(1);
+  await expect(page.locator(".chat-msg.user")).toHaveCount(0);
+  await expect.poll(() => calls(page, "agent_stop")).toBe(1);
+});
+
+test("chats are per repository, and survive a restart", async ({ page }) => {
+  await open(page);
+  await openPlan(page);
+  await page.keyboard.press("Meta+j");
+  await say(page, "a question worth keeping");
+  await finish(page, 1);
+
+  await page.reload();
+  await expect(page.locator(".files")).toBeVisible();
+  await expect(page.locator(".chat-msg.user")).toContainText("a question worth keeping");
+});
