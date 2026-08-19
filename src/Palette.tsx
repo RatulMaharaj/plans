@@ -51,7 +51,7 @@ type Props = {
   zen: boolean;
   onZen: () => void;
   onReload: () => void;
-  /** Search inside files, for the "?" mode. */
+  /** Search inside files, for the "*" mode. */
   onSearch: (query: string) => Promise<{ relPath: string; line: number; text: string }[]>;
   onOpenAt: (repoPath: string, relPath: string) => void;
   searchRepo: string | null;
@@ -485,10 +485,18 @@ export function Palette(props: Props) {
     [open, props.settings, props.repos, props.zen],
   );
 
+  /*
+   * Three prefixes, each standing for what it reaches.
+   *
+   * ">" commands, as everywhere. "*" the contents of files — a wildcard is
+   * what people already type when they mean "anything containing this", and
+   * it reads better than the "?" it replaced, which looked like a question.
+   * "@" a conversation, borrowing the convention for addressing someone.
+   */
   const isCmd = q.startsWith(">");
-  /** "?" searches inside files, the way ">" searches commands. */
-  const isText = q.startsWith("?");
-  const term = isCmd || isText ? q.slice(1).trim() : q.trim();
+  const isText = q.startsWith("*");
+  const isChat = q.startsWith("@");
+  const term = isCmd || isText || isChat ? q.slice(1).trim() : q.trim();
 
   /**
    * Text search runs in Rust, so it is debounced rather than run per keystroke.
@@ -521,6 +529,25 @@ export function Palette(props: Props) {
     | { kind: "cmd"; key: string; label: string; sub: string; value?: string; run: () => void };
 
   const rows = useMemo<Row[]>(() => {
+    if (isChat) {
+      /*
+       * Every conversation, including the one you are in — unlike the command
+       * list, where "go to this chat" is not worth offering for where you
+       * already are. Here you are reading a list, and a list with a hole in it
+       * is harder to read than one without.
+       */
+      return props.chats.list
+        .map((c) => ({ c, s: score(c.title, term) }))
+        .filter((x) => x.s !== null)
+        .sort((a, b) => (b.s as number) - (a.s as number))
+        .map(({ c }) => ({
+          kind: "cmd" as const,
+          key: `chat.${c.id}`,
+          label: c.title,
+          sub: c.id === props.chats.current ? "current" : "chat",
+          run: () => props.onOpenChat(c.id),
+        }));
+    }
     if (isText) {
       return hits.map((h, i) => ({
         kind: "file" as const,
@@ -561,7 +588,7 @@ export function Palette(props: Props) {
             : e.file.relPath,
         run: () => props.onOpenFile(e.repoPath, e.file.relPath),
       }));
-  }, [isCmd, isText, hits, term, commands, props.files, props.onOpenFile]);
+  }, [isCmd, isText, isChat, hits, term, commands, props.files, props.onOpenFile, props.chats, props.onOpenChat]);
 
   useEffect(() => setSel(0), [q]);
 
@@ -603,7 +630,7 @@ export function Palette(props: Props) {
           className="palette-input"
           value={q}
           spellCheck={false}
-          placeholder="Find a file · > commands · ? search inside"
+          placeholder="Find a file · > commands · * search inside · @ chats"
           onChange={(e) => setQ(e.target.value)}
           onKeyDown={onKey}
         />
@@ -636,7 +663,9 @@ export function Palette(props: Props) {
           ))}
         </div>
         <div className="palette-foot">
-          <span>{isCmd ? "Commands" : isText ? "Inside files" : "Files"}</span>
+          <span>
+            {isCmd ? "Commands" : isText ? "Inside files" : isChat ? "Chats" : "Files"}
+          </span>
           <span>↑↓ move · ⏎ run · esc close</span>
         </div>
       </div>

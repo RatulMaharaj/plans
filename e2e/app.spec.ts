@@ -278,7 +278,7 @@ test("a file can be renamed, and moved by typing a path", async ({ page }) => {
 test("searching inside files finds a line and opens it", async ({ page }) => {
   await open(page);
   await page.keyboard.press("Meta+p");
-  await page.locator(".palette-input").fill("?Another file");
+  await page.locator(".palette-input").fill("*Another file");
   await expect(page.locator(".palette-row").first()).toContainText(/Another file/i);
   await expect(page.locator(".palette-foot")).toContainText(/inside files/i);
   await page.keyboard.press("Enter");
