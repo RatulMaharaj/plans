@@ -284,7 +284,10 @@ mod live {
             "type": "stream_event",
             "event": { "content_block": { "type": "tool_use", "name": "Edit" } }
         });
-        assert_eq!(tool["event"]["content_block"]["name"].as_str(), Some("Edit"));
+        assert_eq!(
+            tool["event"]["content_block"]["name"].as_str(),
+            Some("Edit")
+        );
 
         let result = json!({
             "type": "result", "is_error": false,

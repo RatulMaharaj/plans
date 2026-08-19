@@ -2071,28 +2071,6 @@ body.resizing.resizing-row, body.resizing.resizing-row .chat-edge { cursor: row-
 }
 .update-pct { margin-left: auto; color: var(--ink-3); flex: none; }
 
-.release-version { font-family: var(--mono); font-size: 10px; color: var(--ink-3); }
-.release-body {
-  padding: 14px 16px;
-  max-height: 52vh;
-  overflow-y: auto;
-}
-.release-head {
-  margin: 0 0 8px;
-  font-family: var(--mono);
-  font-size: 9px;
-  letter-spacing: 0.11em;
-  text-transform: uppercase;
-  color: var(--ink-3);
-}
-.release-head:not(:first-child) { margin-top: 18px; }
-.release-list { margin: 0; padding-left: 18px; }
-.release-list li, .release-para {
-  margin: 0 0 8px;
-  font-size: 13px;
-  line-height: 1.6;
-  color: var(--ink-2);
-}
 .update-settings-acts { display: flex; align-items: center; gap: 4px; }
 
 /* ---------------------------------------------------------------------------

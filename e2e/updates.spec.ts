@@ -95,12 +95,11 @@ test("the notes open once when the version has moved, and not again", async ({ p
   // An older version was the last one read, so the running one is new.
   await open(page, { seen: "0.0.0-older" });
 
-  const sheet = page.locator(".matter-sheet", { hasText: "What's new" });
-  await expect(sheet).toBeVisible();
-  await expect(sheet).toContainText("0.0.0-test");
-
-  await page.keyboard.press("Escape");
-  await expect(sheet).toHaveCount(0);
+  // A buffer, not a sheet: it opens as an ordinary markdown document with a
+  // tab of its own, and closing the tab is how it goes away.
+  await expect(page.locator(".page-path")).toContainText("Release notes.md");
+  await expect(page.locator(".milkdown")).toContainText("What changed since 0.0.0-older");
+  await expect(page.locator(".tab", { hasText: "Release notes" })).toBeVisible();
 
   // The version is written down as soon as the notes are shown, which is what
   // stops the next launch showing them again. (Reloading the page cannot prove
@@ -117,12 +116,32 @@ test("a fresh install is not told what is new about the version it just chose", 
   // No lastSeenVersion at all: never run before.
   await open(page);
   await expect(page.locator(".files")).toBeVisible();
-  await expect(page.locator(".matter-sheet", { hasText: "What's new" })).toHaveCount(0);
+  await expect(page.locator(".tab", { hasText: "Release notes" })).toHaveCount(0);
 });
 
 test("the notes are reachable on demand, whether or not they have been seen", async ({ page }) => {
   await open(page, { seen: "0.0.0-test" });
 
   await command(page, "Release notes");
-  await expect(page.locator(".matter-sheet", { hasText: "What's new" })).toBeVisible();
+  await expect(page.locator(".page-path")).toContainText("Release notes.md");
+});
+
+test("the notes cover every version since the one you last read", async ({ page }) => {
+  await open(page, { seen: "0.0.0-older" });
+  await expect(page.locator(".page-path")).toContainText("Release notes.md");
+
+  // A range, not a single section: skipping releases must not skip their news.
+  const text = await page.locator(".milkdown").innerText();
+  expect(text).toContain("since 0.0.0-older");
+});
+
+test("the notes buffer is not restored on the next launch", async ({ page }) => {
+  await open(page, { seen: "0.0.0-older" });
+  await expect(page.locator(".tab", { hasText: "Release notes" })).toBeVisible();
+
+  // It lives in this window's memory, so a persisted tab would come back empty.
+  const tabs = await page.evaluate(() =>
+    JSON.parse(localStorage.getItem("plans.tabs.v1") ?? "[]"),
+  );
+  expect(tabs.some((t: { path: string }) => t.path.includes("Release notes"))).toBe(false);
 });

@@ -162,7 +162,10 @@ pub fn mux_start(repo: String, argv: Vec<String>) -> R<String> {
 #[tauri::command]
 pub fn mux_send(id: String, text: String, submit: bool) -> R<()> {
     if !text.is_empty() {
-        exec("tmux", &["send-keys", "-t", id.as_str(), "-l", text.as_str()])?;
+        exec(
+            "tmux",
+            &["send-keys", "-t", id.as_str(), "-l", text.as_str()],
+        )?;
     }
     if submit {
         exec("tmux", &["send-keys", "-t", id.as_str(), "Enter"])?;
@@ -299,7 +302,10 @@ mod live {
 
         std::thread::sleep(std::time::Duration::from_millis(600));
         let screen = capture(&id);
-        assert!(screen.contains("marker-9f3"), "capture-pane said {screen:?}");
+        assert!(
+            screen.contains("marker-9f3"),
+            "capture-pane said {screen:?}"
+        );
 
         // And it is discoverable by the repo it is running in.
         let found = mux_panes(repo).unwrap();
@@ -321,7 +327,11 @@ mod live {
         exec("tmux", &["new-session", "-d", "-s", S, "-c", &repo]).unwrap();
         let id = mux_start(
             repo,
-            vec!["sh".into(), "-c".into(), "read x; echo got:$x; sleep 20".into()],
+            vec![
+                "sh".into(),
+                "-c".into(),
+                "read x; echo got:$x; sleep 20".into(),
+            ],
         )
         .unwrap();
 

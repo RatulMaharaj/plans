@@ -779,7 +779,11 @@ pub struct CliOpen(std::sync::Mutex<Option<String>>);
 fn cli_repo_arg<S: AsRef<str>>(args: &[S], cwd: &Path) -> Option<String> {
     let raw = args.iter().skip(1).find(|a| !a.as_ref().starts_with('-'))?;
     let p = Path::new(raw.as_ref());
-    let abs = if p.is_absolute() { p.to_path_buf() } else { cwd.join(p) };
+    let abs = if p.is_absolute() {
+        p.to_path_buf()
+    } else {
+        cwd.join(p)
+    };
     abs.canonicalize()
         .ok()
         .filter(|p| p.is_dir())
@@ -1210,9 +1214,9 @@ pub fn run() {
     builder
         .manage(chat::Chats::default())
         .manage(CliOpen(std::sync::Mutex::new(
-            std::env::current_dir().ok().and_then(|cwd| {
-                cli_repo_arg(&std::env::args().collect::<Vec<_>>(), &cwd)
-            }),
+            std::env::current_dir()
+                .ok()
+                .and_then(|cwd| cli_repo_arg(&std::env::args().collect::<Vec<_>>(), &cwd)),
         )))
         .invoke_handler(tauri::generate_handler![
             open_repo,

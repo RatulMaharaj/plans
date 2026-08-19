@@ -25,9 +25,8 @@ import { NameSheet } from "./NameSheet";
 import { MoveSheet } from "./MoveSheet";
 import { TextPrompt } from "./TextPrompt";
 import { SourceView } from "./SourceView";
-import { ReleaseSheet } from "./ReleaseSheet";
 import { UpdateBanner } from "./UpdateBanner";
-import { RELEASE_NOTES, RELEASE_VERSION } from "./release-notes";
+import { RELEASE_SECTIONS, RELEASE_VERSION } from "./release-notes";
 import { checkForUpdate, installUpdate, isNewer, runningVersion, type Available } from "./update";
 import { PerfHud } from "./PerfHud";
 import { start, tick, trace } from "./perf";
@@ -73,6 +72,18 @@ type View = "write" | "source" | "diff";
  *  `view` is the mode the buffer was left in; absent means write, which also
  *  covers every tab stored before modes were per-buffer. */
 type Tab = { repo: string; path: string; view?: View };
+
+/**
+ * The repository a buffer has when it has no repository.
+ *
+ * Some things the app wants to show are documents but not files — the release
+ * notes, so far. Rather than a sheet with its own renderer and its own escape
+ * key, they open as an ordinary buffer whose text lives in memory. The
+ * sentinel is not a path, so nothing that walks the disk can mistake it for
+ * one, and it is not in `repos`, so `activeRepo` is null for these buffers and
+ * every write path already refuses them without being told to.
+ */
+const MEMORY = "\u0000memory";
 
 function stored<T>(key: string, fallback: T): T {
   try {
@@ -338,7 +349,12 @@ export default function App() {
   const [installing, setInstalling] = useState(false);
   const [progress, setProgress] = useState<number | null>(null);
   /** The version whose notes are on screen; null when the sheet is closed. */
-  const [notesFor, setNotesFor] = useState<string | null>(null);
+  /** Text for the memory buffers, by path. Not persisted — that is the point. */
+  const memoryDocs = useRef(new Map<string, string>());
+  /** Opening the notes is defined below the buffer machinery it needs. */
+  const openNotesRef = useRef<
+    ((seen: string | null, running: string) => Promise<void>) | null
+  >(null);
   /** What is actually running, which is not always what was bundled with. */
   const [appVersion, setAppVersion] = useState(RELEASE_VERSION);
 
@@ -497,7 +513,7 @@ export default function App() {
       if (seen && !isNewer(running, seen)) return;
       // A fresh install shows nothing: there is nothing new about the version
       // you just chose to install. Remember it and wait for the next one.
-      if (seen) setNotesFor(running);
+      if (seen) void openNotesRef.current?.(seen, running);
       set({ lastSeenVersion: running });
     })();
     return () => {
@@ -507,13 +523,18 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  /** On demand, from the palette: the notes for whatever is actually running. */
+  /**
+   * On demand, from the palette: everything, not only what is unseen. Asking
+   * for the notes is asking to read them, whether or not you have already.
+   */
   const showNotes = useCallback(async () => {
+    let running = RELEASE_VERSION;
     try {
-      setNotesFor(await runningVersion());
+      running = await runningVersion();
     } catch {
-      setNotesFor(RELEASE_VERSION);
+      /* the bundled version is the best answer available */
     }
+    await openNotesRef.current?.(null, running);
   }, []);
 
   const install = useCallback(async () => {
@@ -592,7 +613,9 @@ export default function App() {
   }, [repos]);
 
   useEffect(() => {
-    localStorage.setItem(KEY.tabs, JSON.stringify(tabs));
+    // Memory buffers are not restored: their text lives only in this window,
+    // so a tab pointing at one would come back empty and unopenable.
+    localStorage.setItem(KEY.tabs, JSON.stringify(tabs.filter((t) => t.repo !== MEMORY)));
   }, [tabs]);
 
   useEffect(() => {
@@ -1316,7 +1339,9 @@ export default function App() {
    * lose. Dirty buffer: say so and let the reader choose — never silently.
    */
   useEffect(() => {
+    // A memory buffer has nothing on disk to have changed under it.
     if (settings.watchSeconds <= 0 || !activeRepoPath || !activePath) return;
+    if (activeRepoPath === MEMORY) return;
     const t = setInterval(async () => {
       if (busy || conflict || writing.current || pending.current) return;
       const at = await api.statPlan(activeRepoPath, activePath).catch(() => null);
@@ -1360,6 +1385,67 @@ export default function App() {
 
   openFileRef.current = openFile;
 
+  /**
+   * Open text the app is holding as a buffer, as though it were a file.
+   *
+   * No disk, no stamp, no tab restored on the next launch: it is a document
+   * for as long as this window is open, and closing the tab is the whole of
+   * throwing it away.
+   */
+  const openMemory = useCallback(
+    async (name: string, text: string) => {
+      if (saveTimer.current) clearTimeout(saveTimer.current);
+      await flush();
+      memoryDocs.current.set(name, text);
+      stamp.current = null;
+      setConflict(null);
+      original.current = { matter: null, raw: "", eol: true };
+      setActiveRepoPath(MEMORY);
+      setActivePath(name);
+      setMatter(null);
+      setContent(text);
+      setDocKey(`${MEMORY}::${name}::${text.length}`);
+      sourceOnEntry.current = null;
+      setDirty(false);
+      setSavedAt(null);
+      setMatterOpen(false);
+      setSettingsOpen(false);
+      setTabs((prev) =>
+        prev.some((t) => t.repo === MEMORY && t.path === name)
+          ? prev
+          : [...prev, { repo: MEMORY, path: name }],
+      );
+    },
+    [flush],
+  );
+
+  /**
+   * Everything that changed between `seen` and the running version.
+   *
+   * Skipping two releases should not mean skipping their notes, so this is a
+   * range rather than a single section. Written as a plain markdown document,
+   * because that is what the editor already knows how to render well.
+   */
+  const openNotes = useCallback(
+    async (seen: string | null, running: string) => {
+      // Everything newer than what you last read. No upper bound: the notes
+      // are bundled with the build, so nothing here can be newer than what is
+      // running, and a filter for that only misfires on odd version strings.
+      const fresh = seen ? RELEASE_SECTIONS.filter((x) => isNewer(x.version, seen)) : [];
+      const shown = fresh.length ? fresh : RELEASE_SECTIONS;
+      const title = fresh.length && seen ? `# What changed since ${seen}` : `# Plans ${running}`;
+      const body = shown
+        .map((s) => `## ${s.version}\n\n${s.notes}`)
+        .join("\n\n");
+      await openMemory(
+        "Release notes.md",
+        `${title}\n\n${body || "No notes for this version."}\n`,
+      );
+    },
+    [openMemory],
+  );
+  openNotesRef.current = openNotes;
+
   /** Close a buffer and step to whichever tab was next to it. */
   const closeTab = useCallback(
     async (repo: string, path: string) => {
@@ -1368,19 +1454,24 @@ export default function App() {
       const i = tabs.findIndex((t) => t.repo === repo && t.path === path);
       const rest = tabs.filter((t) => !(t.repo === repo && t.path === path));
       setTabs(rest);
+      // Closing a memory buffer is how you throw it away; there is nowhere
+      // else its text exists.
+      if (repo === MEMORY) memoryDocs.current.delete(path);
       if (repo !== activeRepoPath || path !== activePath) return;
       const next = rest[Math.min(i, rest.length - 1)];
       setConflict(null);
       setMatterOpen(false);
       if (next) {
-        await openFile(next.repo, next.path);
+        await (next.repo === MEMORY
+          ? openMemory(next.path, memoryDocs.current.get(next.path) ?? "")
+          : openFile(next.repo, next.path));
       } else {
         setActivePath(null);
         setContent("");
         setMatter(null);
       }
     },
-    [tabs, flush, activeRepoPath, activePath, openFile],
+    [tabs, flush, activeRepoPath, activePath, openFile, openMemory],
   );
 
   /** Resolving a conflict: keep what you wrote, or take what arrived. */
@@ -2113,7 +2204,9 @@ export default function App() {
          * with the buffer names, which made a per-buffer setting look like
          * part of the buffer list.
          */}
-        {activePath && !settingsOpen && (
+        {/* A memory buffer has no file to show the source of and no commit to
+            diff against, so it is Write or nothing. */}
+        {activePath && !settingsOpen && activeRepoPath !== MEMORY && (
           <span className="segmented small view-switch">
             <button className={view === "write" ? "on" : ""} onClick={() => goto("write")}>
               Write
@@ -2284,7 +2377,11 @@ export default function App() {
                           role="tab"
                           aria-selected={on}
                           title={t.path}
-                          onClick={() => void openFile(t.repo, t.path)}
+                          onClick={() =>
+                            void (t.repo === MEMORY
+                              ? openMemory(t.path, memoryDocs.current.get(t.path) ?? "")
+                              : openFile(t.repo, t.path))
+                          }
                           onAuxClick={(e) => {
                             if (e.button === 1) void closeTab(t.repo, t.path);
                           }}
@@ -2720,14 +2817,6 @@ export default function App() {
       />
 
       {perf && <PerfHud onClose={() => setPerf(false)} />}
-
-      {notesFor && (
-        <ReleaseSheet
-          version={notesFor}
-          notes={RELEASE_NOTES}
-          onClose={() => setNotesFor(null)}
-        />
-      )}
 
       {/* The toast is transient and the banner is not, so they never share the
           spot above the status bar. */}
