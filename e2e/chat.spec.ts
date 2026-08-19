@@ -893,3 +893,22 @@ test("a turn that cannot start says so in the transcript", async ({ page }) => {
   await expect(page.locator(".chat-tool")).toContainText("not installed");
   await expect(page.locator(".chat-input textarea")).toBeEnabled();
 });
+
+test("marking a plan done hides it at once, not at the next poll", async ({ page }) => {
+  await open(page, { repos: MIXED });
+  await expandAll(page);
+
+  // Hide finished plans, then finish one.
+  await page.keyboard.press("Meta+p");
+  await page.locator(".palette-input").fill(">finished plans");
+  await page.keyboard.press("Enter");
+  await expect(page.locator(".row.file", { hasText: "first" })).toBeVisible();
+
+  await page.locator(".row.file", { hasText: "first" }).click();
+  await page.keyboard.press("Meta+p");
+  await page.locator(".palette-input").fill(">status: done");
+  await page.locator(".palette-row").first().click();
+
+  // The tree knows without reading the file back: the value was just typed.
+  await expect(page.locator(".row.file", { hasText: "first" })).toHaveCount(0);
+});

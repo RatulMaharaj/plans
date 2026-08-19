@@ -1195,6 +1195,24 @@ export default function App() {
       if (!activeRepo || !activePath) return;
       setMatter(next);
       setDirty(true);
+      /*
+       * Tell the tree straight away.
+       *
+       * A row's status comes from `list_plans`, which only runs on the slow
+       * refresh — so marking a plan done left it sitting in the tree, still
+       * showing its old badge, until a poll got round to it. Nothing needs to
+       * be read back to know the answer: the value was just typed here.
+       */
+      const status = matterValue(next ?? "", "status") || null;
+      setFilesByRepo((prev) => {
+        const files = prev[activeRepo.path];
+        if (!files) return prev;
+        const i = files.findIndex((f) => f.relPath === activePath);
+        if (i === -1 || files[i].status === status) return prev;
+        const copy = files.slice();
+        copy[i] = { ...copy[i], status };
+        return { ...prev, [activeRepo.path]: copy };
+      });
       pending.current = {
         repo: activeRepo.path,
         path: activePath,
