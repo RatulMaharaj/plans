@@ -123,15 +123,15 @@ signing change without spending a version number on it.
 
 ## What the workflow actually does
 
-| Step                                                | Why                                                                                                                                                      |
-| --------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Universal build (`--target universal-apple-darwin`) | One download that runs on both Apple Silicon and Intel, rather than an arch the user has to pick correctly.                                              |
-| `tauri-action` with `APPLE_CERTIFICATE*`            | Tauri imports the `.p12` into a temporary keychain and signs the app with hardened runtime enabled.                                                      |
-| `.p8` written to `$RUNNER_TEMP`                     | Tauri wants the notarization key as a file on disk. `$RUNNER_TEMP` is wiped when the job ends and never lands in an artifact.                            |
-| Notarize + staple                                   | Stapling embeds Apple's ticket in the bundle so the app launches offline without a Gatekeeper round-trip.                                                |
+| Step                                                | Why                                                                                                                                                            |
+| --------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Universal build (`--target universal-apple-darwin`) | One download that runs on both Apple Silicon and Intel, rather than an arch the user has to pick correctly.                                                    |
+| `tauri-action` with `APPLE_CERTIFICATE*`            | Tauri imports the `.p12` into a temporary keychain and signs the app with hardened runtime enabled.                                                            |
+| `.p8` written to `$RUNNER_TEMP`                     | Tauri wants the notarization key as a file on disk. `$RUNNER_TEMP` is wiped when the job ends and never lands in an artifact.                                  |
+| Notarize + staple                                   | Stapling embeds Apple's ticket in the bundle so the app launches offline without a Gatekeeper round-trip.                                                      |
 | Draft release                                       | Nothing reaches users until someone opens it, checks the installer, and publishes — which is the update gate too, since the feed only sees published releases. |
-| Updater artifacts + `latest.json`                   | The `.app.tar.gz` and its signature are what an installed copy downloads; `latest.json` is the feed it reads. The `.dmg` remains the first-install path. |
-| Separate `verify` job                               | Signing fails subtly — wrong identity, or notarized without stapling. Verifying the real artifact with Apple's own tooling beats trusting the build log. |
+| Updater artifacts + `latest.json`                   | The `.app.tar.gz` and its signature are what an installed copy downloads; `latest.json` is the feed it reads. The `.dmg` remains the first-install path.       |
+| Separate `verify` job                               | Signing fails subtly — wrong identity, or notarized without stapling. Verifying the real artifact with Apple's own tooling beats trusting the build log.       |
 
 Signing degrades gracefully: with no certificate secrets the build still runs
 and produces an unsigned app, so a manual run never blocks on secrets that

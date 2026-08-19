@@ -46,8 +46,12 @@ export function installFakeBackend(repos: FakeRepo[], update?: FakeUpdate) {
     confirmAnswer: true,
     /** Set to a message to make the next chat_send reject with it. */
     failNextSend: null as string | null,
-    /** A codex binary's version, when a test wants one installed. */
+    /** Whether a second agent is installed, when a test wants one. */
     codex: null as string | null,
+    /** Permission answers the app has sent back. */
+    answered: [] as { requestId: string; option: string | null }[],
+    /** The options the fake agent advertises; `agent_set_config` mutates it. */
+    options: [] as Record<string, unknown>[],
     /** The installed `plans` script, null until one is installed. */
     cli: null as { path: string; current: boolean } | null,
     /** Whether the machine has tmux at all. */
@@ -255,9 +259,12 @@ export function installFakeBackend(repos: FakeRepo[], update?: FakeUpdate) {
     // The chat. The fake runs no agent: a test pushes narration with
     // `__fake.emit("chat-delta", ...)` / `"chat-done"` and reads what the app
     // sent out of `calls`, which is the same boundary the real backend has.
-    chat_available: () => (state.chat ? "claude 9.9.9 (fake)" : null),
-    chat_send: () => {
-      // A backend that refuses, for the "the agent is not installed" path.
+    /*
+     * The ACP side. The real backend owns a long-lived agent process; this
+     * owns a counter. What the two have in common is the boundary — a turn id
+     * out, events in — which is all the panel can see of either.
+     */
+    agent_prompt: () => {
       if (state.failNextSend) {
         const why = state.failNextSend;
         state.failNextSend = null;
@@ -267,10 +274,25 @@ export function installFakeBackend(repos: FakeRepo[], update?: FakeUpdate) {
       state.chats[id] = true;
       return id;
     },
-    chat_cancel: ({ id }) => {
-      delete state.chats[id];
+    agent_cancel: () => null,
+    agent_permission: ({ requestId, option }) => {
+      state.answered.push({ requestId: String(requestId), option: (option ?? null) as string | null });
       return null;
     },
+    agent_auto_allow: () => null,
+    agent_stop: () => null,
+    /**
+     * Setting an option returns the *mutated* list, as a real agent does —
+     * so a test can tell a picker that reflects the agent's answer from one
+     * that merely reflects the click.
+     */
+    agent_set_config: ({ id, value }) => {
+      state.options = state.options.map((o: Record<string, unknown>) =>
+        o.id === id ? { ...o, currentValue: value } : o,
+      );
+      return null;
+    },
+
 
     // The event plumbing under @tauri-apps/api `listen`. transformCallback is
     // the identity above, so the handler arrives as the function itself.
@@ -318,9 +340,21 @@ export function installFakeBackend(repos: FakeRepo[], update?: FakeUpdate) {
 
     // The CLI script: absent until installed, and this build's once it is.
     cli_status: () => state.cli,
-    chat_agents: () => [
-      { id: "claude", version: state.chat ? "1.0.0" : null, supported: true },
-      { id: "codex", version: state.codex ?? null, supported: false },
+    agent_list: () => [
+      {
+        id: "claude",
+        label: "Claude Code",
+        ready: state.chat,
+        install: "Needs Node. Runs via npx on first use.",
+        argv: ["npx", "-y", "@agentclientprotocol/claude-agent-acp@0.70.0"],
+      },
+      {
+        id: "codex",
+        label: "Codex",
+        ready: !!state.codex,
+        install: "Needs Node and a Codex login.",
+        argv: ["npx", "-y", "@agentclientprotocol/codex-acp"],
+      },
     ],
     install_cli: () => {
       state.cli = { path: "/opt/homebrew/bin/plans", current: true };

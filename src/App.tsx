@@ -797,8 +797,15 @@ export default function App() {
    */
   useEffect(() => {
     void api
-      .chatAvailable(settings.chatCommand)
-      .then((v) => setChat(v ?? false))
+      .agentList()
+      .then((all) => {
+        setAgents(all);
+        // The chosen agent, or any that is installed: someone whose settings
+        // name an agent they have since removed should still get a chat.
+        const want = all.find((a) => a.id === settings.chatCommand && a.ready);
+        const any = all.find((a) => a.ready);
+        setChat((want ?? any)?.id ?? false);
+      })
       .catch(() => setChat(false));
   }, [settings.chatCommand]);
 
@@ -949,7 +956,7 @@ export default function App() {
 
   const readInstalls = useCallback(async () => {
     api.cliStatus().then(setCli, () => setCli(null));
-    api.chatAgents().then(setAgents, () => setAgents([]));
+    api.agentList().then(setAgents, () => setAgents([]));
     for (const r of repos) {
       void skillState(r.path).then((st) =>
         setSkills((prev) => (prev[r.path] === st ? prev : { ...prev, [r.path]: st })),

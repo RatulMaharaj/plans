@@ -81,9 +81,11 @@ export type Settings = {
    */
   agentCommand: string;
   /**
-   * The binary the chat panel talks to. A name rather than a template: the
-   * flags that make it stream are owned by the Rust side, so the one thing to
-   * configure is which agent answers.
+   * Which agent from the catalogue the chat talks to.
+   *
+   * An id, not a command line. Every entry speaks ACP, so the argv is the
+   * app's business and what the agent can do is the agent's — there is
+   * nothing left here to configure but the choice.
    */
   chatCommand: string;
   /**

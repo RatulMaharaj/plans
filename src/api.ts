@@ -55,15 +55,42 @@ export type Pane = {
 
 export type MuxInfo = { kind: string; version: string };
 
-/** An agent the app looks for: its binary name, version and protocol support. */
-export type AgentFound = { id: string; version: string | null; supported: boolean };
+/**
+ * An agent the app can start. Every one of them speaks ACP, so there is no
+ * "supported" flag any more — only whether this machine has it.
+ */
+export type AgentFound = {
+  id: string;
+  label: string;
+  ready: boolean;
+  install: string;
+  /** The argv, shown in settings so nothing about the launch is hidden. */
+  argv: string[];
+};
+
+/** One picker the agent advertises: models, reasoning effort, mode, anything. */
+export type ConfigOption = {
+  id: string;
+  name: string;
+  description?: string;
+  /** "model", "thought_level", "mode", or absent — do not switch on it. */
+  category?: string;
+  currentValue: string;
+  options: { value: string; name: string; description?: string }[];
+};
+
+/** A slash command the agent offers. */
+export type AgentCommand = { name: string; description?: string; input?: { hint?: string } };
 
 /** The installed `plans` script: where it is, and whether it is this build's. */
 export type CliStatus = { path: string; current: boolean };
 
 /**
- * A chat turn's handle. Its narration arrives as `chat-delta` / `chat-tool`
- * events carrying `{ id, ... }`, and `chat-done` / `chat-error` end it.
+ * One turn's handle. Its narration arrives as `agent-message`,
+ * `agent-thought` and `agent-tool` events carrying `{ repo, turn, … }`, and
+ * `agent-turn` ends it. `agent-config`, `agent-commands`, `agent-usage` and
+ * `agent-down` carry a repo but no turn — the session outlives the turn now,
+ * so those can arrive with nothing in flight.
  */
 export type ChatId = number;
 
@@ -103,8 +130,8 @@ export const api = {
   /** Where the `plans` script is, if it is there at all. */
   cliStatus: () => invoke<CliStatus | null>("cli_status"),
 
-  /** Which of the agents the app knows about are installed here. */
-  chatAgents: () => invoke<AgentFound[]>("chat_agents"),
+  /** Which of the agents the app knows about can be started here. */
+  agentList: () => invoke<AgentFound[]>("agent_list"),
 
   listPlans: (repo: string, dirs: string[], includeIgnored = false) =>
     invoke<any[]>("list_plans", { repo, dirs, includeIgnored }).then((xs) =>
@@ -249,10 +276,22 @@ export const api = {
   // CLI hands back. The flags live in Rust so the stream shape is guaranteed.
 
   /** The agent binary's version, or null when it is not installed. */
-  chatAvailable: (cmd: string) => invoke<string | null>("chat_available", { cmd }),
+  /** Say something. Starts the session if this is the first thing said. */
+  agentPrompt: (repo: string, agent: string, text: string) =>
+    invoke<ChatId>("agent_prompt", { repo, agent, text }),
 
-  chatSend: (repo: string, cmd: string, prompt: string, session: string | null) =>
-    invoke<ChatId>("chat_send", { repo, cmd, prompt, session }),
+  agentCancel: (repo: string, turn: ChatId) => invoke<null>("agent_cancel", { repo, turn }),
 
-  chatCancel: (id: ChatId) => invoke<null>("chat_cancel", { id }),
+  /** Change one of the agent's own options — a model, an effort, a mode. */
+  agentSetConfig: (repo: string, id: string, value: string) =>
+    invoke<null>("agent_set_config", { repo, id, value }),
+
+  /** Answer a permission request. `null` means "cancelled". */
+  agentPermission: (repo: string, requestId: string, option: string | null) =>
+    invoke<null>("agent_permission", { repo, requestId, option }),
+
+  /** Whether the app answers permission requests on your behalf. */
+  agentAutoAllow: (on: boolean) => invoke<null>("agent_auto_allow", { on }),
+
+  agentStop: (repo: string) => invoke<null>("agent_stop", { repo }),
 };

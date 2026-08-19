@@ -48,7 +48,7 @@ const Query = createContext("");
 function agentOptions(agents: AgentFound[], current: string) {
   const opts = agents.map((a) => ({
     value: a.id,
-    label: a.version ? a.id : `${a.id} (not installed)`,
+    label: a.ready ? a.label : `${a.label} (not installed)`,
   }));
   if (current && !opts.some((o) => o.value === current)) {
     opts.push({ value: current, label: current });
@@ -56,10 +56,10 @@ function agentOptions(agents: AgentFound[], current: string) {
   return opts;
 }
 
-/** Installed, but not something `chat_send`'s flags will work with. */
-function unsupported(agents: AgentFound[], current: string) {
+/** What to tell someone whose chosen agent is not on this machine. */
+function installHint(agents: AgentFound[], current: string) {
   const a = agents.find((x) => x.id === current);
-  return !!a && !!a.version && !a.supported;
+  return a && !a.ready ? a.install : null;
 }
 
 /** Does this element's own text match? Elements without labels never do. */
@@ -397,21 +397,23 @@ export function SettingsPage({
             label="Chat agent"
             hint={
               agent === false
-                ? "None of these answered. The chat stays hidden until one does."
-                : agent
-                  ? `${agent} — the chat and ⌘J are available.`
-                  : "The agent the chat panel talks to."
+                ? "None of these are installed. The chat stays hidden until one is."
+                : "Every one of these speaks the Agent Client Protocol, so what it can do — models, effort, commands — comes from the agent rather than from this app."
             }
             value={s.chatCommand}
             options={agentOptions(agents, s.chatCommand)}
             onChange={(chatCommand) => onChange({ chatCommand })}
           />
-          {unsupported(agents, s.chatCommand) && (
-            <Row
-              label="Not yet spoken"
-              hint="The streaming flags are Claude Code's. This agent is installed, but the chat cannot talk to it until its own flags are wired up."
-            />
+          {installHint(agents, s.chatCommand) && (
+            <Row label="Not installed" hint={installHint(agents, s.chatCommand)!} />
           )}
+          <Row
+            label="Started as"
+            hint={
+              agents.find((a) => a.id === s.chatCommand)?.argv.join(" ") ??
+              "Pick an agent above."
+            }
+          />
           <Area
             label="Handoff prompt"
             hint="What the agent is told when you hand a plan to it, from the tree's right-click menu or the palette. {file} is the plan's path. Yours to argue with — it is the one part of this that is about your house style."

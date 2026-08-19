@@ -88,15 +88,12 @@ const argsOf = (page: Page, cmd: string) =>
 const calls = async (page: Page, cmd: string) => (await argsOf(page, cmd)).length;
 
 /** End the turn `id` the way the backend would, with a session id. */
-async function finish(page: Page, id: number, session: string) {
-  await page.evaluate(
-    ([i, sess]) => {
-      const f = (window as any).__fake;
-      f.emit("chat-delta", { id: i, text: "…" });
-      f.emit("chat-done", { id: i, session: sess, ok: true });
-    },
-    [id, session] as const,
-  );
+async function finish(page: Page, id: number, _session = "") {
+  await page.evaluate((i) => {
+    const f = (window as any).__fake;
+    f.emit("agent-message", { repo: "/repo/one", turn: i, text: "…" });
+    f.emit("agent-turn", { repo: "/repo/one", turn: i, stop: "EndTurn", ok: true });
+  }, id);
 }
 
 /** Type into the chat and send. */
@@ -113,7 +110,7 @@ test("nothing is sent until someone speaks", async ({ page }) => {
   await expect(page.locator(".chat")).toBeVisible();
 
   await page.waitForTimeout(800);
-  expect(await calls(page, "chat_send")).toBe(0);
+  expect(await calls(page, "agent_prompt")).toBe(0);
 });
 
 test("a message carries the plan it is about", async ({ page }) => {
@@ -123,13 +120,14 @@ test("a message carries the plan it is about", async ({ page }) => {
   await say(page, "tighten the opening");
 
   await expect(page.locator(".chat-msg.user")).toContainText("tighten the opening");
-  await expect.poll(() => calls(page, "chat_send")).toBe(1);
-  const [sent] = await argsOf(page, "chat_send");
+  await expect.poll(() => calls(page, "agent_prompt")).toBe(1);
+  const [sent] = await argsOf(page, "agent_prompt");
   expect(sent.repo).toBe("/repo/one");
   // The plan's identity rides the first turn of a session.
-  expect(sent.prompt).toContain("plans/first.md");
-  expect(sent.prompt).toContain("tighten the opening");
-  expect(sent.session).toBe(null);
+  expect(sent.text).toContain("plans/first.md");
+  expect(sent.text).toContain("tighten the opening");
+  // Which agent to start, if one is not running for this repo yet.
+  expect(sent.agent).toBe("claude");
 });
 
 test("the answer streams into one bubble", async ({ page }) => {
@@ -137,13 +135,14 @@ test("the answer streams into one bubble", async ({ page }) => {
   await openPlan(page);
   await page.keyboard.press("Meta+j");
   await say(page, "hello");
-  await expect.poll(() => calls(page, "chat_send")).toBe(1);
+  await expect.poll(() => calls(page, "agent_prompt")).toBe(1);
 
   await page.evaluate(() => {
     const f = (window as any).__fake;
-    f.emit("chat-delta", { id: 1, text: "Read" });
-    f.emit("chat-tool", { id: 1, name: "Edit" });
-    f.emit("chat-delta", { id: 1, text: "ing the plan now." });
+    const r = "/repo/one";
+    f.emit("agent-message", { repo: r, turn: 1, text: "Read" });
+    f.emit("agent-tool", { repo: r, turn: 1, callId: "t1", title: "Edit", status: "pending" });
+    f.emit("agent-message", { repo: r, turn: 1, text: "ing the plan now." });
   });
   await expect(page.locator(".chat-msg.assistant")).toHaveCount(1);
   await expect(page.locator(".chat-msg.assistant")).toContainText("Reading the plan now.");
@@ -151,24 +150,52 @@ test("the answer streams into one bubble", async ({ page }) => {
   await expect(page.locator(".chat-tool")).toContainText("Edit");
 });
 
-test("the session survives between turns", async ({ page }) => {
+test("a tool line finishes rather than repeating itself", async ({ page }) => {
+  await open(page);
+  await openPlan(page);
+  await page.keyboard.press("Meta+j");
+  await say(page, "edit it");
+  await expect.poll(() => calls(page, "agent_prompt")).toBe(1);
+
+  await page.evaluate(() => {
+    const f = (window as any).__fake;
+    const r = "/repo/one";
+    // The first notification names the tool before its arguments exist; the
+    // second carries the title the agent wrote and the status.
+    f.emit("agent-tool", { repo: r, turn: 1, callId: "t1", title: "Edit File", status: "pending" });
+    f.emit("agent-tool", {
+      repo: r,
+      turn: 1,
+      callId: "t1",
+      title: "Edit first.md",
+      status: "completed",
+      locations: ["first.md"],
+    });
+  });
+
+  // One line, amended in place — the old design appended, so a tool could
+  // never stop saying "running".
+  await expect(page.locator(".chat-tool")).toHaveCount(1);
+  await expect(page.locator(".chat-tool")).toContainText("Edit first.md");
+  await expect(page.locator(".chat-tool.completed")).toHaveCount(1);
+});
+
+test("the session holds the conversation, so nothing is re-sent", async ({ page }) => {
   await open(page);
   await openPlan(page);
   await page.keyboard.press("Meta+j");
   await say(page, "first");
-  await expect.poll(() => calls(page, "chat_send")).toBe(1);
-  await page.evaluate(() => {
-    const f = (window as any).__fake;
-    f.emit("chat-delta", { id: 1, text: "done" });
-    f.emit("chat-done", { id: 1, session: "sess-42", ok: true });
-  });
+  await expect.poll(() => calls(page, "agent_prompt")).toBe(1);
+  await finish(page, 1);
 
   await say(page, "second");
-  await expect.poll(() => calls(page, "chat_send")).toBe(2);
-  const sent = await argsOf(page, "chat_send");
-  // --resume carries the conversation, so the preamble is not repeated.
-  expect(sent[1].session).toBe("sess-42");
-  expect(sent[1].prompt).not.toContain("You are working in");
+  await expect.poll(() => calls(page, "agent_prompt")).toBe(2);
+  const sent = await argsOf(page, "agent_prompt");
+  // The agent process is still alive and holds the context itself. There is
+  // no session id to carry and no preamble to repeat — the old design needed
+  // both because every turn was a fresh `-p` invocation.
+  expect(sent[1].text).toBe("second");
+  expect(sent[1].repo).toBe("/repo/one");
 });
 
 test("the transcript belongs to the repository, not the panel", async ({ page }) => {
@@ -176,7 +203,7 @@ test("the transcript belongs to the repository, not the panel", async ({ page })
   await openPlan(page);
   await page.keyboard.press("Meta+j");
   await say(page, "remember me");
-  await expect.poll(() => calls(page, "chat_send")).toBe(1);
+  await expect.poll(() => calls(page, "agent_prompt")).toBe(1);
 
   await page.keyboard.press("Meta+j");
   await expect(page.locator(".chat")).toHaveCount(0);
@@ -189,12 +216,13 @@ test("stop kills the turn but not the conversation", async ({ page }) => {
   await openPlan(page);
   await page.keyboard.press("Meta+j");
   await say(page, "long answer please");
-  await expect.poll(() => calls(page, "chat_send")).toBe(1);
+  await expect.poll(() => calls(page, "agent_prompt")).toBe(1);
 
   await page.locator(".mux-key", { hasText: "Stop" }).click();
-  await expect.poll(() => calls(page, "chat_cancel")).toBe(1);
-  const [cancelled] = await argsOf(page, "chat_cancel");
-  expect(cancelled.id).toBe(1);
+  await expect.poll(() => calls(page, "agent_cancel")).toBe(1);
+  const [cancelled] = await argsOf(page, "agent_cancel");
+  expect(cancelled.turn).toBe(1);
+  expect(cancelled.repo).toBe("/repo/one");
 });
 
 test("no agent CLI means no button, rather than one that fails", async ({ page }) => {
@@ -216,9 +244,9 @@ test("handing a plan to the agent is the first message of its chat", async ({ pa
 
   // The run is shown as a conversation, not announced from a distance.
   await expect(page.locator(".chat")).toBeVisible();
-  await expect.poll(() => calls(page, "chat_send")).toBe(1);
-  const [sent] = await argsOf(page, "chat_send");
-  expect(sent.prompt).toContain("Take over the plan at plans/first.md");
+  await expect.poll(() => calls(page, "agent_prompt")).toBe(1);
+  const [sent] = await argsOf(page, "agent_prompt");
+  expect(sent.text).toContain("Take over the plan at plans/first.md");
   await expect(page.locator(".chat-msg.user")).toContainText("Take over the plan");
 });
 
@@ -227,7 +255,7 @@ test("nothing is committed by talking", async ({ page }) => {
   await openPlan(page);
   await page.keyboard.press("Meta+j");
   await say(page, "please edit");
-  await expect.poll(() => calls(page, "chat_send")).toBe(1);
+  await expect.poll(() => calls(page, "agent_prompt")).toBe(1);
 
   const wrote = await page.evaluate(() =>
     (window as any).__fake.calls.some((c: any) =>
@@ -524,11 +552,11 @@ test("the handoff prompt is editable, and is what gets sent", async ({ page }) =
   await page.locator(".palette-input").fill(">hand off");
   await page.keyboard.press("Enter");
 
-  await expect.poll(() => calls(page, "chat_send")).toBe(1);
-  const [sent] = await argsOf(page, "chat_send");
+  await expect.poll(() => calls(page, "agent_prompt")).toBe(1);
+  const [sent] = await argsOf(page, "agent_prompt");
   // The panel wraps every turn in its own preamble; the instruction is ours.
-  expect(sent.prompt).toContain("Rewrite plans/first.md in the voice of a ship's log.");
-  expect(sent.prompt).not.toContain("house style of this folder");
+  expect(sent.text).toContain("Rewrite plans/first.md in the voice of a ship's log.");
+  expect(sent.text).not.toContain("house style of this folder");
 });
 
 test("the branch picker is in the rail, not the git panel", async ({ page }) => {
@@ -721,9 +749,9 @@ test("a plan is handed to the agent from its right-click menu", async ({ page })
 
   // The chat opens on that plan with the instruction already sent.
   await expect(page.locator(".chat")).toBeVisible();
-  await expect.poll(() => calls(page, "chat_send")).toBe(1);
-  const [sent] = await argsOf(page, "chat_send");
-  expect(sent.prompt).toContain("Take over the plan at plans/first.md");
+  await expect.poll(() => calls(page, "agent_prompt")).toBe(1);
+  const [sent] = await argsOf(page, "agent_prompt");
+  expect(sent.text).toContain("Take over the plan at plans/first.md");
 });
 
 test("no agent means no handoff in the menu, rather than one that fails", async ({ page }) => {
@@ -747,21 +775,20 @@ test("the agent is chosen from the ones the machine has", async ({ page }) => {
   await expect(pick.locator("button", { hasText: "codex (not installed)" })).toBeVisible();
 });
 
-test("an agent that cannot be spoken to says so instead of pretending", async ({ page }) => {
+test("an agent that is not installed says how to get it", async ({ page }) => {
   await open(page);
-  await page.evaluate(() => ((window as any).__fake.codex = "codex 0.9"));
   await page.keyboard.press("Meta+,");
   await page.locator(".settings-filter").fill("chat agent");
-  await page.locator(".setting-row", { hasText: "Chat agent" }).locator("button", { hasText: "codex" }).click();
+  await page
+    .locator(".setting-row", { hasText: "Chat agent" })
+    .locator("button", { hasText: "Codex" })
+    .click();
 
-  // The warning is its own row, so the filter has to go for it to be visible.
+  // Every agent speaks the same protocol now, so the only thing that can be
+  // wrong is that this machine does not have it.
   await page.locator(".settings-filter").fill("");
-  await expect(page.locator(".setting-row", { hasText: "Not yet spoken" })).toBeVisible();
+  await expect(page.locator(".settings")).toContainText("Needs Node and a Codex login.");
 });
-
-/*
- * One conversation per repository.
- */
 
 test("switching plans keeps the conversation, and says where you moved", async ({ page }) => {
   await open(page, {
@@ -778,7 +805,7 @@ test("switching plans keeps the conversation, and says where you moved", async (
   await page.locator(".row.file").first().click();
   await page.keyboard.press("Meta+j");
   await say(page, "hello");
-  await expect.poll(() => calls(page, "chat_send")).toBe(1);
+  await expect.poll(() => calls(page, "agent_prompt")).toBe(1);
 
   await finish(page, 1, "sess-1");
 
@@ -787,12 +814,12 @@ test("switching plans keeps the conversation, and says where you moved", async (
   await expect(page.locator(".chat-msg.user")).toContainText("hello");
 
   await say(page, "and this one?");
-  await expect.poll(() => calls(page, "chat_send")).toBe(2);
-  const sent = await argsOf(page, "chat_send");
+  await expect.poll(() => calls(page, "agent_prompt")).toBe(2);
+  const sent = await argsOf(page, "agent_prompt");
   // The move is mentioned once, on the turn after it happened — and the
   // repository framing is not repeated, because --resume carries it.
-  expect(sent[1].prompt).toContain("plans/second.md");
-  expect(sent[1].prompt).not.toContain("You are working in the repository");
+  expect(sent[1].text).toContain("plans/second.md");
+  expect(sent[1].text).not.toContain("You are working in the repository");
 });
 
 test("the same plan twice running is not announced twice", async ({ page }) => {
@@ -800,14 +827,14 @@ test("the same plan twice running is not announced twice", async ({ page }) => {
   await openPlan(page);
   await page.keyboard.press("Meta+j");
   await say(page, "one");
-  await expect.poll(() => calls(page, "chat_send")).toBe(1);
+  await expect.poll(() => calls(page, "agent_prompt")).toBe(1);
   await finish(page, 1, "sess-1");
   await say(page, "two");
-  await expect.poll(() => calls(page, "chat_send")).toBe(2);
+  await expect.poll(() => calls(page, "agent_prompt")).toBe(2);
 
-  const sent = await argsOf(page, "chat_send");
-  expect(sent[0].prompt).toContain("plans/first.md");
-  expect(sent[1].prompt).not.toContain("plans/first.md");
+  const sent = await argsOf(page, "agent_prompt");
+  expect(sent[0].text).toContain("plans/first.md");
+  expect(sent[1].text).not.toContain("plans/first.md");
 });
 
 /*
@@ -866,12 +893,21 @@ test("a tool call is shown with what it touched, not just its name", async ({ pa
   await openPlan(page);
   await page.keyboard.press("Meta+j");
   await say(page, "read it");
-  await expect.poll(() => calls(page, "chat_send")).toBe(1);
+  await expect.poll(() => calls(page, "agent_prompt")).toBe(1);
 
   await page.evaluate(() => {
     const f = (window as any).__fake;
-    f.emit("chat-tool", { id: 1, name: "Read", detail: "first.md" });
-    f.emit("chat-delta", { id: 1, text: "It is a plan." });
+    const r = "/repo/one";
+    // The agent writes the title itself; the app no longer guesses one from
+    // tool inputs it had to know the shape of.
+    f.emit("agent-tool", {
+      repo: r,
+      turn: 1,
+      callId: "t1",
+      title: "Read first.md",
+      status: "completed",
+    });
+    f.emit("agent-message", { repo: r, turn: 1, text: "It is a plan." });
   });
 
   await expect(page.locator(".chat-tool")).toContainText("Read first.md");

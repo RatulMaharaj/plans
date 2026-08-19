@@ -1,5 +1,5 @@
 ---
-status: busy
+status: done
 ---
 # Agents That Flesh Out Plans
 

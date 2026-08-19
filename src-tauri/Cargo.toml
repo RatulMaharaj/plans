@@ -21,6 +21,12 @@ serde_json = "1"
 base64 = "0.23.1"
 ignore = "0.4.33"
 
+# Talking to coding agents. The protocol is an open standard with an official
+# SDK, which is the whole reason the app no longer builds one CLI's flags by
+# hand — see plans/agent-client-protocol.md.
+agent-client-protocol = "2.0.0"
+tokio = { version = "1", features = ["rt", "macros", "sync", "process", "io-util", "time"] }
+
 # The development build wears a different icon, which on macOS is an AppKit
 # call: `set_icon` is documented as doing nothing there, because the dock icon
 # belongs to the application rather than to a window. These crates are already

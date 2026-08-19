@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
-import { api, type ChatId } from "./api";
+import { api, type AgentCommand, type ChatId, type ConfigOption } from "./api";
 import { track } from "./analytics";
 
 /**
@@ -19,16 +19,43 @@ import { track } from "./analytics";
  * but it does not partition the conversation.
  */
 
-type Msg = {
-  role: "user" | "assistant" | "tool";
-  text: string;
-};
+/**
+ * A line of the transcript.
+ *
+ * A union rather than a role and a string, because a tool call is not a
+ * sentence: it arrives before it has finished and is amended afterwards, and
+ * a permission request is a question with buttons. Flattening those into text
+ * is what the old design did, and it is why a tool line could never stop
+ * saying "running".
+ */
+type Msg =
+  | { role: "user" | "assistant" | "thought"; text: string }
+  | {
+      role: "tool";
+      callId: string;
+      title: string;
+      kind?: string;
+      status?: string;
+      locations?: string[];
+    }
+  | {
+      role: "permission";
+      requestId: string;
+      title: string;
+      options: { optionId: string; name: string; kind?: string }[];
+      answered?: string | null;
+    }
+  /** Seams and failures: the app talking, not the agent. */
+  | { role: "note"; text: string };
 
+/** What the agent says it can do. Drawn, never interpreted. */
 type Thread = {
   messages: Msg[];
-  session: string | null;
   /** The plan named to the agent most recently, so a change can be mentioned. */
   plan?: string | null;
+  options?: ConfigOption[];
+  commands?: AgentCommand[];
+  usage?: { used: number; size: number; cost?: number };
 };
 
 type Props = {
@@ -38,7 +65,7 @@ type Props = {
   /** A message the app wants sent — "Hand off" arrives this way. */
   seed: string | null;
   onSeedUsed: () => void;
-  /** The agent binary from settings; the flags are the Rust side's. */
+  /** Which agent from the catalogue; the argv is the Rust side's. */
   cmd: string;
   notify: (message: string, tone?: "error") => void;
   /** Dragging the panel's own edge; which edge that is depends on placement. */
@@ -46,21 +73,59 @@ type Props = {
 };
 
 /*
- * v2: v1 keyed on the plan as well, and those entries are left where they are
- * rather than merged. Concatenating several file-scoped transcripts into one
- * would produce a conversation nobody had, and the agent's own sessions are
- * per-transcript anyway — the honest migration is a fresh start per repo.
+ * v3: v2 stored a Claude CLI session id, which means nothing to an ACP agent,
+ * and flattened every tool call into grey text. Its messages are still worth
+ * keeping — they are what was said — so they migrate in as notes, and the
+ * conversation starts again from there. Preserve what was said; do not pretend
+ * a continuity that is not there.
  */
-const keyOf = (repo: string) => `plans.chat.v2::${repo}`;
+const keyOf = (repo: string) => `plans.chat.v3::${repo}`;
 
-function load(key: string): Thread {
+/** v2's `{role,text}` lines, as much of them as still means anything. */
+function migrated(repo: string): Msg[] {
+  try {
+    const raw = localStorage.getItem(`plans.chat.v2::${repo}`);
+    if (!raw) return [];
+    const old = JSON.parse(raw) as { messages?: { role: string; text: string }[] };
+    const kept = (old.messages ?? []).map((m) =>
+      m.role === "user" || m.role === "assistant"
+        ? ({ role: m.role, text: m.text } as Msg)
+        : ({ role: "note", text: m.text } as Msg),
+    );
+    if (!kept.length) return [];
+    return [
+      ...kept,
+      { role: "note", text: "New agent session — earlier context is not carried over." },
+    ];
+  } catch {
+    return [];
+  }
+}
+
+function load(key: string, repo?: string): Thread {
   try {
     const raw = localStorage.getItem(key);
-    if (raw) return JSON.parse(raw) as Thread;
+    if (raw) {
+      const t = JSON.parse(raw) as Thread;
+      /*
+       * A tool that was running when the window closed is not running now,
+       * and a question nobody answered can no longer be answered — the
+       * process it belonged to is gone. Left alone, the transcript would show
+       * live-looking buttons wired to nothing.
+       */
+      t.messages = (t.messages ?? []).map((m) =>
+        m.role === "tool" && (m.status === "pending" || m.status === "in_progress")
+          ? { ...m, status: "interrupted" }
+          : m.role === "permission" && m.answered === undefined
+            ? { ...m, answered: null }
+            : m,
+      );
+      return t;
+    }
   } catch {
     // A malformed transcript is a fresh one, not a crash.
   }
-  return { messages: [], session: null, plan: null };
+  return { messages: repo ? migrated(repo) : [], plan: null };
 }
 
 export function ChatPanel({
@@ -73,7 +138,7 @@ export function ChatPanel({
   onResize,
 }: Props) {
   const key = repo ? keyOf(repo) : null;
-  const [thread, setThread] = useState<Thread>({ messages: [], session: null, plan: null });
+  const [thread, setThread] = useState<Thread>({ messages: [], plan: null });
   const [input, setInput] = useState("");
   /** The turn in flight, if any, and which conversation it belongs to. */
   const turn = useRef<{ id: ChatId; key: string; at: number } | null>(null);
@@ -103,26 +168,27 @@ export function ChatPanel({
   useEffect(() => {
     keyRef.current = key;
     if (!key) {
-      setThread({ messages: [], session: null, plan: null });
+      setThread({ messages: [], plan: null });
       return;
     }
-    const t = threads.current.get(key) ?? load(key);
+    const t = threads.current.get(key) ?? load(key, repo);
     threads.current.set(key, t);
     setThread(t);
-  }, [key]);
+  }, [key, repo]);
 
   /** Add to a transcript: a new bubble, or more of the one being written. */
   const say = useCallback(
-    (k: string, role: Msg["role"], text: string, append: boolean) =>
+    (k: string, role: "user" | "assistant" | "thought" | "note", text: string, append: boolean) =>
       commit(k, (t) => {
         const m = [...t.messages];
         if (append) {
-          // The turn's answer is one bubble: append to the assistant message
-          // of the current turn — anything after the last user message — so a
-          // tool line arriving mid-stream does not split the prose in two.
+          // The turn's answer is one bubble: append to the message of this
+          // role in the current turn — anything after the last user message —
+          // so a tool line arriving mid-stream does not split the prose in two.
           for (let i = m.length - 1; i >= 0 && m[i].role !== "user"; i--) {
-            if (m[i].role === role) {
-              m[i] = { role, text: m[i].text + text };
+            const at = m[i];
+            if (at.role === role && "text" in at) {
+              m[i] = { role, text: at.text + text };
               return { ...t, messages: m };
             }
           }
@@ -133,44 +199,157 @@ export function ChatPanel({
     [commit],
   );
 
-  // One listener set for the panel's lifetime; the turn ref says whose
-  // events these are.
+  /**
+   * A tool call, which arrives more than once.
+   *
+   * The same backwards scan as `say`, matching on `callId` instead of role:
+   * the first notification names the tool, later ones carry its status and
+   * what it touched. Amending in place is the only way a line can go from
+   * running to done — the old design appended, so it never could.
+   */
+  const upsertTool = useCallback(
+    (k: string, patch: Partial<Extract<Msg, { role: "tool" }>> & { callId: string }) =>
+      commit(k, (t) => {
+        const m = [...t.messages];
+        for (let i = m.length - 1; i >= 0; i--) {
+          const at = m[i];
+          if (at.role === "tool" && at.callId === patch.callId) {
+            // Nulls are "no news", not "unset": an update that carries only a
+            // status must not blank the title the first one gave us.
+            const merged = { ...at };
+            for (const [kk, v] of Object.entries(patch)) {
+              if (v !== null && v !== undefined) (merged as never as Record<string, unknown>)[kk] = v;
+            }
+            m[i] = merged;
+            return { ...t, messages: m };
+          }
+        }
+        m.push({ role: "tool", title: patch.title ?? "Working", ...patch });
+        return { ...t, messages: m };
+      }),
+    [commit],
+  );
+
+  /*
+   * One listener set for the panel's lifetime.
+   *
+   * Two kinds of event now. A turn's narration is filtered by turn id, as
+   * before. But the session outlives the turn, so what the agent *is* — its
+   * options, its commands, its usage — arrives with a repo and no turn, and
+   * has to be accepted whenever it comes.
+   */
   useEffect(() => {
-    const delta = listen<{ id: number; text: string }>("chat-delta", (e) => {
-      if (e.payload.id !== turn.current?.id) return;
+    const mine = (repoOf: string) => repoOf === repo;
+
+    const message = listen<{ repo: string; turn: number; text: string }>("agent-message", (e) => {
+      if (e.payload.turn !== turn.current?.id) return;
       say(turn.current.key, "assistant", e.payload.text, true);
     });
-    const tool = listen<{ id: number; name: string; detail: string }>("chat-tool", (e) => {
-      if (e.payload.id !== turn.current?.id) return;
-      const { name, detail } = e.payload;
-      say(turn.current.key, "tool", detail ? `${name} ${detail}` : name, false);
+    const thought = listen<{ repo: string; turn: number; text: string }>("agent-thought", (e) => {
+      if (e.payload.turn !== turn.current?.id) return;
+      say(turn.current.key, "thought", e.payload.text, true);
     });
-    const done = listen<{ id: number; session: string | null; ok: boolean }>("chat-done", (e) => {
-      if (e.payload.id !== turn.current?.id) return;
-      const k = turn.current.key;
-      track("chat_turn_finished", {
-        ok: e.payload.ok,
-        seconds: Math.round((Date.now() - turn.current.at) / 1000),
+    const tool = listen<{
+      repo: string;
+      turn: number;
+      callId: string;
+      title: string | null;
+      kind: string | null;
+      status: string | null;
+      locations: string[] | null;
+    }>("agent-tool", (e) => {
+      if (e.payload.turn !== turn.current?.id) return;
+      const { callId, title, kind, status, locations } = e.payload;
+      upsertTool(turn.current.key, {
+        callId,
+        ...(title ? { title } : {}),
+        ...(kind ? { kind } : {}),
+        ...(status ? { status } : {}),
+        ...(locations ? { locations } : {}),
       });
+    });
+    const ended = listen<{ repo: string; turn: number; stop: string; ok: boolean }>(
+      "agent-turn",
+      (e) => {
+        if (e.payload.turn !== turn.current?.id) return;
+        const k = turn.current.key;
+        track("chat_turn_finished", {
+          ok: e.payload.ok,
+          seconds: Math.round((Date.now() - turn.current.at) / 1000),
+        });
+        turn.current = null;
+        setBusy(false);
+        if (!e.payload.ok) say(k, "note", `stopped — ${e.payload.stop}`, false);
+      },
+    );
+
+    // Session-scoped: no turn to match, so the repo is the filter.
+    const config = listen<{ repo: string; options: ConfigOption[] }>("agent-config", (e) => {
+      if (!mine(e.payload.repo) || !key) return;
+      commit(key, (t) => ({ ...t, options: e.payload.options ?? [] }));
+    });
+    const commands = listen<{ repo: string; commands: AgentCommand[] }>("agent-commands", (e) => {
+      if (!mine(e.payload.repo) || !key) return;
+      commit(key, (t) => ({ ...t, commands: e.payload.commands ?? [] }));
+    });
+    const usage = listen<{ repo: string; used: number; size: number; cost?: number }>(
+      "agent-usage",
+      (e) => {
+        if (!mine(e.payload.repo) || !key) return;
+        const { used, size, cost } = e.payload;
+        commit(key, (t) => ({ ...t, usage: { used, size, cost } }));
+      },
+    );
+    const asked = listen<{
+      repo: string;
+      requestId: string;
+      title: string;
+      options: { optionId: string; name: string; kind?: string }[];
+    }>("agent-permission", (e) => {
+      if (!mine(e.payload.repo) || !key) return;
+      const { requestId, title, options } = e.payload;
+      commit(key, (t) => ({
+        ...t,
+        messages: [...t.messages, { role: "permission", requestId, title, options }],
+      }));
+    });
+    const answeredElsewhere = listen<{ repo: string; requestId: string; chosen: string | null }>(
+      "agent-permission-done",
+      (e) => {
+        if (!mine(e.payload.repo) || !key) return;
+        commit(key, (t) => ({
+          ...t,
+          messages: t.messages.map((m) =>
+            m.role === "permission" && m.requestId === e.payload.requestId
+              ? { ...m, answered: e.payload.chosen }
+              : m,
+          ),
+        }));
+      },
+    );
+    const down = listen<{ repo: string; message: string }>("agent-down", (e) => {
+      if (!mine(e.payload.repo) || !key) return;
       turn.current = null;
       setBusy(false);
-      commit(k, (t) => ({ ...t, session: e.payload.session ?? t.session }));
+      if (e.payload.message) say(key, "note", `the agent stopped — ${e.payload.message}`, false);
     });
-    const failed = listen<{ id: number; message: string }>("chat-error", (e) => {
-      if (e.payload.id !== turn.current?.id) return;
-      const k = turn.current.key;
-      track("chat_turn_finished", {
-        ok: false,
-        seconds: Math.round((Date.now() - turn.current.at) / 1000),
-      });
-      turn.current = null;
-      setBusy(false);
-      say(k, "tool", `stopped — ${e.payload.message || "no answer"}`, false);
-    });
+
     return () => {
-      for (const u of [delta, tool, done, failed]) void u.then((f) => f());
+      for (const u of [
+        message,
+        thought,
+        tool,
+        ended,
+        config,
+        commands,
+        usage,
+        asked,
+        answeredElsewhere,
+        down,
+      ])
+        void u.then((f) => f());
     };
-  }, [say]);
+  }, [say, upsertTool, commit, key, repo]);
 
   const send = useCallback(
     async (text: string, seeded = false) => {
@@ -178,18 +357,13 @@ export function ChatPanel({
       inflight.current = true;
       const t = threads.current.get(key) ?? load(key);
       /*
-       * Two kinds of context, and neither is repeated for its own sake.
+       * Which plan you are looking at, said when it changes.
        *
-       * The repository is said once, on the turn that opens the session;
-       * `--resume` carries it after that. The plan is said whenever it is not
-       * the one the agent was last told about — which is the first turn, and
-       * every turn after you click a different file. Saying it every time
-       * would waste tokens and read as nagging in the transcript.
+       * The repository no longer needs saying at all: `session/new` is given
+       * the cwd, so the agent already knows where it is. That preamble was
+       * something the old design had to send because a `-p` invocation had no
+       * other way to say it.
        */
-      const opening = t.session
-        ? ""
-        : `You are working in the repository at ${repo}. ` +
-          `Edit files directly when asked, and keep answers brief.\n\n`;
       const moved = relPath && relPath !== t.plan;
       const where = moved ? `The plan I am looking at is ${relPath}.\n\n` : "";
       commit(key, (cur) => ({
@@ -199,16 +373,16 @@ export function ChatPanel({
       }));
       setBusy(true);
       // The length and whether a button wrote it — never the message itself.
-      track("chat_message_sent", { seeded, chars: text.length, resumed: !!t.session });
+      track("chat_message_sent", { seeded, chars: text.length });
       try {
-        const id = await api.chatSend(repo, cmd, opening + where + text, t.session);
+        const id = await api.agentPrompt(repo, cmd, where + text);
         turn.current = { id, key, at: Date.now() };
       } catch (e) {
         setBusy(false);
         // In the transcript as well as the toast: a turn that produced nothing
         // must not look like a turn that is still thinking, and a toast is
         // gone by the time you look back at the conversation.
-        say(key, "tool", String(e).replace(/^Error:\s*/, ""), false);
+        say(key, "note", String(e).replace(/^Error:\s*/, ""), false);
         notify(String(e), "error");
       } finally {
         inflight.current = false;
@@ -229,7 +403,12 @@ export function ChatPanel({
   }, [seed, key, send, onSeedUsed]);
 
   const stop = () => {
-    if (turn.current) void api.chatCancel(turn.current.id).catch(() => {});
+    if (turn.current) void api.agentCancel(repo, turn.current.id).catch(() => {});
+  };
+
+  /** Answer a permission request from the transcript. */
+  const decide = (requestId: string, optionId: string | null) => {
+    void api.agentPermission(repo, requestId, optionId).catch(() => {});
   };
 
   // A growing answer should stay in view, as a conversation would.
@@ -265,17 +444,64 @@ export function ChatPanel({
               : "Ask for anything about this repository."}
           </div>
         )}
-        {thread.messages.map((m, i) =>
-          m.role === "tool" ? (
-            <div key={i} className="chat-tool">
-              {m.text}
-            </div>
-          ) : (
+        {thread.messages.map((m, i) => {
+          if (m.role === "tool") {
+            return (
+              <div key={i} className={`chat-tool ${m.status ?? "pending"}`}>
+                <span className="chat-tool-dot" aria-hidden />
+                {m.title}
+                {m.locations?.length ? <span className="chat-where"> {m.locations.join(", ")}</span> : null}
+              </div>
+            );
+          }
+          if (m.role === "permission") {
+            // Answered questions freeze into a statement: a button you can
+            // press again after the agent has moved on is a lie.
+            return (
+              <div key={i} className="chat-ask">
+                <span className="chat-ask-title">{m.title || "May I?"}</span>
+                {m.answered === undefined ? (
+                  <span className="chat-ask-acts">
+                    {m.options.map((o) => (
+                      <button key={o.optionId} className="act" onClick={() => decide(m.requestId, o.optionId)}>
+                        {o.name}
+                      </button>
+                    ))}
+                    <button className="act quiet" onClick={() => decide(m.requestId, null)}>
+                      Cancel
+                    </button>
+                  </span>
+                ) : (
+                  <span className="chat-ask-was">
+                    {m.answered
+                      ? (m.options.find((o) => o.optionId === m.answered)?.name ?? "allowed")
+                      : "cancelled"}
+                  </span>
+                )}
+              </div>
+            );
+          }
+          if (m.role === "thought") {
+            return (
+              <details key={i} className="chat-thought">
+                <summary>thinking</summary>
+                {m.text}
+              </details>
+            );
+          }
+          if (m.role === "note") {
+            return (
+              <div key={i} className="chat-tool">
+                {m.text}
+              </div>
+            );
+          }
+          return (
             <div key={i} className={`chat-msg ${m.role}`}>
               {m.text}
             </div>
-          ),
-        )}
+          );
+        })}
         {thinking && <div className="chat-tool">thinking…</div>}
       </div>
 

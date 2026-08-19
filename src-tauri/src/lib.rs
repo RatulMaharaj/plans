@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 use std::path::{Component, Path, PathBuf};
 use std::process::Command;
 
-pub mod chat;
+pub mod agent;
 pub mod mux;
 
 // ---------------------------------------------------------------------------
@@ -1212,7 +1212,7 @@ pub fn run() {
         .plugin(tauri_plugin_process::init());
 
     builder
-        .manage(chat::Chats::default())
+        .manage(agent::Agents::default())
         .manage(CliOpen(std::sync::Mutex::new(
             std::env::current_dir()
                 .ok()
@@ -1258,10 +1258,13 @@ pub fn run() {
             mux::mux_panes,
             mux::mux_start,
             mux::mux_send,
-            chat::chat_available,
-            chat::chat_agents,
-            chat::chat_send,
-            chat::chat_cancel,
+            agent::discover::agent_list,
+            agent::agent_prompt,
+            agent::agent_cancel,
+            agent::agent_set_config,
+            agent::agent_permission,
+            agent::agent_auto_allow,
+            agent::agent_stop,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
@@ -1272,6 +1275,12 @@ pub fn run() {
             #[cfg(all(debug_assertions, target_os = "macos"))]
             if matches!(_event, tauri::RunEvent::Ready) {
                 wear_the_development_face();
+            }
+            // Agent sessions live as long as the window, so something has to
+            // end them. Nothing else in this app owns a process that outlives
+            // the request that made it.
+            if matches!(_event, tauri::RunEvent::Exit) {
+                agent::shutdown_all(_app);
             }
         });
 }
