@@ -63,9 +63,10 @@ type Thread = {
    * which is why it is stored beside the transcript rather than in settings.
    */
   session?: string | null;
+  /** Which agent that session id belongs to. It means nothing to another. */
+  agent?: string | null;
   /** The agent's own task list, when it keeps one. */
   todo?: { content: string; status?: string; priority?: string }[];
-  usage?: { used: number; size: number; cost?: number };
 };
 
 type Props = {
@@ -138,6 +139,7 @@ export function ChatPanel({
   const turn = useRef<{ id: ChatId; key: string; at: number } | null>(null);
   const [busy, setBusy] = useState(false);
   const logRef = useRef<HTMLDivElement>(null);
+  const boxRef = useRef<HTMLTextAreaElement>(null);
 
   /**
    * All threads this panel has touched, by key. Events land here first so a
@@ -286,14 +288,6 @@ export function ChatPanel({
       if (!mine(e.payload.repo) || !key) return;
       commit(key, (t) => ({ ...t, commands: e.payload.commands ?? [] }));
     });
-    const usage = listen<{ repo: string; used: number; size: number; cost?: number }>(
-      "agent-usage",
-      (e) => {
-        if (!mine(e.payload.repo) || !key) return;
-        const { used, size, cost } = e.payload;
-        commit(key, (t) => ({ ...t, usage: { used, size, cost } }));
-      },
-    );
     const asked = listen<{
       repo: string;
       requestId: string;
@@ -344,7 +338,6 @@ export function ChatPanel({
         ended,
         config,
         commands,
-        usage,
         asked,
         answeredElsewhere,
         opened,
@@ -379,9 +372,27 @@ export function ChatPanel({
       // The length and whether a button wrote it — never the message itself.
       track("chat_message_sent", { seeded, chars: text.length });
       try {
-        // The session id, if there is one: a process that died between turns
-        // is asked to pick the conversation back up rather than start over.
-        const id = await api.agentPrompt(repo, cmd, where + text, t.session);
+        /*
+         * The session id, if there is one worth offering.
+         *
+         * A session belongs to the agent that opened it, so switching agents
+         * drops it: asking Codex to resume a Claude session is asking for a
+         * refusal at best. The transcript stays — it is what was said — but
+         * the new agent starts without it, and the note says so.
+         */
+        const same = !t.agent || t.agent === cmd;
+        const id = await api.agentPrompt(repo, cmd, where + text, same ? t.session : null);
+        if (!same) {
+          commit(key, (cur) => ({
+            ...cur,
+            session: null,
+            messages: [
+              ...cur.messages,
+              { role: "note", text: `Switched to ${cmd} — it starts without the conversation above.` },
+            ],
+          }));
+        }
+        commit(key, (cur) => ({ ...cur, agent: cmd }));
         turn.current = { id, key, at: Date.now() };
       } catch (e) {
         setBusy(false);
@@ -437,6 +448,21 @@ export function ChatPanel({
     setInput(`/${name} `);
     setPick(-1);
   };
+
+  /*
+   * The box grows with what you are writing.
+   *
+   * Three lines to start, because a one-line box makes anything worth asking
+   * an agent look like it does not fit. It then follows the text up to a
+   * ceiling, past which it scrolls: a message long enough to swallow the
+   * conversation should not be allowed to.
+   */
+  useEffect(() => {
+    const el = boxRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${Math.min(el.scrollHeight, 260)}px`;
+  }, [input]);
 
   // A growing answer should stay in view, as a conversation would.
   useEffect(() => {
@@ -563,7 +589,8 @@ export function ChatPanel({
           </div>
         )}
         <textarea
-          rows={1}
+          ref={boxRef}
+          rows={3}
           value={input}
           placeholder="Ask the agent…"
           onChange={(e) => setInput(e.target.value)}
@@ -609,12 +636,6 @@ export function ChatPanel({
           */}
         <div className="chat-foot">
           <AgentOptions repo={repo} options={thread.options} busy={busy} />
-          <span className="chat-note">
-            {thread.usage
-              ? `${Math.round((thread.usage.used / Math.max(1, thread.usage.size)) * 100)}% of context` +
-                (thread.usage.cost ? ` · $${thread.usage.cost.toFixed(2)}` : "")
-              : "Edits land in the files — see Git for what changed."}
-          </span>
         </div>
       </div>
     </section>

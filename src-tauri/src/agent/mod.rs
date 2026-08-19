@@ -37,6 +37,8 @@ static NEXT_TURN: AtomicU64 = AtomicU64::new(1);
 struct Live {
     ops: UnboundedSender<session::Op>,
     perms: client::Pending,
+    /// Which agent this session is. Changing the setting has to end it.
+    agent: String,
 }
 
 /// One agent per repository, keyed the way the transcript already is.
@@ -50,8 +52,23 @@ pub struct Agents(Mutex<HashMap<String, Live>>);
 /// handshake can prompt for authentication.
 fn ensure(app: &AppHandle, repo: &str, agent_id: &str, resume: Option<String>) -> R<()> {
     let state: State<Agents> = app.state();
-    if state.0.lock().unwrap().contains_key(repo) {
-        return Ok(());
+    /*
+     * A live session is reused — unless it is the wrong agent.
+     *
+     * Choosing a different agent in settings has to actually change which
+     * process answers, and the running one has no way to become the other
+     * one. So it is ended here, at the first thing said after the change,
+     * rather than eagerly when the setting moves: someone flicking through
+     * the list should not be killing processes as they go.
+     */
+    let stale = {
+        let live = state.0.lock().unwrap();
+        live.get(repo).map(|l| l.agent != agent_id)
+    };
+    match stale {
+        Some(false) => return Ok(()),
+        Some(true) => stop(app, repo),
+        None => {}
     }
     let argv = discover::argv_for(agent_id).ok_or_else(|| {
         format!("{agent_id} is not installed, or not on the PATH this app was given")
@@ -64,6 +81,7 @@ fn ensure(app: &AppHandle, repo: &str, agent_id: &str, resume: Option<String>) -
         Live {
             ops: tx,
             perms: perms.clone(),
+            agent: agent_id.to_string(),
         },
     );
 
@@ -138,16 +156,21 @@ pub fn agent_auto_allow(on: bool) -> R<()> {
     Ok(())
 }
 
-/// Stop a repository's agent. Also what quitting does, for every one of them.
-#[tauri::command]
-pub fn agent_stop(app: AppHandle, repo: String) -> R<()> {
+/// End a repository's session, if there is one.
+fn stop(app: &AppHandle, repo: &str) {
     let state: State<Agents> = app.state();
-    let live = state.0.lock().unwrap().remove(&repo);
+    let live = state.0.lock().unwrap().remove(repo);
     if let Some(l) = live {
-        client::cancel_all(&l.perms, &repo);
+        client::cancel_all(&l.perms, repo);
         let _ = l.ops.send(session::Op::Shutdown);
     }
     let _ = app.emit("agent-down", json!({ "repo": repo, "message": "" }));
+}
+
+/// Stop a repository's agent. Also what quitting does, for every one of them.
+#[tauri::command]
+pub fn agent_stop(app: AppHandle, repo: String) -> R<()> {
+    stop(&app, &repo);
     Ok(())
 }
 

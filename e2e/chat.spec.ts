@@ -1303,11 +1303,10 @@ test("a slash you meant literally still sends", async ({ page }) => {
   expect(sent.text).toContain("/compact");
 });
 
-test("context and cost are shown once the agent reports them", async ({ page }) => {
+test("context and cost are shown in the status bar, and outlast the panel", async ({ page }) => {
   await open(page);
   await openPlan(page);
   await page.keyboard.press("Meta+j");
-  await expect(page.locator(".chat-note")).toContainText("Edits land in the files");
 
   await page.evaluate(() => {
     (window as any).__fake.emit("agent-usage", {
@@ -1317,8 +1316,14 @@ test("context and cost are shown once the agent reports them", async ({ page }) 
       cost: 0.2811,
     });
   });
-  await expect(page.locator(".chat-note")).toContainText("25% of context");
-  await expect(page.locator(".chat-note")).toContainText("$0.28");
+  await expect(page.locator(".bar")).toContainText("25% context");
+  await expect(page.locator(".bar")).toContainText("$0.28");
+
+  // A fact about the session, not about the panel: closing the chat does not
+  // make it untrue.
+  await page.keyboard.press("Meta+j");
+  await expect(page.locator(".chat")).toHaveCount(0);
+  await expect(page.locator(".bar")).toContainText("25% context");
 });
 
 test("the agent's task list is shown while it works", async ({ page }) => {
@@ -1492,16 +1497,45 @@ test("a wordy option cannot stretch the window", async ({ page }) => {
 
   // The panel is a grid column, and a grid item's default min-width lets an
   // over-wide child stretch its track — which pushed the whole window sideways.
-  // Within a pixel: a scrollbar appearing in the log is not the panel moving.
   const after = (await page.locator(".chat").boundingBox())!;
   expect(Math.abs(after.width - before.width)).toBeLessThan(2);
-  expect(Math.abs(after.x - before.x)).toBeLessThan(2);
+  // The symptom was the whole app sliding left, so that is what is asserted:
+  // the tree still starts at the window's edge. The panel's own x can wander
+  // a couple of pixels when a scrollbar appears, which is not the same thing.
+  const tree = (await page.locator(".files").boundingBox())!;
+  expect(tree.x).toBe(0);
   // The pickers add no horizontal overflow of their own — measured against
   // what the window already had, which is not this feature's to fix.
   const over = await page.evaluate(
     () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
   );
   expect(over).toBeLessThanOrEqual(overBefore);
+});
+
+test("a menu shows every option at once, whole", async ({ page }) => {
+  await open(page, { place: "side" });
+  await openPlan(page);
+  await page.keyboard.press("Meta+j");
+  await page.evaluate((wordy) => {
+    const f = (window as any).__fake;
+    f.options = [wordy];
+    f.emit("agent-config", { repo: "/repo/one", options: f.options });
+  }, WORDY);
+
+  await page.locator('.agent-option [aria-label="Agent"]').click();
+  const menu = page.locator(".agent-option .dd-menu");
+
+  // Nothing scrolls: a picker you have to scroll is a picker you have to
+  // search, and the point of these is to see what the agent offers.
+  const scrolls = await menu.evaluate((el) => el.scrollHeight > el.clientHeight + 1);
+  expect(scrolls).toBe(false);
+
+  // And nothing is clipped: a description cut mid-word tells you less than
+  // the name already did.
+  const clipped = await page
+    .locator(".agent-option .dd-note")
+    .evaluateAll((els) => els.some((e) => e.scrollHeight > e.clientHeight + 1));
+  expect(clipped).toBe(false);
 });
 
 test("an open menu stays inside the panel", async ({ page }) => {
@@ -1570,4 +1604,39 @@ test("a model list is left in the order the agent chose", async ({ page }) => {
   await page.locator('.agent-option [aria-label="Model"]').click();
   const shown = await page.locator(".agent-option .dd-item .dd-label").allTextContents();
   expect(shown).toEqual(["Fable", "Haiku"]);
+});
+
+test("switching agents starts a new session, and says so", async ({ page }) => {
+  await open(page);
+  await page.evaluate(() => ((window as any).__fake.codex = "codex 1.0"));
+  await openPlan(page);
+  await page.keyboard.press("Meta+j");
+  await say(page, "first");
+  await expect.poll(() => calls(page, "agent_prompt")).toBe(1);
+  await page.evaluate(() => {
+    (window as any).__fake.emit("agent-session", { repo: "/repo/one", sessionId: "claude-1" });
+  });
+  await finish(page, 1);
+
+  // Pick the other agent.
+  await page.keyboard.press("Meta+,");
+  await page
+    .locator(".setting-row", { hasText: "Chat agent" })
+    .locator("button", { hasText: "Codex" })
+    .click();
+  // Leaving settings is enough: the panel being open is a persisted setting.
+  await page.keyboard.press("Escape");
+  await expect(page.locator(".chat")).toBeVisible();
+
+  await say(page, "second");
+  await expect.poll(() => calls(page, "agent_prompt")).toBe(2);
+  const sent = await argsOf(page, "agent_prompt");
+  expect(sent[1].agent).toBe("codex");
+  // A session belongs to the agent that opened it; offering it to another is
+  // asking for a refusal.
+  expect(sent[1].resume).toBe(null);
+
+  // The transcript stays — it is what was said — and says what happened.
+  await expect(page.locator(".chat-log")).toContainText("first");
+  await expect(page.locator(".chat-log")).toContainText("Switched to codex");
 });

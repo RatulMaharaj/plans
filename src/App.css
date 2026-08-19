@@ -2294,7 +2294,7 @@ body.resizing.resizing-row, body.resizing.resizing-row .chat-edge { cursor: row-
 .chat-foot,
 .agent-options { min-width: 0; }
 .agent-option { min-width: 0; }
-.agent-option .dd-trigger { max-width: 128px; }
+.agent-option .dd-trigger { max-width: 160px; }
 .agent-option .dd-value {
   overflow: hidden;
   text-overflow: ellipsis;
@@ -2313,12 +2313,44 @@ body.resizing.resizing-row, body.resizing.resizing-row .chat-edge { cursor: row-
   right: 0;
   max-width: min(320px, 70vw);
 }
-/* Descriptions can be paragraphs; one line of them is the useful part. */
+/*
+ * A description here is the reason to pick the thing, so it wraps rather than
+ * being cut off — "Sonnet 5 · Efficient for routi…" tells you nothing the name
+ * did not. The item becomes two stacked lines, and the note is allowed three
+ * of its own before it gives up: the agent-persona descriptions run to
+ * paragraphs, and a menu is not the place to read one whole.
+ */
+.agent-option .dd-item {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  column-gap: 6px;
+  row-gap: 1px;
+  white-space: normal;
+  align-items: start;
+  padding: 6px 11px 6px 6px;
+}
+/* The mark keeps its column beside both lines, rather than taking a row. */
+.agent-option .dd-tick { grid-row: 1 / span 2; }
+.agent-option .dd-label { overflow: visible; }
 .agent-option .dd-note {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  max-width: 180px;
+  font-size: 9.5px;
+  line-height: 1.45;
+}
+
+/*
+ * Nothing here scrolls and nothing is clipped.
+ *
+ * A picker you have to scroll is a picker you have to search, and the whole
+ * point of these is to see what the agent offers at a glance. So the menu
+ * grows to whatever its contents need — wider than the panel if it must,
+ * since it is positioned above everything and the panel is narrow — and the
+ * descriptions are shown whole rather than cut mid-word.
+ */
+.agent-option .dd-menu {
+  max-width: min(460px, 92vw);
+  max-height: none;
+  overflow: visible;
+  width: max-content;
 }
 .agent-option .dd-trigger {
   color: var(--ink-3);

@@ -957,6 +957,28 @@ export default function App() {
    */
   const [cli, setCli] = useState<CliStatus | null>(null);
   const [agents, setAgents] = useState<AgentFound[]>([]);
+  /**
+   * What the agent has spent, per repository.
+   *
+   * Read here rather than in the panel because it belongs in the status bar:
+   * context and cost are facts about the session, and the bar is where this
+   * app already puts facts about the thing you are working in. It also means
+   * the reading survives the panel being closed.
+   */
+  const [usage, setUsage] = useState<Record<string, { used: number; size: number; cost?: number }>>(
+    {},
+  );
+
+  useEffect(() => {
+    const off = listen<{ repo: string; used: number; size: number; cost?: number }>(
+      "agent-usage",
+      (e) => {
+        const { repo, used, size, cost } = e.payload;
+        setUsage((prev) => ({ ...prev, [repo]: { used, size, cost } }));
+      },
+    );
+    return () => void off.then((f) => f());
+  }, []);
   const [skills, setSkills] = useState<Record<string, SkillState>>({});
 
   const readInstalls = useCallback(async () => {
@@ -2711,6 +2733,18 @@ export default function App() {
             <span>{activeRepo?.name ?? "No repository"}</span>
           )}
           <span className="bar-spacer" />
+          {activeRepoPath && usage[activeRepoPath] && (
+            <span title="The agent's context window, and what this session has cost">
+              <b>
+                {Math.round(
+                  (usage[activeRepoPath].used / Math.max(1, usage[activeRepoPath].size)) * 100,
+                )}
+                %
+              </b>{" "}
+              context
+              {usage[activeRepoPath].cost ? ` · $${usage[activeRepoPath].cost!.toFixed(2)}` : ""}
+            </span>
+          )}
           {busy && <span className="saving">{busy}…</span>}
           {changeCount > 0 && (
             <span>
