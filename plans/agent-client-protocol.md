@@ -1,5 +1,5 @@
 ---
-status: ready
+status: done
 ---
 # Speak ACP, and let the agent tell us what it can do
 
@@ -200,7 +200,7 @@ preserve what was said, don't pretend a continuity that isn't there.
 No agent installed behaves as it does now — the panel hides, and Settings shows the
 install hint instead of a chat that fails.
 
-## Staging
+## Staging — all four landed
 
 1. **Parity.** `agent/`, one catalogue entry, session lifecycle, message/tool/turn/down
    events, permissions auto-approved (matching today's `acceptEdits`), v3 migration,

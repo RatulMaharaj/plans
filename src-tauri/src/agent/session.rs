@@ -13,8 +13,9 @@
 
 use crate::agent::events;
 use agent_client_protocol::schema::v1::{
-    ContentBlock, InitializeRequest, NewSessionRequest, PromptRequest, SessionConfigOptionValue,
-    SessionNotification, SetSessionConfigOptionRequest, TextContent,
+    ContentBlock, InitializeRequest, LoadSessionRequest, NewSessionRequest, PromptRequest,
+    SessionConfigOptionValue, SessionId, SessionNotification, SetSessionConfigOptionRequest,
+    TextContent,
 };
 use agent_client_protocol::schema::ProtocolVersion;
 use agent_client_protocol::{AcpAgent, Agent, ConnectionTo};
@@ -40,6 +41,8 @@ pub async fn run(
     app: AppHandle,
     repo: String,
     argv: Vec<String>,
+    // A session id from a previous run, if there is one to pick up.
+    resume: Option<String>,
     mut ops: UnboundedReceiver<Op>,
     perms: crate::agent::client::Pending,
 ) {
@@ -87,25 +90,60 @@ pub async fn run(
                     .block_task()
                     .await?;
 
-                let opened = c
-                    .send_request(NewSessionRequest::new(std::path::PathBuf::from(&repo)))
-                    .block_task()
-                    .await?;
+                /*
+                 * Pick up where the last process left off, when there is a
+                 * session to pick up and the agent can. A crash mid-turn
+                 * should cost the answer, not the conversation — and an agent
+                 * without `loadSession` falls back to a new session, which is
+                 * what would have happened anyway.
+                 */
+                let mut sid: Option<SessionId> = None;
+                let mut options = json!(null);
+                if let Some(id) = resume {
+                    if let Ok(r) = c
+                        .send_request(LoadSessionRequest::new(
+                            id.clone(),
+                            std::path::PathBuf::from(&repo),
+                        ))
+                        .block_task()
+                        .await
+                    {
+                        // The id is the one we asked to load; the reply
+                        // carries the state that goes with it.
+                        options = serde_json::to_value(&r)
+                            .map(|v| v["configOptions"].clone())
+                            .unwrap_or(json!(null));
+                        sid = Some(SessionId::from(id));
+                        let _ = app.emit("agent-resumed", json!({ "repo": repo }));
+                    }
+                }
+                if sid.is_none() {
+                    let opened = c
+                        .send_request(NewSessionRequest::new(std::path::PathBuf::from(&repo)))
+                        .block_task()
+                        .await?;
+                    options = serde_json::to_value(&opened)
+                        .map(|v| v["configOptions"].clone())
+                        .unwrap_or(json!(null));
+                    sid = Some(opened.session_id);
+                }
+                let sid = sid.expect("a session, one way or the other");
+
+                // Told to the UI so the next window can offer it back: this is
+                // the whole of what resuming needs to remember.
+                let _ = app.emit(
+                    "agent-session",
+                    json!({ "repo": repo, "sessionId": sid.to_string() }),
+                );
 
                 // What the agent can do is news the moment it is known: the
                 // pickers and the slash list are drawn from this, before anyone
                 // has said anything.
-                if let Ok(v) = serde_json::to_value(&opened) {
-                    if !v["configOptions"].is_null() {
-                        let _ = app.emit(
-                            "agent-config",
-                            json!({ "repo": repo, "options": v["configOptions"] }),
-                        );
-                    }
+                if !options.is_null() {
+                    let _ = app.emit("agent-config", json!({ "repo": repo, "options": options }));
                 }
                 let _ = app.emit("agent-ready", json!({ "repo": repo }));
 
-                let sid = opened.session_id;
                 while let Some(op) = ops.recv().await {
                     match op {
                         Op::Prompt { turn, text } => {

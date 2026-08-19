@@ -3,6 +3,7 @@ import { listen } from "@tauri-apps/api/event";
 import { api, type AgentCommand, type ChatId, type ConfigOption } from "./api";
 import { track } from "./analytics";
 import { AgentOptions } from "./AgentOptions";
+import { Markdown } from "./chat-markdown";
 
 /**
  * A conversation with the agent about the open plan.
@@ -52,10 +53,18 @@ type Msg =
 /** What the agent says it can do. Drawn, never interpreted. */
 type Thread = {
   messages: Msg[];
-  /** The plan named to the agent most recently, so a change can be mentioned. */
+  /** The plan *file* named to the agent most recently, so a change can be mentioned. */
   plan?: string | null;
   options?: ConfigOption[];
   commands?: AgentCommand[];
+  /**
+   * The agent's own session id, kept so a crashed or restarted process can be
+   * asked to pick the conversation back up. Meaningless to a different agent,
+   * which is why it is stored beside the transcript rather than in settings.
+   */
+  session?: string | null;
+  /** The agent's own task list, when it keeps one. */
+  todo?: { content: string; status?: string; priority?: string }[];
   usage?: { used: number; size: number; cost?: number };
 };
 
@@ -330,6 +339,14 @@ export function ChatPanel({
         }));
       },
     );
+    const opened = listen<{ repo: string; sessionId: string }>("agent-session", (e) => {
+      if (!mine(e.payload.repo) || !key) return;
+      commit(key, (t) => ({ ...t, session: e.payload.sessionId }));
+    });
+    const plan = listen<{ repo: string; entries: Thread["todo"] }>("agent-plan", (e) => {
+      if (!mine(e.payload.repo) || !key) return;
+      commit(key, (t) => ({ ...t, todo: e.payload.entries ?? [] }));
+    });
     const down = listen<{ repo: string; message: string }>("agent-down", (e) => {
       if (!mine(e.payload.repo) || !key) return;
       turn.current = null;
@@ -348,6 +365,8 @@ export function ChatPanel({
         usage,
         asked,
         answeredElsewhere,
+        opened,
+        plan,
         down,
       ])
         void u.then((f) => f());
@@ -378,7 +397,9 @@ export function ChatPanel({
       // The length and whether a button wrote it — never the message itself.
       track("chat_message_sent", { seeded, chars: text.length });
       try {
-        const id = await api.agentPrompt(repo, cmd, where + text);
+        // The session id, if there is one: a process that died between turns
+        // is asked to pick the conversation back up rather than start over.
+        const id = await api.agentPrompt(repo, cmd, where + text, t.session);
         turn.current = { id, key, at: Date.now() };
       } catch (e) {
         setBusy(false);
@@ -462,6 +483,18 @@ export function ChatPanel({
 
       <AgentOptions repo={repo} options={thread.options} busy={busy} />
 
+      {/* The agent's own task list, when it keeps one — its plan for the
+          answer, not one of ours. */}
+      {thread.todo?.length ? (
+        <ol className="chat-todo">
+          {thread.todo.map((t, i) => (
+            <li key={i} className={t.status ?? "pending"}>
+              {t.content}
+            </li>
+          ))}
+        </ol>
+      ) : null}
+
       <div className="chat-log" ref={logRef}>
         {thread.messages.length === 0 && (
           <div className="chat-hint">
@@ -524,7 +557,9 @@ export function ChatPanel({
           }
           return (
             <div key={i} className={`chat-msg ${m.role}`}>
-              {m.text}
+              {/* Only the agent's prose is rendered: what you typed is shown
+                  as you typed it, asterisks and all. */}
+              {m.role === "assistant" ? <Markdown text={m.text} /> : m.text}
             </div>
           );
         })}

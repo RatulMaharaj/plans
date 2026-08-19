@@ -1294,3 +1294,113 @@ test("context and cost are shown once the agent reports them", async ({ page }) 
   await expect(page.locator(".chat-note")).toContainText("25% of context");
   await expect(page.locator(".chat-note")).toContainText("$0.28");
 });
+
+test("the agent's task list is shown while it works", async ({ page }) => {
+  await open(page);
+  await openPlan(page);
+  await page.keyboard.press("Meta+j");
+  await say(page, "do a few things");
+
+  await page.evaluate(() => {
+    (window as any).__fake.emit("agent-plan", {
+      repo: "/repo/one",
+      entries: [
+        { content: "Read the plan", status: "completed" },
+        { content: "Rewrite the opening", status: "in_progress" },
+        { content: "Check the citations", status: "pending" },
+      ],
+    });
+  });
+
+  const todo = page.locator(".chat-todo li");
+  await expect(todo).toHaveCount(3);
+  await expect(todo.nth(1)).toHaveClass(/in_progress/);
+
+  // Amended rather than appended: a later plan replaces the earlier one.
+  await page.evaluate(() => {
+    (window as any).__fake.emit("agent-plan", {
+      repo: "/repo/one",
+      entries: [{ content: "Read the plan", status: "completed" }],
+    });
+  });
+  await expect(page.locator(".chat-todo li")).toHaveCount(1);
+});
+
+test("a session is remembered, and offered back to the next process", async ({ page }) => {
+  await open(page);
+  await openPlan(page);
+  await page.keyboard.press("Meta+j");
+  await say(page, "first");
+  await expect.poll(() => calls(page, "agent_prompt")).toBe(1);
+
+  // The backend reports the session it opened.
+  await page.evaluate(() => {
+    (window as any).__fake.emit("agent-session", { repo: "/repo/one", sessionId: "sess-7" });
+  });
+  await finish(page, 1);
+
+  // The agent dies between turns; the next prompt asks to pick it back up.
+  await page.evaluate(() => {
+    (window as any).__fake.emit("agent-down", { repo: "/repo/one", message: "" });
+  });
+  await say(page, "second");
+  await expect.poll(() => calls(page, "agent_prompt")).toBe(2);
+  const sent = await argsOf(page, "agent_prompt");
+  expect(sent[0].resume).toBe(null);
+  expect(sent[1].resume).toBe("sess-7");
+});
+
+test("the answer is rendered as markdown, and never as markup", async ({ page }) => {
+  await open(page);
+  await openPlan(page);
+  await page.keyboard.press("Meta+j");
+  await say(page, "explain");
+
+  await page.evaluate(() => {
+    const f = (window as any).__fake;
+    f.emit("agent-message", {
+      repo: "/repo/one",
+      turn: 1,
+      text: "Use **status** and `plans/`:\n- first\n- second\n\n```\ncargo test\n```",
+    });
+  });
+
+  const bubble = page.locator(".chat-msg.assistant");
+  await expect(bubble.locator("strong")).toHaveText("status");
+  await expect(bubble.locator("code").first()).toHaveText("plans/");
+  await expect(bubble.locator(".chat-md-list li")).toHaveCount(2);
+  await expect(bubble.locator(".chat-md-code")).toContainText("cargo test");
+});
+
+test("html in an answer is text, not html", async ({ page }) => {
+  await open(page);
+  await openPlan(page);
+  await page.keyboard.press("Meta+j");
+  await say(page, "explain");
+
+  // The agent's prose comes from files, and a file is not something to hand
+  // the DOM as markup.
+  await page.evaluate(() => {
+    (window as any).__fake.emit("agent-message", {
+      repo: "/repo/one",
+      turn: 1,
+      text: "<img src=x onerror=alert(1)> and <b>bold</b>",
+    });
+  });
+
+  const bubble = page.locator(".chat-msg.assistant");
+  await expect(bubble).toContainText("<img src=x onerror=alert(1)>");
+  await expect(bubble.locator("img")).toHaveCount(0);
+  await expect(bubble.locator("b")).toHaveCount(0);
+});
+
+test("what you typed is shown as you typed it", async ({ page }) => {
+  await open(page);
+  await openPlan(page);
+  await page.keyboard.press("Meta+j");
+  await say(page, "what does **this** mean?");
+
+  // Only the agent's prose is rendered; your own asterisks are yours.
+  await expect(page.locator(".chat-msg.user")).toContainText("**this**");
+  await expect(page.locator(".chat-msg.user strong")).toHaveCount(0);
+});

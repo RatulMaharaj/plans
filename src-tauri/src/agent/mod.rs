@@ -48,7 +48,7 @@ pub struct Agents(Mutex<HashMap<String, Live>>);
 /// Lazily, on the first thing anyone says — booting an agent process for
 /// someone who opens the panel and then closes it again is rude, and the
 /// handshake can prompt for authentication.
-fn ensure(app: &AppHandle, repo: &str, agent_id: &str) -> R<()> {
+fn ensure(app: &AppHandle, repo: &str, agent_id: &str, resume: Option<String>) -> R<()> {
     let state: State<Agents> = app.state();
     if state.0.lock().unwrap().contains_key(repo) {
         return Ok(());
@@ -69,7 +69,7 @@ fn ensure(app: &AppHandle, repo: &str, agent_id: &str) -> R<()> {
 
     let (a, r) = (app.clone(), repo.to_string());
     tauri::async_runtime::spawn(async move {
-        session::run(a.clone(), r.clone(), argv, rx, perms).await;
+        session::run(a.clone(), r.clone(), argv, resume, rx, perms).await;
         // However it ended, it is no longer live: the next prompt starts a
         // fresh one rather than writing into a channel nobody reads.
         if let Some(s) = a.try_state::<Agents>() {
@@ -92,8 +92,14 @@ fn send(app: &AppHandle, repo: &str, op: session::Op) -> R<()> {
 
 /// Say something. Starts the session if this is the first thing said.
 #[tauri::command]
-pub fn agent_prompt(app: AppHandle, repo: String, agent: String, text: String) -> R<u64> {
-    ensure(&app, &repo, &agent)?;
+pub fn agent_prompt(
+    app: AppHandle,
+    repo: String,
+    agent: String,
+    text: String,
+    resume: Option<String>,
+) -> R<u64> {
+    ensure(&app, &repo, &agent, resume)?;
     let turn = NEXT_TURN.fetch_add(1, Ordering::Relaxed);
     send(&app, &repo, session::Op::Prompt { turn, text })?;
     Ok(turn)

@@ -277,8 +277,8 @@ export const api = {
 
   /** The agent binary's version, or null when it is not installed. */
   /** Say something. Starts the session if this is the first thing said. */
-  agentPrompt: (repo: string, agent: string, text: string) =>
-    invoke<ChatId>("agent_prompt", { repo, agent, text }),
+  agentPrompt: (repo: string, agent: string, text: string, resume?: string | null) =>
+    invoke<ChatId>("agent_prompt", { repo, agent, text, resume: resume ?? null }),
 
   agentCancel: (repo: string, turn: ChatId) => invoke<null>("agent_cancel", { repo, turn }),
 
