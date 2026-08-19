@@ -1,5 +1,5 @@
 ---
-status: ready
+status: done
 ---
 # Agents That Outlive The Window
 

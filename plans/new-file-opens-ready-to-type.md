@@ -1,5 +1,5 @@
 ---
-status: active
+status: ready
 ---
 # A New File Opens Ready To Type
 

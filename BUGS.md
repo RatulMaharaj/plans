@@ -11,6 +11,10 @@ Remember to add changesets for any patched bugs - fixed bugs belong in the chang
 
 ## Open
 
+- [ ] Command palette not showing chats across all repos - I like the bahivour of it changing dynamically based on focused repo, but we maybe need a toggle to make it do that or not - also maybe chats should persist across repos maybe that’s the magic of this?
+- [ ] Can’t zoom into mermaids and pan
+- [ ] Command palette doesn’t have options to reset zoom levels in editor / sidebar to the default
+- [ ] Copying files between repos should be possible? Also dropping files from finder in
 - [ ] When we create a new file, the cursor should be put on a new line automatically and the file focused. — planned in [`plans/new-file-opens-ready-to-type.md`](plans/new-file-opens-ready-to-type.md)
 - [ ] A file can end up with an empty frontmatter block in front of its real one. `agents-flesh-out-plans.md` was found starting `---`, blank, `---`, then `---`, `status: draft`, `---`. Only the first block parses as frontmatter, so the status was invisible to the app while the source looked almost right. Repaired by hand; the cause is not known. `scaffoldMatter` (`App.tsx:932`) is ruled out — it merges into the existing block and guards every key. The suspect is `joinFrontmatter` via `assemble` (`App.tsx:818`) writing a pair of fences when `matter` is `""` rather than `null`. Found by reading the file, not by using the app, which is the part worth fixing: nothing surfaced it.
 - [ ] Only the *active* file is checked for outside edits. The stamp poll (`App.tsx:1028`) stats `activePath` and nothing else, so a file open in another tab that an agent or a `git checkout` rewrites stays stale on screen until it is clicked back to — at which point a dirty buffer raises a conflict long after the change happened. The tree/git poll (`App.tsx:605`) is already staggered deliberately (`SLOW = 6`), so the fix is to widen the stamp poll to the open buffers, not to poll everything more often.

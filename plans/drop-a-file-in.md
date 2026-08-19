@@ -1,5 +1,5 @@
 ---
-status: draft
+status: ready
 ---
 # Drop A Markdown File In And Edit It
 
