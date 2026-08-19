@@ -76,6 +76,43 @@ pub fn chat_available(cmd: String) -> Option<String> {
     Some(String::from_utf8_lossy(&out.stdout).trim().to_string())
 }
 
+/// An agent the app knows how to look for, and whether it is installed.
+#[derive(serde::Serialize)]
+pub struct AgentFound {
+    /// The binary name, which is also the value stored in settings.
+    id: String,
+    /// What `--version` said, absent when the binary is not on PATH.
+    version: Option<String>,
+    /// Whether `chat_send`'s flags are this agent's flags.
+    ///
+    /// They are Claude Code's: `-p`, `--output-format stream-json`,
+    /// `--permission-mode`, `--resume`. Another agent may well be installed
+    /// and still not speak this protocol, and saying so is better than
+    /// offering a chat that spawns a process which exits on an unknown flag.
+    supported: bool,
+}
+
+/// The agents worth looking for, in the order they are offered.
+const KNOWN: [(&str, bool); 2] = [("claude", true), ("codex", false)];
+
+/// Which of the known agents are on this machine.
+///
+/// A list rather than a free-text name: nearly everyone has one of two, and
+/// typing a binary name correctly is not a thing to ask of someone choosing
+/// from a set the app can see for itself. A name that is not on the list can
+/// still be set — the dropdown carries whatever is configured.
+#[tauri::command]
+pub fn chat_agents() -> Vec<AgentFound> {
+    KNOWN
+        .iter()
+        .map(|(id, supported)| AgentFound {
+            id: (*id).to_string(),
+            version: chat_available((*id).to_string()),
+            supported: *supported,
+        })
+        .collect()
+}
+
 /// One turn: spawn the agent on `prompt`, stream its narration as events.
 ///
 /// `--permission-mode acceptEdits` is what lets "edit the plan" actually edit

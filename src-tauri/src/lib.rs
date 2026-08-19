@@ -119,6 +119,14 @@ pub struct GitStatus {
     operation: Option<String>,
 }
 
+/// Where the `plans` script is, and whether it matches the running build.
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CliStatus {
+    path: String,
+    current: bool,
+}
+
 #[derive(Serialize, Deserialize)]
 pub struct BranchList {
     current: String,
@@ -783,6 +791,32 @@ fn cli_open_path(state: tauri::State<CliOpen>) -> Option<String> {
     state.0.lock().unwrap().take()
 }
 
+/// The directories `install_cli` will write to, most preferred first.
+///
+/// Homebrew's bin comes first: on every recent macOS it is the one PATH entry
+/// an admin user can write without sudo.
+const BIN_DIRS: [&str; 2] = ["/opt/homebrew/bin", "/usr/local/bin"];
+
+/// Where the `plans` script is installed, if it is, and whether it points at
+/// *this* build.
+///
+/// The version is in the script's own comment, so a script left by an older
+/// copy of the app reads as installed-but-stale rather than as absent. The
+/// caller can then offer "Update" instead of claiming nothing is there.
+#[tauri::command]
+fn cli_status() -> Option<CliStatus> {
+    for dir in BIN_DIRS {
+        let dest = Path::new(dir).join("plans");
+        if let Ok(text) = std::fs::read_to_string(&dest) {
+            return Some(CliStatus {
+                path: dest.to_string_lossy().into_owned(),
+                current: text.contains(&format!("Plans ({})", env!("CARGO_PKG_VERSION"))),
+            });
+        }
+    }
+    None
+}
+
 /// Write a small `plans` script onto the PATH so `plans .` opens the current
 /// repository in the app. The script backgrounds the app and quiets its
 /// output, so the terminal gets its prompt back; a second invocation is
@@ -797,9 +831,8 @@ fn install_cli() -> R<String> {
     );
     // Homebrew's bin first — on every recent macOS it is the one PATH entry
     // an admin user can write without sudo.
-    let dirs = ["/opt/homebrew/bin", "/usr/local/bin"];
     let mut last_err = String::new();
-    for dir in dirs {
+    for dir in BIN_DIRS {
         if !Path::new(dir).is_dir() {
             continue;
         }
@@ -1185,6 +1218,7 @@ pub fn run() {
             open_repo,
             cli_open_path,
             install_cli,
+            cli_status,
             list_plans,
             stat_plan,
             search_plans,
@@ -1221,6 +1255,7 @@ pub fn run() {
             mux::mux_start,
             mux::mux_send,
             chat::chat_available,
+            chat::chat_agents,
             chat::chat_send,
             chat::chat_cancel,
         ])

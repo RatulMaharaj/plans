@@ -159,6 +159,12 @@ type Props = {
   onStage: (repoPath: string, relPath: string) => void;
   onUnstage: (repoPath: string, relPath: string) => void;
   onDiscard: (repoPath: string, relPath: string, mark: Mark) => void;
+  /**
+   * Start the agent on this plan. Absent when there is no agent installed —
+   * the menu then simply does not carry the item, rather than carrying one
+   * that fails when pressed.
+   */
+  onHandOff?: (repoPath: string, relPath: string) => void;
   onDelete: (repoPath: string, relPath: string) => void;
   /** Delete a folder and everything inside it; App asks first if need be. */
   onDeleteDir: (repoPath: string, relPath: string) => void;
@@ -501,6 +507,14 @@ export const FileTree = memo(function FileTree(p: Props) {
               >
                 New file here
               </button>
+              {p.onHandOff && (
+                <button
+                  className="ctx-item"
+                  onClick={() => act(() => p.onHandOff!(menu.repo, menu.path))}
+                >
+                  Hand off to agent
+                </button>
+              )}
             </>
           ) : (
             <button

@@ -41,6 +41,10 @@ export function installFakeBackend(repos: FakeRepo[], update?: FakeUpdate) {
      * whereas on disk it is a real directory that `existing_dirs` can see.
      */
     dirs: new Set<string>(),
+    /** A codex binary's version, when a test wants one installed. */
+    codex: null as string | null,
+    /** The installed `plans` script, null until one is installed. */
+    cli: null as { path: string; current: boolean } | null,
     /** Whether the machine has tmux at all. */
     mux: true,
     /** Panes the fake tmux server is running. */
@@ -81,6 +85,13 @@ export function installFakeBackend(repos: FakeRepo[], update?: FakeUpdate) {
           name: rel.split("/").pop(),
           dir: rel.includes("/") ? rel.slice(0, rel.lastIndexOf("/")) : "",
           modified: 0,
+          // The real command reads `status:` out of the frontmatter; the tree
+          // shows it and now filters on it, so the fake has to as well.
+          status: /^---\r?\n([\s\S]*?)\r?\n---/
+            .exec(r.files[rel] ?? "")?.[1]
+            .split(/\r?\n/)
+            .map((l) => /^status\s*:\s*(.+)$/.exec(l)?.[1]?.trim())
+            .find(Boolean) ?? null,
         }));
     },
     read_plan: ({ repo: p, relPath }) => {
@@ -265,6 +276,18 @@ export function installFakeBackend(repos: FakeRepo[], update?: FakeUpdate) {
       return null;
     },
     perf_log: () => null,
+
+    // The CLI script: absent until installed, and this build's once it is.
+    cli_status: () => state.cli,
+    chat_agents: () => [
+      { id: "claude", version: state.chat ? "1.0.0" : null, supported: true },
+      { id: "codex", version: state.codex ?? null, supported: false },
+    ],
+    install_cli: () => {
+      state.cli = { path: "/opt/homebrew/bin/plans", current: true };
+      return state.cli.path;
+    },
+    cli_open_path: () => null,
 
     // The updater has to be genuinely inert here, not merely never triggered:
     // a test run that reaches out to GitHub is flaky by construction, and one

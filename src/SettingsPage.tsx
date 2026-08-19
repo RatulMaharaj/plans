@@ -2,7 +2,8 @@ import { createContext, isValidElement, useContext, useState, type ReactNode } f
 import { FONTS, MONO_FONTS } from "./fonts";
 import { THEMES } from "./theme";
 import { DEFAULTS, RANGES, type Settings } from "./settings";
-import type { RepoInfo } from "./api";
+import type { AgentFound, CliStatus, RepoInfo } from "./api";
+import type { SkillState } from "./skill";
 
 type Props = {
   settings: Settings;
@@ -14,7 +15,13 @@ type Props = {
   onForgetRepo: (path: string) => void;
   /** Write the bundled agent skill into this repository. */
   onInstallSkill: (path: string) => void;
+  /** What each repository already has, by path — absent while still looking. */
+  skills: Record<string, SkillState>;
   onInstallCli: () => void;
+  /** The installed `plans` script, null when there is none. */
+  cli: CliStatus | null;
+  /** Which known agents are on this machine. */
+  agents: AgentFound[];
   /** The version actually running, and the two things you can do about it. */
   version: string;
   onCheckUpdates: () => void;
@@ -30,6 +37,30 @@ type Props = {
  * rather than threading a prop through every call site.
  */
 const Query = createContext("");
+
+/**
+ * The agents to offer: the ones found, plus whatever is configured.
+ *
+ * An absent agent stays in the list, greyed by its label rather than removed —
+ * you may be about to install it, and a setting that silently drops its own
+ * value is worse than one showing a value that is not ready yet.
+ */
+function agentOptions(agents: AgentFound[], current: string) {
+  const opts = agents.map((a) => ({
+    value: a.id,
+    label: a.version ? a.id : `${a.id} (not installed)`,
+  }));
+  if (current && !opts.some((o) => o.value === current)) {
+    opts.push({ value: current, label: current });
+  }
+  return opts;
+}
+
+/** Installed, but not something `chat_send`'s flags will work with. */
+function unsupported(agents: AgentFound[], current: string) {
+  const a = agents.find((x) => x.id === current);
+  return !!a && !!a.version && !a.supported;
+}
 
 /** Does this element's own text match? Elements without labels never do. */
 function matches(node: ReactNode, q: string): boolean {
@@ -48,7 +79,10 @@ export function SettingsPage({
   onAddRepo,
   onForgetRepo,
   onInstallSkill,
+  skills,
   onInstallCli,
+  cli,
+  agents,
   version,
   onCheckUpdates,
   onReleaseNotes,
@@ -352,29 +386,38 @@ export function SettingsPage({
           name="Agents"
           hint="The chat panel talks to an agent CLI headlessly, one turn per message. It never commits, and its edits land in files where git can see them."
         >
-          <Row
-            label="Agent found"
+          {/*
+            * A list, not a text field: the app can see which agents are on the
+            * machine, and asking someone to type a binary name correctly when
+            * it could offer the ones it found is work for its own sake. A name
+            * the app does not know is still kept — whatever is configured is
+            * always in the list, so nothing is lost by choosing from it.
+            */}
+          <Choice
+            label="Chat agent"
             hint={
               agent === false
-                ? "No agent CLI answered. The chat is hidden until one does."
+                ? "None of these answered. The chat stays hidden until one does."
                 : agent
                   ? `${agent} — the chat and ⌘J are available.`
-                  : "Looking…"
+                  : "The agent the chat panel talks to."
             }
-          />
-          <Field
-            label="Chat agent"
-            hint="A binary name, nothing more — the flags that make it stream are fixed, so the parser and the process cannot drift apart."
             value={s.chatCommand}
-            placeholder="claude"
+            options={agentOptions(agents, s.chatCommand)}
             onChange={(chatCommand) => onChange({ chatCommand })}
           />
+          {unsupported(agents, s.chatCommand) && (
+            <Row
+              label="Not yet spoken"
+              hint="The streaming flags are Claude Code's. This agent is installed, but the chat cannot talk to it until its own flags are wired up."
+            />
+          )}
           <Area
-            label="Flesh out says"
-            hint="The instruction sent by “Flesh out this plan”. {file} is the plan's path. Yours to argue with — it is the one part of this that is about your house style."
-            value={s.fleshOutPrompt}
-            onChange={(fleshOutPrompt) => onChange({ fleshOutPrompt })}
-            onReset={() => onChange({ fleshOutPrompt: DEFAULTS.fleshOutPrompt })}
+            label="Handoff prompt"
+            hint="What the agent is told when you hand a plan to it, from the tree's right-click menu or the palette. {file} is the plan's path. Yours to argue with — it is the one part of this that is about your house style."
+            value={s.handoffPrompt}
+            onChange={(handoffPrompt) => onChange({ handoffPrompt })}
+            onReset={() => onChange({ handoffPrompt: DEFAULTS.handoffPrompt })}
           />
           <Field
             label="Copyable command"
@@ -438,6 +481,12 @@ export function SettingsPage({
             hint="⌘J. A conversation about the open plan. Each plan keeps its own transcript, resumed when reopened."
             on={s.showMux}
             onChange={(showMux) => onChange({ showMux })}
+          />
+          <Toggle
+            label="Finished plans"
+            hint="Off hides anything marked done, and anything inside a completed/ folder. They are still on disk, and an open tab stays open."
+            on={s.showCompleted}
+            onChange={(showCompleted) => onChange({ showCompleted })}
           />
           <Toggle
             label="Status bar"
@@ -517,9 +566,18 @@ export function SettingsPage({
                     : "no plans folder found"}
                 </span>
               </span>
-              <button className="act" onClick={() => onInstallSkill(r.path)}>
-                Install skill
-              </button>
+              {/* One button, three things to say: the skill is not there, it
+                  is out of date, or it is exactly the bundled one — in which
+                  case there is nothing to press and it says so instead. */}
+              {skills[r.path] === "current" ? (
+                <span className="act done" title="This repository has the bundled skill">
+                  Skill installed
+                </span>
+              ) : (
+                <button className="act" onClick={() => onInstallSkill(r.path)}>
+                  {skills[r.path] === "stale" ? "Update skill" : "Install skill"}
+                </button>
+              )}
               <button className="act" onClick={() => onForgetRepo(r.path)}>
                 Forget
               </button>
@@ -536,9 +594,15 @@ export function SettingsPage({
                 opens that repository here.
               </span>
             </span>
-            <button className="act" onClick={onInstallCli}>
-              Install
-            </button>
+            {cli?.current ? (
+              <span className="act done" title={cli.path}>
+                Installed
+              </span>
+            ) : (
+              <button className="act" onClick={onInstallCli} title={cli?.path}>
+                {cli ? "Update" : "Install"}
+              </button>
+            )}
           </div>
         </Group>
 

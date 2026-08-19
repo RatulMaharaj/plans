@@ -7,12 +7,17 @@
  * diff — is machinery the app already had.
  */
 
-/** The instruction, kept here rather than in a string literal at the call site. */
-export const FLESH_OUT_PROMPT =
-  "Flesh out the plan at {file}. Keep the house style of this folder: " +
-  "argue the design rather than listing steps, cite file:line for anything " +
-  "you claim about the code, keep an open questions section, and end with a " +
-  "Next checklist. Do not change any file other than the plan.";
+/**
+ * What the agent is told when a plan is handed to it.
+ *
+ * A handoff, not a command: the plan is the brief, and the agent is being
+ * asked to take it further in the voice the folder already speaks.
+ */
+export const HANDOFF_PROMPT =
+  "Take over the plan at {file} and take it further. Keep the house style of " +
+  "this folder: argue the design rather than listing steps, cite file:line " +
+  "for anything you claim about the code, keep an open questions section, " +
+  "and end with a Next checklist. Do not change any file other than the plan.";
 
 /**
  * Split a command line into an argv, honouring quotes.
@@ -63,7 +68,7 @@ export function splitArgv(line: string): string[] {
  * That is the whole reason this is not a shell string.
  */
 export function agentArgv(template: string, file: string): string[] {
-  const prompt = FLESH_OUT_PROMPT.replace(/\{file\}/g, file);
+  const prompt = HANDOFF_PROMPT.replace(/\{file\}/g, file);
   const words = splitArgv(template);
   // No template is no command. Appending the prompt to an empty argv would
   // produce something with nothing to exec, which fails far from here.

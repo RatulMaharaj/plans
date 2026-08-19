@@ -24,14 +24,23 @@ export default defineConfig({
   timeout: 45_000,
   expect: { timeout: 10_000 },
   use: {
-    baseURL: "http://localhost:1420",
+    /*
+     * Port 1430, not the app's 1420 (and not 1421, which HMR takes).
+     *
+     * A Tauri dev window loads the dev server's URL, so it shares an origin —
+     * and therefore a localStorage — with anything else pointed at that port.
+     * These tests write `plans.repos.v1` on every boot, which quietly emptied
+     * the repository list of a running app. A second port is a second origin,
+     * and the two stop being able to reach each other's storage.
+     */
+    baseURL: "http://localhost:1430",
     trace: "retain-on-failure",
     video: "off",
   },
   projects: [{ name: "chromium", use: { ...devices["Desktop Chrome"] } }],
   webServer: {
-    command: "pnpm dev",
-    url: "http://localhost:1420",
+    command: "pnpm dev --port 1430 --strictPort",
+    url: "http://localhost:1430",
     reuseExistingServer: true,
     timeout: 60_000,
   },

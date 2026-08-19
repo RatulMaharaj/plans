@@ -1,14 +1,22 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { listen } from "@tauri-apps/api/event";
-import { api, type GitStatus, type PlanFile, type RepoInfo, type StatusEntry } from "./api";
+import {
+  api,
+  type AgentFound,
+  type CliStatus,
+  type GitStatus,
+  type PlanFile,
+  type RepoInfo,
+  type StatusEntry,
+} from "./api";
 import { Editor } from "./Editor";
 import { GitPanel } from "./GitPanel";
 import { ChatPanel } from "./ChatPanel";
-import { agentCommandLine, FLESH_OUT_PROMPT } from "./agent";
+import { agentCommandLine, HANDOFF_PROMPT } from "./agent";
 import { DiffView } from "./DiffView";
 import { SettingsPage } from "./SettingsPage";
-import { installSkill } from "./skill";
+import { installSkill, skillState, type SkillState } from "./skill";
 import { Palette } from "./Palette";
 import { Dropdown } from "./Dropdown";
 import { FileTree, displayName, MARK_WORD, type Mark } from "./FileTree";
@@ -25,6 +33,8 @@ import { PerfHud } from "./PerfHud";
 import { start, tick, trace } from "./perf";
 import { authorSlug, htmlBridge, type HtmlEdit } from "./html-view";
 import {
+  inDoneFolder,
+  isDone,
   joinFrontmatter,
   matterValue,
   setMatterValue,
@@ -104,7 +114,10 @@ function sameStatus(
   for (const k of ka) {
     const x = a[k];
     const y = b[k];
-    if (!y) return false;
+    // Either side may be missing: `refreshStatusFor` compares one repository's
+    // new status against a `prev[repo]` that is undefined the first time it
+    // runs, and "nothing" is never the same as "something".
+    if (!x || !y) return false;
     if (x.branch !== y.branch || x.ahead !== y.ahead || x.behind !== y.behind) return false;
     if (x.entries.length !== y.entries.length) return false;
     for (let i = 0; i < x.entries.length; i++) {
@@ -183,7 +196,7 @@ export default function App() {
   const [busy, setBusy] = useState<string | null>(null);
   /** null until asked, then the CLI's version string or false for "no agent". */
   const [chat, setChat] = useState<string | null | false>(null);
-  /** A message the app wants the chat to send — "Flesh out" arrives this way. */
+  /** A message the app wants the chat to send — "Hand off" arrives this way. */
   const [chatSeed, setChatSeed] = useState<string | null>(null);
   const [toast, setToast] = useState<Toast>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -349,6 +362,15 @@ export default function App() {
     () => repos.find((r) => r.path === activeRepoPath) ?? null,
     [repos, activeRepoPath],
   );
+
+  /**
+   * The repository a buffer belongs to, which is not always one in the list:
+   * a file can be opened from a path that was never added — `plans <file>`,
+   * or a repo forgotten while its tab stayed open. Views that only need the
+   * path take this, so they keep working instead of dereferencing a `null`
+   * `activeRepo` and taking the window down with them.
+   */
+  const activeRepoOrPath = activeRepo?.path ?? activeRepoPath ?? "";
 
   const status = activeRepoPath ? (statusByRepo[activeRepoPath] ?? null) : null;
 
@@ -788,13 +810,22 @@ export default function App() {
    * difference is where the run lives. Nothing is committed and nothing is
    * watched from here: the agent writes files and the poll notices.
    */
-  const fleshOut = useCallback(async () => {
-    if (!activeRepoPath || !activePath) return;
-    setChatSeed(
-      (settings.fleshOutPrompt || FLESH_OUT_PROMPT).replace(/\{file\}/g, activePath),
-    );
-    set({ showMux: true });
-  }, [activeRepoPath, activePath, set, settings.fleshOutPrompt]);
+  const handOff = useCallback(
+    async (repo?: string, path?: string) => {
+      const r = repo ?? activeRepoPath;
+      const f = path ?? activePath;
+      if (!r || !f) return;
+      // The chat is per-plan, so handing off a file that is not open has to
+      // open it first — otherwise the seeded turn lands in another plan's
+      // conversation.
+      // Through the ref: `openFile` is declared further down, and this is the
+      // same indirection the stale-tree retry already uses.
+      if (r !== activeRepoPath || f !== activePath) await openFileRef.current?.(r, f);
+      setChatSeed((settings.handoffPrompt || HANDOFF_PROMPT).replace(/\{file\}/g, f));
+      set({ showMux: true });
+    },
+    [activeRepoPath, activePath, set, settings.handoffPrompt],
+  );
 
   /**
    * Pressing a panel button from Settings.
@@ -882,15 +913,40 @@ export default function App() {
     [activeRepoPath, repos.length],
   );
 
+  /**
+   * What is already installed, so Settings can say so rather than offering the
+   * same "Install" to someone who has pressed it. Both are read when Settings
+   * opens and again after a press, because a button that does not change is a
+   * button people press twice.
+   */
+  const [cli, setCli] = useState<CliStatus | null>(null);
+  const [agents, setAgents] = useState<AgentFound[]>([]);
+  const [skills, setSkills] = useState<Record<string, SkillState>>({});
+
+  const readInstalls = useCallback(async () => {
+    api.cliStatus().then(setCli, () => setCli(null));
+    api.chatAgents().then(setAgents, () => setAgents([]));
+    for (const r of repos) {
+      void skillState(r.path).then((st) =>
+        setSkills((prev) => (prev[r.path] === st ? prev : { ...prev, [r.path]: st })),
+      );
+    }
+  }, [repos]);
+
+  useEffect(() => {
+    if (settingsOpen) void readInstalls();
+  }, [settingsOpen, readInstalls]);
+
   const installCli = useCallback(async () => {
     try {
       const dest = await api.installCli();
       notify(`Installed — try \`plans .\` (${dest})`, "info");
       track("cli_installed");
+      void readInstalls();
     } catch (e) {
       notify(String(e), "error");
     }
-  }, [notify]);
+  }, [notify, readInstalls]);
 
   /**
    * Dragging the sidebar's edge. Pointer capture rather than window listeners,
@@ -1938,6 +1994,23 @@ export default function App() {
     settingsOpen,
   ]);
 
+  /**
+   * The tree's files, with finished plans dropped when the setting says so.
+   *
+   * Filtered here rather than in `filesByRepo` so the hiding is exactly what
+   * it says: a view of the tree. Git marks, the watcher and everything else
+   * keep seeing every file, and an open tab for a finished plan does not
+   * close itself because you turned a setting off.
+   */
+  const shownByRepo = useMemo(() => {
+    if (settings.showCompleted) return filesByRepo;
+    const out: Record<string, PlanFile[]> = {};
+    for (const [repo, files] of Object.entries(filesByRepo)) {
+      out[repo] = files.filter((f) => !isDone(f.status) && !inDoneFolder(f.relPath));
+    }
+    return out;
+  }, [filesByRepo, settings.showCompleted]);
+
   const allFiles = useMemo(
     () =>
       repos.flatMap((r) =>
@@ -2033,6 +2106,35 @@ export default function App() {
 
         <span className="rail-spacer" data-tauri-drag-region />
 
+        {/*
+         * The mode still belongs to the buffer — `goto` sets it on the active
+         * tab, not on the app — but it is read as chrome, so it sits in the
+         * chrome. In the tab row it moved with the tabs and shared a line
+         * with the buffer names, which made a per-buffer setting look like
+         * part of the buffer list.
+         */}
+        {activePath && !settingsOpen && (
+          <span className="segmented small view-switch">
+            <button className={view === "write" ? "on" : ""} onClick={() => goto("write")}>
+              Write
+            </button>
+            <button
+              className={view === "source" ? "on" : ""}
+              onClick={() => goto("source")}
+              title="The raw markdown, exactly as it is on disk"
+            >
+              Source
+            </button>
+            <button
+              className={view === "diff" ? "on" : ""}
+              onClick={() => goto("diff")}
+              title="Live diff against the last commit (⌘D)"
+            >
+              Diff
+            </button>
+          </span>
+        )}
+
         <button
           className={`rail-btn ${gitOpen ? "on" : ""}`}
           onClick={() => showPanel("showGit")}
@@ -2091,7 +2193,7 @@ export default function App() {
           <div className="entries">
             <FileTree
               repos={repos}
-              filesByRepo={filesByRepo}
+              filesByRepo={shownByRepo}
               marks={liveMarks}
               activeRepoPath={settingsOpen ? null : activeRepoPath}
               activePath={activePath}
@@ -2107,6 +2209,7 @@ export default function App() {
               onDelete={deleteOne}
               onDeleteDir={deleteDirOne}
               onReveal={revealOne}
+              onHandOff={chat === false ? undefined : (repo, path) => void handOff(repo, path)}
               onNewFile={newFileIn}
               onNewFolder={newFolderIn}
               onMove={moveTo}
@@ -2150,9 +2253,12 @@ export default function App() {
                           : "Agent skill updated — review it in the git panel",
                     ),
                   (e) => notify(String(e), "error"),
-                )
+                ).finally(() => void readInstalls())
               }
+              skills={skills}
               onInstallCli={installCli}
+              cli={cli}
+              agents={agents}
               version={appVersion}
               onCheckUpdates={() => void lookForUpdate(true)}
               onReleaseNotes={() => void showNotes()}
@@ -2196,29 +2302,6 @@ export default function App() {
                     );
                   })}
                 </div>
-                {/* The mode belongs to the buffer, so its switch lives with
-                    the buffers — pinned right while the tabs scroll. */}
-                {activePath && (
-                  <span className="segmented small view-switch">
-                    <button className={view === "write" ? "on" : ""} onClick={() => goto("write")}>
-                      Write
-                    </button>
-                    <button
-                      className={view === "source" ? "on" : ""}
-                      onClick={() => goto("source")}
-                      title="The raw markdown, exactly as it is on disk"
-                    >
-                      Source
-                    </button>
-                    <button
-                      className={view === "diff" ? "on" : ""}
-                      onClick={() => goto("diff")}
-                      title="Live diff against the last commit (⌘D)"
-                    >
-                      Diff
-                    </button>
-                  </span>
-                )}
                 </div>
               )}
 
@@ -2397,7 +2480,7 @@ export default function App() {
               ) : (
                 <div className="editor-host">
                   <DiffView
-                    repo={activeRepo!.path}
+                    repo={activeRepoOrPath}
                     relPath={activePath}
                     buffer={source}
                     onEdit={onSourceChange}
@@ -2412,7 +2495,7 @@ export default function App() {
 
         {gitOpen && (
           <GitPanel
-            repo={activeRepo!.path}
+            repo={activeRepoOrPath}
             status={status}
             busy={busy}
             onRun={onRun}
@@ -2420,7 +2503,7 @@ export default function App() {
             onOpen={(p) => {
               // Set the mode on that tab, not on whichever buffer was active
               // when the click happened.
-              const repo = activeRepo!.path;
+              const repo = activeRepoOrPath;
               void openFile(repo, p).then(() =>
                 setTabs((prev) =>
                   prev.map((t) =>
@@ -2623,8 +2706,8 @@ export default function App() {
         gitCommands={gitCommands}
         hasMatter={matter !== null}
         canEdit={!!activePath}
-        canFleshOut={!!activePath && chat !== false}
-        onFleshOut={() => void fleshOut()}
+        canHandOff={!!activePath && chat !== false}
+        onHandOff={() => void handOff()}
         onCopyAgentCommand={() => void copyAgentCommand()}
         onMatter={() => {
           if (matter === null) onMatterChange("");

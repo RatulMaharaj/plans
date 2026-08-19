@@ -70,8 +70,8 @@ type Props = {
   hasMatter: boolean;
   canEdit: boolean;
   /** False when there is no tmux, so the action is absent rather than broken. */
-  canFleshOut: boolean;
-  onFleshOut: () => void;
+  canHandOff: boolean;
+  onHandOff: () => void;
   onCopyAgentCommand: () => void;
   onMatter: () => void;
   /** From settings: what `status:` may be set to from here. */
@@ -121,13 +121,13 @@ function buildCommands(p: Props): Command[] {
     hint: "repos, files, git, open file",
     run: p.onReload,
   });
-  if (p.canFleshOut) {
+  if (p.canHandOff) {
     add({
-      id: "agent.flesh",
+      id: "agent.handoff",
       group: "Agent",
-      label: "Flesh out this plan",
+      label: "Hand off this plan to an agent",
       terms: "claude agent run tmux write expand",
-      run: p.onFleshOut,
+      run: p.onHandOff,
     });
     add({
       id: "agent.copy",
@@ -360,6 +360,7 @@ function buildCommands(p: Props): Command[] {
       | "showIgnored"
       | "showExtensions"
       | "showFrontmatter"
+      | "showCompleted"
       | "sourceLineNumbers"
       | "sourceWrap"
       | "showIndex"
@@ -389,6 +390,7 @@ function buildCommands(p: Props): Command[] {
   toggle("showIgnored", "Files", "Gitignored files");
   toggle("showExtensions", "Files", "File extensions");
   toggle("showFrontmatter", "Files", "Frontmatter block");
+  toggle("showCompleted", "Files", "Finished plans", undefined, "done completed archive hide");
   toggle("sourceLineNumbers", "Source", "Line numbers");
   toggle("sourceWrap", "Source", "Wrap long lines");
   toggle("showIndex", "Panels", "File tree", "⌘B", "sidebar files explorer");

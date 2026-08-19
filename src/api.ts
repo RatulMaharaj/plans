@@ -55,6 +55,12 @@ export type Pane = {
 
 export type MuxInfo = { kind: string; version: string };
 
+/** An agent the app looks for: its binary name, version and protocol support. */
+export type AgentFound = { id: string; version: string | null; supported: boolean };
+
+/** The installed `plans` script: where it is, and whether it is this build's. */
+export type CliStatus = { path: string; current: boolean };
+
 /**
  * A chat turn's handle. Its narration arrives as `chat-delta` / `chat-tool`
  * events carrying `{ id, ... }`, and `chat-done` / `chat-error` end it.
@@ -93,6 +99,12 @@ export const api = {
 
   /** Put the `plans` command on the PATH; returns where it was written. */
   installCli: () => invoke<string>("install_cli"),
+
+  /** Where the `plans` script is, if it is there at all. */
+  cliStatus: () => invoke<CliStatus | null>("cli_status"),
+
+  /** Which of the agents the app knows about are installed here. */
+  chatAgents: () => invoke<AgentFound[]>("chat_agents"),
 
   listPlans: (repo: string, dirs: string[], includeIgnored = false) =>
     invoke<any[]>("list_plans", { repo, dirs, includeIgnored }).then((xs) =>

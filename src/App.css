@@ -276,6 +276,9 @@ button, .rail, .bar, .tabs, .ctx {
 
 .rail-spacer { flex: 1; }
 
+/* The buffer's mode switch, in the rail with the other chrome. */
+.rail .view-switch { flex: 0 0 auto; margin-right: 10px; }
+
 /* Rail buttons are letterforms, not icons. */
 .rail-btn {
   background: transparent;
@@ -1000,6 +1003,12 @@ input[type="range"]::-webkit-slider-thumb {
 }
 .act:hover:not(:disabled) { color: var(--ink); }
 .act:disabled { opacity: 0.4; cursor: default; }
+/*
+ * Not a button: there is nothing to press, so it reads as a fact — and stays
+ * in the ink greys. Green here is the git vocabulary, where it means "new
+ * file"; borrowing it for "installed" says something the palette does not.
+ */
+.act.done { cursor: default; color: var(--ink-3); }
 
 .diff { border-bottom: 1px solid var(--rule); max-height: 300px; overflow: auto; }
 .diff-head {
@@ -1573,16 +1582,6 @@ diffs-container {
 .source .cm-editor { height: 100%; }
 .source .cm-editor.cm-focused { outline: none; }
 
-/* A prompt is a paragraph: the row stops being a line and the field grows. */
-.setting-row.tall { align-items: start; }
-.setting-area { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; }
-.setting-area textarea.setting-field {
-  width: 100%;
-  resize: vertical;
-  line-height: 1.55;
-  padding: 8px 10px;
-}
-
 /* --- searching the settings --------------------------------------------- */
 
 .settings-filter {
@@ -1718,12 +1717,6 @@ body.resizing.resizing-row, body.resizing.resizing-row .chat-edge { cursor: row-
   overflow-x: auto;
   flex: 1 1 auto;
   min-width: 0;
-}
-/* The buffer's mode switch: pinned to the right edge while the tabs scroll. */
-.tab-row .view-switch {
-  flex: 0 0 auto;
-  align-self: center;
-  margin: 0 10px 0 8px;
 }
 .tab {
   display: flex;
@@ -1933,6 +1926,36 @@ body.resizing.resizing-row, body.resizing.resizing-row .chat-edge { cursor: row-
 .setting-field:focus { outline: 0; border-bottom-color: var(--ink-3); }
 .setting-field::placeholder { color: var(--ink-3); }
 
+/*
+ * A prompt is a paragraph, not a value.
+ *
+ * Everything above is built for a short right-aligned value sitting opposite
+ * its label. Prose needs the opposite of all of it: the label goes above, the
+ * field takes the width, and the text reads from the left like text.
+ */
+.setting-row.tall {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 10px;
+}
+.setting-row.tall .setting-label { max-width: none; }
+.setting-area { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; }
+.setting-area textarea.setting-field {
+  width: 100%;
+  box-sizing: border-box;
+  text-align: left;
+  resize: vertical;
+  min-height: 96px;
+  line-height: 1.6;
+  padding: 9px 11px;
+  border: 1px solid var(--rule);
+  border-radius: 4px;
+  /* The code surface: this is a prompt, which is closer to code than to
+     prose, and the token already exists for exactly that register. */
+  background: var(--code-bg);
+}
+.setting-area textarea.setting-field:focus { border-color: var(--ink-3); }
+
 /* --- a list captured one badge at a time (statuses) ---------------------- */
 .tags-row { align-items: flex-start; }
 .setting-tags {
@@ -2130,6 +2153,15 @@ body.resizing.resizing-row, body.resizing.resizing-row .chat-edge { cursor: row-
 
 .mux-spacer { flex: 1; }
 
+.chat-where {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  color: var(--ink-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .chat-title {
   font-family: var(--mono);
   font-size: 10px;

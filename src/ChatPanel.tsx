@@ -9,9 +9,14 @@ import { track } from "./analytics";
  * The machinery — a headless CLI run per turn, a session id carried between
  * turns — stays out of sight. What remains is the exchange: you type, the
  * answer streams in, and anything the agent does to files arrives through the
- * watcher and git the way every outside edit always has. The transcript
- * belongs to the plan, not to the panel: each (repo, plan) pair keeps its own
- * conversation, resumed when the plan is reopened.
+ * watcher and git the way every outside edit always has.
+ *
+ * The transcript belongs to the *repository*. One conversation per repo, not
+ * per file: people do not think about a plan in isolation, they think about
+ * the work, and a chat that resets every time you click another file forgets
+ * what you were doing for no reason the agent shares. Which plan is open is
+ * still said — it rides the turn as a line of context whenever it changes —
+ * but it does not partition the conversation.
  */
 
 type Msg = {
@@ -19,13 +24,18 @@ type Msg = {
   text: string;
 };
 
-type Thread = { messages: Msg[]; session: string | null };
+type Thread = {
+  messages: Msg[];
+  session: string | null;
+  /** The plan named to the agent most recently, so a change can be mentioned. */
+  plan?: string | null;
+};
 
 type Props = {
   repo: string;
-  /** The plan the conversation is about; the chat is per-plan on purpose. */
+  /** The plan on screen. Context for the turn, not the key of the chat. */
   relPath: string | null;
-  /** A message the app wants sent — "Flesh out" arrives this way. */
+  /** A message the app wants sent — "Hand off" arrives this way. */
   seed: string | null;
   onSeedUsed: () => void;
   /** The agent binary from settings; the flags are the Rust side's. */
@@ -35,7 +45,13 @@ type Props = {
   onResize: (e: React.PointerEvent<HTMLDivElement>) => void;
 };
 
-const keyOf = (repo: string, rel: string) => `plans.chat.v1::${repo}::${rel}`;
+/*
+ * v2: v1 keyed on the plan as well, and those entries are left where they are
+ * rather than merged. Concatenating several file-scoped transcripts into one
+ * would produce a conversation nobody had, and the agent's own sessions are
+ * per-transcript anyway — the honest migration is a fresh start per repo.
+ */
+const keyOf = (repo: string) => `plans.chat.v2::${repo}`;
 
 function load(key: string): Thread {
   try {
@@ -44,7 +60,7 @@ function load(key: string): Thread {
   } catch {
     // A malformed transcript is a fresh one, not a crash.
   }
-  return { messages: [], session: null };
+  return { messages: [], session: null, plan: null };
 }
 
 export function ChatPanel({
@@ -56,8 +72,8 @@ export function ChatPanel({
   notify,
   onResize,
 }: Props) {
-  const key = relPath ? keyOf(repo, relPath) : null;
-  const [thread, setThread] = useState<Thread>({ messages: [], session: null });
+  const key = repo ? keyOf(repo) : null;
+  const [thread, setThread] = useState<Thread>({ messages: [], session: null, plan: null });
   const [input, setInput] = useState("");
   /** The turn in flight, if any, and which conversation it belongs to. */
   const turn = useRef<{ id: ChatId; key: string; at: number } | null>(null);
@@ -83,11 +99,11 @@ export function ChatPanel({
     if (keyRef.current === k) setThread(next);
   }, []);
 
-  // Switching plans switches conversations, mid-stream or not.
+  // Switching repositories switches conversations, mid-stream or not.
   useEffect(() => {
     keyRef.current = key;
     if (!key) {
-      setThread({ messages: [], session: null });
+      setThread({ messages: [], session: null, plan: null });
       return;
     }
     const t = threads.current.get(key) ?? load(key);
@@ -153,21 +169,34 @@ export function ChatPanel({
 
   const send = useCallback(
     async (text: string, seeded = false) => {
-      if (!key || !relPath || !text.trim() || turn.current || inflight.current) return;
+      if (!key || !text.trim() || turn.current || inflight.current) return;
       inflight.current = true;
       const t = threads.current.get(key) ?? load(key);
-      // The plan's identity rides the first turn; --resume carries it after.
-      const preamble = t.session
+      /*
+       * Two kinds of context, and neither is repeated for its own sake.
+       *
+       * The repository is said once, on the turn that opens the session;
+       * `--resume` carries it after that. The plan is said whenever it is not
+       * the one the agent was last told about — which is the first turn, and
+       * every turn after you click a different file. Saying it every time
+       * would waste tokens and read as nagging in the transcript.
+       */
+      const opening = t.session
         ? ""
         : `You are working in the repository at ${repo}. ` +
-          `The plan under discussion is ${relPath}. ` +
           `Edit files directly when asked, and keep answers brief.\n\n`;
-      commit(key, (cur) => ({ ...cur, messages: [...cur.messages, { role: "user", text }] }));
+      const moved = relPath && relPath !== t.plan;
+      const where = moved ? `The plan I am looking at is ${relPath}.\n\n` : "";
+      commit(key, (cur) => ({
+        ...cur,
+        plan: relPath ?? cur.plan ?? null,
+        messages: [...cur.messages, { role: "user", text }],
+      }));
       setBusy(true);
       // The length and whether a button wrote it — never the message itself.
       track("chat_message_sent", { seeded, chars: text.length, resumed: !!t.session });
       try {
-        const id = await api.chatSend(repo, cmd, preamble + text, t.session);
+        const id = await api.chatSend(repo, cmd, opening + where + text, t.session);
         turn.current = { id, key, at: Date.now() };
       } catch (e) {
         setBusy(false);
@@ -179,7 +208,7 @@ export function ChatPanel({
     [key, relPath, repo, cmd, commit, notify],
   );
 
-  // "Flesh out" and friends arrive as a seeded message, sent as if typed.
+  // "Hand off" and friends arrive as a seeded message, sent as if typed.
   // Consumed through a ref: the parent's state update that clears the seed
   // has not re-rendered yet when StrictMode runs this effect the second time.
   const seenSeed = useRef<string | null>(null);
@@ -207,7 +236,10 @@ export function ChatPanel({
       {/* First child, so it sits over the panel's leading edge either way. */}
       <div className="chat-edge" onPointerDown={onResize} aria-hidden />
       <div className="panel-head">
-        <span className="chat-title">{relPath ?? "Agent"}</span>
+        {/* The repository names the conversation; the plan is only what it
+            is currently pointed at, and that changes under it. */}
+        <span className="chat-title">{repo.split("/").pop() || "Agent"}</span>
+        {relPath && <span className="chat-where">{relPath}</span>}
         <span className="mux-spacer" />
         {busy && (
           <button className="mux-key" onClick={stop} title="Stop this answer">
@@ -220,8 +252,8 @@ export function ChatPanel({
         {thread.messages.length === 0 && (
           <div className="chat-hint">
             {relPath
-              ? "Ask for anything — the agent can read and edit this plan."
-              : "Open a plan to talk about it."}
+              ? "Ask for anything — the agent can read and edit this repository."
+              : "Ask for anything about this repository."}
           </div>
         )}
         {thread.messages.map((m, i) =>
@@ -242,8 +274,7 @@ export function ChatPanel({
         <textarea
           rows={1}
           value={input}
-          disabled={!relPath}
-          placeholder={relPath ? "Ask the agent…" : "Nothing open"}
+          placeholder="Ask the agent…"
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={(e) => {
             // The conversation's keys, not the app's — but chords stay the

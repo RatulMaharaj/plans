@@ -113,6 +113,34 @@ export function statusTone(
   return "other";
 }
 
+/**
+ * Is this plan finished?
+ *
+ * Several spellings, because the app reads conventions rather than owning a
+ * vocabulary: someone's list says "done", someone else's says "shipped". The
+ * set is deliberately small — anything unrecognised is not finished, which is
+ * the safe way to be wrong when the answer decides whether a file is shown.
+ */
+const DONE_WORDS = ["done", "complete", "completed", "shipped", "archived"];
+
+export function isDone(status: string | null | undefined): boolean {
+  return !!status && DONE_WORDS.includes(status.trim().toLowerCase());
+}
+
+/**
+ * The folders whose whole contents are finished by convention.
+ *
+ * A plan moved into `plans/completed/` often keeps whatever status it had, so
+ * the folder is the statement. Matched on any path segment, so it works for
+ * `completed/` at the root and `plans/archive/` alike.
+ */
+const DONE_DIRS = ["completed", "complete", "done", "archive", "archived"];
+
+export function inDoneFolder(relPath: string): boolean {
+  const parts = relPath.split("/").slice(0, -1);
+  return parts.some((p) => DONE_DIRS.includes(p.trim().toLowerCase()));
+}
+
 /** The keys, for the collapsed summary line. */
 export function matterKeys(matter: string): string[] {
   return matter

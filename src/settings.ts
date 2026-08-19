@@ -1,6 +1,6 @@
 import { FONTS, MONO_FONTS } from "./fonts";
 import { applyTheme, DEFAULT_THEME, type ThemeId } from "./theme";
-import { FLESH_OUT_PROMPT } from "./agent";
+import { HANDOFF_PROMPT } from "./agent";
 
 /** Everything the reader can change, in one place. */
 export type Settings = {
@@ -47,6 +47,12 @@ export type Settings = {
   /** Hold YAML frontmatter apart from the prose, above the page. */
   showFrontmatter: boolean;
   /**
+   * Whether finished plans stay in the tree. Off hides anything whose status
+   * reads as done, and anything inside a `completed/`-style folder — the two
+   * ways this app's own repository says a plan is over.
+   */
+  showCompleted: boolean;
+  /**
    * The choices the palette offers for `status:`, comma-separated. A
    * convention, not a schema — a file may say anything; these are only what
    * the app offers to write.
@@ -67,7 +73,7 @@ export type Settings = {
 
   // Agents
   /**
-   * The command run by "Flesh out this plan", as a template.
+   * The command run by "Hand off to agent", as a template.
    *
    * `{prompt}` is the instruction, `{file}` the plan's repo-relative path.
    * A template rather than a binary name because no two agents take a prompt
@@ -81,11 +87,11 @@ export type Settings = {
    */
   chatCommand: string;
   /**
-   * The instruction "Flesh out this plan" sends. Editable because it is the
+   * The instruction "Hand off to agent" sends. Editable because it is the
    * one piece of the feature that is about *your* house style, and a prompt
    * you cannot see is a prompt you cannot argue with.
    */
-  fleshOutPrompt: string;
+  handoffPrompt: string;
 
   // Panels
   /** The file tree down the left. */
@@ -146,10 +152,11 @@ export const DEFAULTS: Settings = {
   showIgnored: false,
   showExtensions: true,
   showFrontmatter: true,
+  showCompleted: true,
   statuses: "draft, ready, busy, done",
   agentCommand: "claude {prompt}",
   chatCommand: "claude",
-  fleshOutPrompt: FLESH_OUT_PROMPT,
+  handoffPrompt: HANDOFF_PROMPT,
   imageFolder: "assets",
   sourceLineNumbers: true,
   sourceWrap: true,

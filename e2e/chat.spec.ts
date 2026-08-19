@@ -25,6 +25,8 @@ type Boot = {
   chat?: boolean;
   /** Where the chat sits, when a test cares. */
   place?: "bottom" | "side";
+  /** Replaces the default single-plan repository. */
+  repos?: FakeRepo[];
 };
 
 async function open(page: Page, boot: Boot = {}) {
@@ -48,7 +50,7 @@ async function open(page: Page, boot: Boot = {}) {
       );
       localStorage.setItem("plans.tabs.v1", "[]");
     },
-    [installFakeBackend.toString(), REPOS, boot] as const,
+    [installFakeBackend.toString(), boot.repos ?? REPOS, boot] as const,
   );
 
   await page.goto("/");
@@ -84,6 +86,18 @@ const argsOf = (page: Page, cmd: string) =>
   );
 
 const calls = async (page: Page, cmd: string) => (await argsOf(page, cmd)).length;
+
+/** End the turn `id` the way the backend would, with a session id. */
+async function finish(page: Page, id: number, session: string) {
+  await page.evaluate(
+    ([i, sess]) => {
+      const f = (window as any).__fake;
+      f.emit("chat-delta", { id: i, text: "…" });
+      f.emit("chat-done", { id: i, session: sess, ok: true });
+    },
+    [id, session] as const,
+  );
+}
 
 /** Type into the chat and send. */
 async function say(page: Page, text: string) {
@@ -157,7 +171,7 @@ test("the session survives between turns", async ({ page }) => {
   expect(sent[1].prompt).not.toContain("You are working in");
 });
 
-test("the transcript belongs to the plan, not the panel", async ({ page }) => {
+test("the transcript belongs to the repository, not the panel", async ({ page }) => {
   await open(page);
   await openPlan(page);
   await page.keyboard.press("Meta+j");
@@ -191,21 +205,21 @@ test("no agent CLI means no button, rather than one that fails", async ({ page }
   expect(faults).toEqual([]);
 });
 
-test("fleshing out a plan is the first message of its chat", async ({ page }) => {
+test("handing a plan to the agent is the first message of its chat", async ({ page }) => {
   await open(page);
   await openPlan(page);
   // The palette is the only door now: the page header carries no agent button.
   await page.keyboard.press("Meta+p");
-  await page.locator(".palette-input").fill(">flesh out");
-  await expect(page.locator(".palette-row").first()).toContainText(/flesh out/i);
+  await page.locator(".palette-input").fill(">hand off");
+  await expect(page.locator(".palette-row").first()).toContainText(/hand off/i);
   await page.keyboard.press("Enter");
 
   // The run is shown as a conversation, not announced from a distance.
   await expect(page.locator(".chat")).toBeVisible();
   await expect.poll(() => calls(page, "chat_send")).toBe(1);
   const [sent] = await argsOf(page, "chat_send");
-  expect(sent.prompt).toContain("Flesh out the plan at plans/first.md");
-  await expect(page.locator(".chat-msg.user")).toContainText("Flesh out the plan");
+  expect(sent.prompt).toContain("Take over the plan at plans/first.md");
+  await expect(page.locator(".chat-msg.user")).toContainText("Take over the plan");
 });
 
 test("nothing is committed by talking", async ({ page }) => {
@@ -497,17 +511,17 @@ test("the agent settings are gathered in one section", async ({ page }) => {
   await expect(agents).toContainText("Chat agent");
 });
 
-test("the flesh-out instruction is editable, and is what gets sent", async ({ page }) => {
+test("the handoff prompt is editable, and is what gets sent", async ({ page }) => {
   await open(page);
   await openPlan(page);
   await page.keyboard.press("Meta+,");
-  await page.locator(".settings-filter").fill("flesh");
-  const area = page.locator('textarea[aria-label="Flesh out says"]');
+  await page.locator(".settings-filter").fill("handoff");
+  const area = page.locator('textarea[aria-label="Handoff prompt"]');
   await area.fill("Rewrite {file} in the voice of a ship's log.");
 
   await page.keyboard.press("Escape");
   await page.keyboard.press("Meta+p");
-  await page.locator(".palette-input").fill(">flesh out");
+  await page.locator(".palette-input").fill(">hand off");
   await page.keyboard.press("Enter");
 
   await expect.poll(() => calls(page, "chat_send")).toBe(1);
@@ -651,4 +665,198 @@ test("marking a conflict resolved stages it, which is what git means by resolved
   await expect.poll(() => calls(page, "git_stage")).toBe(1);
   const [staged] = await argsOf(page, "git_stage");
   expect(staged.paths).toEqual(["plans/first.md"]);
+});
+
+test("the first poll of a repository does not take the app down", async ({ page }) => {
+  // `refreshStatusFor` compares the new status against a `prev[repo]` that is
+  // undefined until the slower whole-repo refresh has run once. The poll for
+  // the active repository gets there first, so this is the ordinary path, not
+  // an edge: reading `.branch` off the missing side threw on every launch.
+  const faults = await open(page);
+  await openPlan(page);
+  await expect.poll(() => calls(page, "git_status"), { timeout: 15000 }).toBeGreaterThan(0);
+  await page.waitForTimeout(1000);
+
+  expect(faults).toEqual([]);
+  await expect(page.locator(".files")).toBeVisible();
+});
+
+/*
+ * What is already installed.
+ *
+ * Both of these buttons used to offer the same press whatever the state was,
+ * so pressing them looked like nothing happening.
+ */
+
+test("installing the CLI changes the button to say so", async ({ page }) => {
+  await open(page);
+  await page.keyboard.press("Meta+,");
+  const row = page.locator(".setting-row", { hasText: "Command line" });
+  await expect(row).toBeVisible();
+  await expect(row.locator("button.act")).toHaveText("Install");
+  await row.locator("button.act").click();
+
+  await expect(row.locator(".act.done")).toHaveText("Installed");
+  await expect(row.locator("button.act")).toHaveCount(0);
+});
+
+test("a repository that already has the skill is not offered it again", async ({ page }) => {
+  await open(page);
+  await page.keyboard.press("Meta+,");
+
+  const row = page.locator(".repo-row", { hasText: "one" });
+  await expect(row.locator("button.act", { hasText: "Install skill" })).toBeVisible();
+  await row.locator("button.act", { hasText: "Install skill" }).click();
+
+  // Written, and the button stops asking.
+  await expect(row.locator(".act.done")).toHaveText("Skill installed");
+});
+
+test("a plan is handed to the agent from its right-click menu", async ({ page }) => {
+  await open(page);
+  await expandAll(page);
+  await page.locator(".row.file").first().click({ button: "right" });
+
+  await page.locator(".ctx-item", { hasText: "Hand off to agent" }).click();
+
+  // The chat opens on that plan with the instruction already sent.
+  await expect(page.locator(".chat")).toBeVisible();
+  await expect.poll(() => calls(page, "chat_send")).toBe(1);
+  const [sent] = await argsOf(page, "chat_send");
+  expect(sent.prompt).toContain("Take over the plan at plans/first.md");
+});
+
+test("no agent means no handoff in the menu, rather than one that fails", async ({ page }) => {
+  await open(page, { chat: false });
+  await expandAll(page);
+  await page.locator(".row.file").first().click({ button: "right" });
+
+  await expect(page.locator(".ctx")).toBeVisible();
+  await expect(page.locator(".ctx-item", { hasText: "Hand off to agent" })).toHaveCount(0);
+});
+
+test("the agent is chosen from the ones the machine has", async ({ page }) => {
+  await open(page);
+  await page.keyboard.press("Meta+,");
+  await page.locator(".settings-filter").fill("chat agent");
+
+  const pick = page.locator(".setting-row", { hasText: "Chat agent" });
+  // Both known agents are offered, and the one that is missing says so
+  // rather than vanishing from the list.
+  await expect(pick.locator("button", { hasText: "claude" })).toBeVisible();
+  await expect(pick.locator("button", { hasText: "codex (not installed)" })).toBeVisible();
+});
+
+test("an agent that cannot be spoken to says so instead of pretending", async ({ page }) => {
+  await open(page);
+  await page.evaluate(() => ((window as any).__fake.codex = "codex 0.9"));
+  await page.keyboard.press("Meta+,");
+  await page.locator(".settings-filter").fill("chat agent");
+  await page.locator(".setting-row", { hasText: "Chat agent" }).locator("button", { hasText: "codex" }).click();
+
+  // The warning is its own row, so the filter has to go for it to be visible.
+  await page.locator(".settings-filter").fill("");
+  await expect(page.locator(".setting-row", { hasText: "Not yet spoken" })).toBeVisible();
+});
+
+/*
+ * One conversation per repository.
+ */
+
+test("switching plans keeps the conversation, and says where you moved", async ({ page }) => {
+  await open(page, {
+    repos: [
+      {
+        path: "/repo/one",
+        name: "one",
+        branch: "main",
+        files: { "plans/first.md": "# First\n", "plans/second.md": "# Second\n" },
+      },
+    ],
+  });
+  await expandAll(page);
+  await page.locator(".row.file").first().click();
+  await page.keyboard.press("Meta+j");
+  await say(page, "hello");
+  await expect.poll(() => calls(page, "chat_send")).toBe(1);
+
+  await finish(page, 1, "sess-1");
+
+  // A different plan, same chat: the transcript is still there.
+  await page.locator(".row.file").nth(1).click();
+  await expect(page.locator(".chat-msg.user")).toContainText("hello");
+
+  await say(page, "and this one?");
+  await expect.poll(() => calls(page, "chat_send")).toBe(2);
+  const sent = await argsOf(page, "chat_send");
+  // The move is mentioned once, on the turn after it happened — and the
+  // repository framing is not repeated, because --resume carries it.
+  expect(sent[1].prompt).toContain("plans/second.md");
+  expect(sent[1].prompt).not.toContain("You are working in the repository");
+});
+
+test("the same plan twice running is not announced twice", async ({ page }) => {
+  await open(page);
+  await openPlan(page);
+  await page.keyboard.press("Meta+j");
+  await say(page, "one");
+  await expect.poll(() => calls(page, "chat_send")).toBe(1);
+  await finish(page, 1, "sess-1");
+  await say(page, "two");
+  await expect.poll(() => calls(page, "chat_send")).toBe(2);
+
+  const sent = await argsOf(page, "chat_send");
+  expect(sent[0].prompt).toContain("plans/first.md");
+  expect(sent[1].prompt).not.toContain("plans/first.md");
+});
+
+/*
+ * Hiding finished plans.
+ */
+
+const MIXED: FakeRepo[] = [
+  {
+    path: "/repo/one",
+    name: "one",
+    branch: "main",
+    files: {
+      "plans/first.md": "---\nstatus: active\n---\n# First\n",
+      "plans/second.md": "---\nstatus: done\n---\n# Second\n",
+      "plans/completed/third.md": "---\nstatus: active\n---\n# Third\n",
+    },
+  },
+];
+
+const names = async (page: Page) =>
+  page.locator(".row.file .row-name").allTextContents();
+
+test("finished plans can be hidden, by status and by folder", async ({ page }) => {
+  await open(page, { repos: MIXED });
+  await expandAll(page);
+  expect((await names(page)).length).toBe(3);
+
+  await page.keyboard.press("Meta+p");
+  await page.locator(".palette-input").fill(">finished plans");
+  await page.keyboard.press("Enter");
+
+  // Both ways a plan says it is over: the status, and the folder it sits in.
+  const left = await names(page);
+  expect(left.join(" ")).toContain("first");
+  expect(left.join(" ")).not.toContain("second");
+  expect(left.join(" ")).not.toContain("third");
+});
+
+test("hiding them does not close one that is open", async ({ page }) => {
+  await open(page, { repos: MIXED });
+  await expandAll(page);
+  await page.locator(".row.file", { hasText: "second" }).click();
+  await expect(page.locator(".page-path")).toContainText("second.md");
+
+  await page.keyboard.press("Meta+p");
+  await page.locator(".palette-input").fill(">finished plans");
+  await page.keyboard.press("Enter");
+
+  // Out of the tree, still on screen: the setting is a view, not a close.
+  await expect(page.locator(".row.file", { hasText: "second" })).toHaveCount(0);
+  await expect(page.locator(".page-path")).toContainText("second.md");
 });

@@ -6,7 +6,7 @@
  * thing. No browser needed to answer any of this.
  */
 import { test, expect } from "@playwright/test";
-import { agentArgv, agentCommandLine, splitArgv, FLESH_OUT_PROMPT } from "../src/agent";
+import { agentArgv, agentCommandLine, splitArgv, HANDOFF_PROMPT } from "../src/agent";
 import { isBusyPane } from "../src/pane";
 
 test.describe("splitting a command template", () => {
@@ -48,7 +48,7 @@ test.describe("building the agent command", () => {
 
   test("the prompt mentions the file it is about", () => {
     expect(agentArgv("claude {prompt}", FILE)[1]).toBe(
-      FLESH_OUT_PROMPT.replace("{file}", FILE),
+      HANDOFF_PROMPT.replace("{file}", FILE),
     );
   });
 
