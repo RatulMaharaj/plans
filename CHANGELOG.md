@@ -1,5 +1,166 @@
 # plans
 
+## 0.4.0
+
+### Minor Changes
+
+- Chats can be renamed and deleted, from the panel header and the palette.
+  Deleting asks only when there is something to lose, and deleting the only one
+  leaves a fresh conversation rather than an empty panel.
+
+  Settings lists every supported agent — Claude Code, Codex, Gemini, OpenCode —
+  with where you stand on each: chosen, installed, run via npx, or not here at
+  all, with a button rather than a command to copy out. Each says how to sign in
+  before it needs to, and an agent that starts but will not answer repeats that
+  in the chat: "API key is missing" is true and useless on its own, because the
+  fix happens in a terminal.
+
+  Quitting now waits for agents to actually stop before the app goes, rather than
+  asking them to and exiting first — which could leave one running.
+
+  ⌘D no longer opens the diff; ⌘3 does. There is a new "Close all editors"
+  command, and panel commands in the palette say show and hide rather than turn
+  on and off.
+
+- be44131: A repository can have more than one conversation. The chat's header names the
+  current one — after the first thing you said in it — and picks between them;
+  **New** starts a fresh one and ends the agent's session with it, because a new
+  conversation the agent still remembers the last one from is new in name only.
+
+  `/clear` now does what it looks like it does. Sent on to the agent it cleared
+  the agent's context and left the transcript on screen, which was
+  indistinguishable from nothing happening; it is the same intent as New, so it
+  is the same action.
+
+  Both live in the command palette too: "New chat", and every other conversation
+  by the name it gave itself.
+
+- 690e226: Release notes open as an ordinary markdown buffer rather than a pop-up sheet —
+  a tab you can read at your own pace, scroll, and close, rendered by the same
+  editor as everything else. They also cover every version since the one you
+  last read, so skipping a release no longer means skipping its news.
+
+  The buffer lives in memory: nothing is written to disk, and it is not restored
+  on the next launch.
+
+- ab627e1: Searching inside files is now `*` rather than `?` — a wildcard is what people
+  already type for "anything containing this", where a question mark read like a
+  question.
+
+  `#` lists the repository's conversations and takes you to one, marking the one
+  you are already in — written the way a channel is, and leaving `@` free for
+  mentioning a file in a prompt, which is what ACP agents already use it for.
+
+- 3865308: The chat has a model picker, a reasoning-effort dropdown and slash commands —
+  none of which this app knows anything about. The agent advertises what it has
+  when the session opens, and the panel draws a dropdown per option in whatever
+  order they arrive; choosing one asks the agent and redraws from its reply,
+  because a choice can change what else is on offer.
+
+  Typing "/" completes from the commands the agent advertised, with arrows and
+  Tab. Completing is not sending — the agent parses the slash itself — and a
+  slash you meant literally still goes through.
+
+  Context used and what the turn cost appear in the status bar once the agent
+  reports them.
+
+- When an agent asks permission before it acts, the question appears in the
+  transcript with the agent's own choices as buttons, and the turn waits for your
+  answer. Answering freezes it into a statement rather than leaving it pressable,
+  and a question left unanswered when the window closed comes back inert — the
+  process that asked it is gone.
+
+  How often you are asked is the agent's own permission mode, chosen from the
+  pickers in the composer: Auto classifies without asking, Manual asks about
+  everything, Plan Mode runs nothing at all.
+
+- 9690bc5: The chat speaks the Agent Client Protocol.
+
+  Instead of building one CLI's flags and parsing one CLI's output, the app is
+  now an ACP client: it starts an agent that speaks the protocol and draws what
+  that agent says. Which models exist, which reasoning levels, which slash
+  commands, whether a tool needs asking about — none of it is knowledge the app
+  holds any more. A second agent is a row in a table rather than a second parser.
+
+  Tool lines now carry the title the agent wrote for them, and finish: a call
+  goes from running to done in place instead of appending a second line.
+
+  The chat starts fresh. Earlier transcripts are left on disk but not shown: a
+  Claude CLI session id means nothing to an ACP agent, so a conversation carried
+  across would be a conversation only on one side.
+
+- 51f02d3: The agent's task list appears above the transcript while it works, amended in
+  place as it goes. A session survives the process: if the agent dies between
+  turns, the next thing you say asks it to pick the conversation back up rather
+  than starting over.
+
+  Answers render as markdown — bold, code, fences and lists — by building
+  elements rather than injecting markup, so an agent quoting HTML from a file
+  shows you the HTML instead of running it. What you typed is still shown exactly
+  as you typed it.
+
+  Codex, Gemini and OpenCode are in the agent list alongside Claude Code. They
+  were never a second integration; they are rows in a table.
+
+### Patch Changes
+
+- c69e1af: The message box starts three lines tall and grows as you type, up to a ceiling
+  past which it scrolls.
+
+  The agent's pickers no longer clip or scroll: a menu shows every option at
+  once, with descriptions whole, because a picker you have to scroll is a picker
+  you have to search.
+
+  Choosing a different agent now actually changes which one answers. The running
+  session ends at the next thing you say, the transcript stays, and the new agent
+  starts without it — a session id belongs to the agent that opened it.
+
+- 4c4a307: Marking a plan done now updates the tree immediately — hiding it when finished
+  plans are hidden, and changing its badge otherwise — instead of waiting for the
+  next background refresh to read the file back.
+- d66c658: An installed agent is preferred over fetching it with npx on every launch, and
+  Settings → Agents will install it for you. The row says which of the two it
+  will actually do, because the difference is a second or two on the first prompt
+  of every session.
+- cd96eac: Deleting a file, discarding changes, forgetting a repository and removing a
+  frontmatter block all ask again — properly. They used `window.confirm`, which a
+  WKWebView swallows without showing anything, so "ask, then delete" had quietly
+  become "delete". They now put up a real native sheet whose button names the act:
+  Delete, Discard, Forget, Remove.
+- 70c3095: The tree's right-click menu stays on screen: near the bottom or right edge it
+  flips and clamps instead of running off the window.
+
+  ⌘⌫ deletes the selected file, after asking, and only while the tree has focus —
+  everywhere else the chord already means something. F2 renames the open file.
+
+  The finished-plans setting says what it does: "Show finished plans", shown or
+  hidden, rather than a switch whose "off" read as though it turned the plans off.
+
+- bf29a12: The agent's model, effort and mode pickers moved into the composer, under what
+  you are typing — they set what happens next, so they belong with the message
+  rather than reading as a status bar above the conversation.
+
+  They can no longer stretch the window: an option with a long name, or an agent
+  persona whose description runs to paragraphs, used to push the whole app
+  sideways. Menus now hang from the button's right edge and grow back into the
+  space that is there.
+
+  Effort is ordered as the scale it is, lowest nearest the button.
+
+- e534c71: The chat could produce nothing but your own message when the app was started
+  from Finder rather than a terminal: a GUI app inherits launchd's PATH, which
+  holds none of the places an agent CLI is actually installed. The binary is now
+  resolved through your login shell's PATH, so the app finds what your terminal
+  finds.
+
+  The narration reads like the terminal too. A tool call shows what it touched —
+  "Read plan.md", "Bash pnpm test" — rather than a bare tool name, and a turn
+  that fails says so in the transcript instead of only in a toast that is gone
+  by the time you look back.
+
+  The update banner's two actions are spaced apart, and its labels no longer
+  break across lines.
+
 ## 0.3.0
 
 ### Minor Changes
