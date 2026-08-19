@@ -396,7 +396,7 @@ test("the chat's header is the same bar height as the tabs", async ({ page }) =>
 
   // Beside the page, these two sit side by side; a couple of pixels out is
   // visible as a step in the rule that runs under both of them.
-  const tabs = await box(page, ".tabs");
+  const tabs = await box(page, ".tab-row");
   const head = await box(page, ".chat .panel-head");
   expect(head.height).toBe(tabs.height);
   // And the tree's search bar, which is the same strip a column further left.
@@ -563,7 +563,7 @@ test("every panel header is the same bar, whichever panel it is", async ({ page 
   await page.keyboard.press("Meta+g");
   await expect(page.locator(".git")).toBeVisible();
   const gitHead = await box(page, ".git .panel-head");
-  const tabs = await box(page, ".tabs");
+  const tabs = await box(page, ".tab-row");
 
   expect(gitHead.height).toBe(chatHead.height);
   expect(gitHead.height).toBe(tabs.height);
