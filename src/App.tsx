@@ -2057,6 +2057,24 @@ export default function App() {
       } else if (mod && e.key.toLowerCase() === "j") {
         e.preventDefault();
         showPanel("showMux");
+      } else if (mod && (e.key === "Backspace" || e.key === "Delete")) {
+        /*
+         * The Finder gesture, and the one place it must not fire: with the
+         * caret in the page, ⌘⌫ deletes to the start of the line, which is a
+         * thing people mean. Chrome only gets it while the chrome has focus.
+         */
+        if (editing) return;
+        e.preventDefault();
+        if (activeRepoPath && activePath && activeRepoPath !== MEMORY) {
+          void deleteFile(activeRepoPath, activePath);
+        }
+      } else if (e.key === "F2") {
+        // No modifier by convention, and no `editing` guard needed: F2 does
+        // nothing in a text field.
+        e.preventDefault();
+        if (activeRepoPath && activePath && activeRepoPath !== MEMORY) {
+          renameFile(activeRepoPath, activePath);
+        }
       } else if (mod && e.key.toLowerCase() === "g") {
         e.preventDefault();
         showPanel("showGit");
@@ -2093,6 +2111,8 @@ export default function App() {
     newPlan,
     newComment,
     showPanel,
+    deleteFile,
+    renameFile,
     settings.showIndex,
     settings.treeSize,
     settings.size,

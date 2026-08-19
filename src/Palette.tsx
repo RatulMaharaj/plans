@@ -390,13 +390,23 @@ function buildCommands(p: Props): Command[] {
   toggle("showIgnored", "Files", "Gitignored files");
   toggle("showExtensions", "Files", "File extensions");
   toggle("showFrontmatter", "Files", "Frontmatter block");
-  toggle("showCompleted", "Files", "Finished plans", undefined, "done completed archive hide");
   toggle("sourceLineNumbers", "Source", "Line numbers");
   toggle("sourceWrap", "Source", "Wrap long lines");
   toggle("showIndex", "Panels", "File tree", "⌘B", "sidebar files explorer");
   toggle("showGit", "Panels", "Git panel", "⌘G");
   toggle("showMux", "Panels", "Agent chat", "⌘J", "chat agent talk ask");
   toggle("showStatusBar", "Panels", "Status bar");
+
+  // Not `toggle`: "turn off" says nothing about what happens to the plans.
+  // Shown and hidden are the two states, so those are the words.
+  add({
+    id: "showCompleted",
+    group: "Files",
+    label: `Show finished plans: ${s.showCompleted ? "hidden" : "shown"}`,
+    value: s.showCompleted ? "shown" : "hidden",
+    terms: "done completed archive hide",
+    run: () => set({ showCompleted: !s.showCompleted }),
+  });
 
   // Not a `toggle`: the label has to name where it is going, not what it is.
   add({

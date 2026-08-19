@@ -5,7 +5,7 @@
  * it in its real folder structure. The git mark rides on each row, so the tree
  * carries state ambiently and the git panel is only needed to *act*.
  */
-import { memo, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { trace } from "./perf";
 import { statusTone } from "./matter";
 import type { PlanFile, RepoInfo } from "./api";
@@ -211,6 +211,33 @@ function dirKeys(nodes: Node[], repoPath: string, out: string[] = []): string[] 
  */
 export const FileTree = memo(function FileTree(p: Props) {
   const [menu, setMenu] = useState<MenuAt | null>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+  /**
+   * Where the menu actually goes, once its size is known.
+   *
+   * The pointer is only a request: a right-click near the bottom of a long
+   * tree would put a 200px menu below the window and cut it off. Measured
+   * after render because the height depends on which items this row gets —
+   * a file's menu is taller than a folder's.
+   */
+  const [at, setAt] = useState<{ x: number; y: number } | null>(null);
+
+  useLayoutEffect(() => {
+    if (!menu) return setAt(null);
+    const el = menuRef.current;
+    if (!el) return;
+    const { width, height } = el.getBoundingClientRect();
+    const pad = 8;
+    // Flip above the pointer when there is no room below, then clamp — a menu
+    // taller than the window still has to start somewhere on it.
+    const y =
+      menu.y + height + pad > window.innerHeight ? menu.y - height : menu.y;
+    const x = menu.x + width + pad > window.innerWidth ? menu.x - width : menu.x;
+    setAt({
+      x: Math.max(pad, Math.min(x, window.innerWidth - width - pad)),
+      y: Math.max(pad, Math.min(y, window.innerHeight - height - pad)),
+    });
+  }, [menu]);
   /**
    * What is being dragged, and where it is hovering.
    *
@@ -475,7 +502,10 @@ export const FileTree = memo(function FileTree(p: Props) {
       {menu && (
         <div
           className="ctx"
-          style={{ left: menu.x, top: menu.y }}
+          ref={menuRef}
+          // Hidden for the frame it takes to measure: a menu that appears at
+          // the pointer and then jumps is worse than one that appears placed.
+          style={{ left: at?.x ?? menu.x, top: at?.y ?? menu.y, visibility: at ? undefined : "hidden" }}
           onMouseDown={(e) => e.stopPropagation()}
         >
           <p className="ctx-path">

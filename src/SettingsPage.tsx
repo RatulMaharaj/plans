@@ -482,11 +482,17 @@ export function SettingsPage({
             on={s.showMux}
             onChange={(showMux) => onChange({ showMux })}
           />
-          <Toggle
-            label="Finished plans"
-            hint="Off hides anything marked done, and anything inside a completed/ folder. They are still on disk, and an open tab stays open."
-            on={s.showCompleted}
-            onChange={(showCompleted) => onChange({ showCompleted })}
+          {/* Shown/hidden rather than a switch: "off" for a thing called
+              "finished plans" reads as though it turns the plans off. */}
+          <Choice
+            label="Show finished plans"
+            hint="Anything marked done, and anything inside a completed/ folder. Hidden is a view of the tree — they stay on disk, and an open tab stays open."
+            value={s.showCompleted ? "shown" : "hidden"}
+            options={[
+              { value: "shown", label: "Shown" },
+              { value: "hidden", label: "Hidden" },
+            ]}
+            onChange={(v) => onChange({ showCompleted: v === "shown" })}
           />
           <Toggle
             label="Status bar"

@@ -836,7 +836,7 @@ test("finished plans can be hidden, by status and by folder", async ({ page }) =
   expect((await names(page)).length).toBe(3);
 
   await page.keyboard.press("Meta+p");
-  await page.locator(".palette-input").fill(">finished plans");
+  await page.locator(".palette-input").fill(">show finished plans");
   await page.keyboard.press("Enter");
 
   // Both ways a plan says it is over: the status, and the folder it sits in.
@@ -853,7 +853,7 @@ test("hiding them does not close one that is open", async ({ page }) => {
   await expect(page.locator(".page-path")).toContainText("second.md");
 
   await page.keyboard.press("Meta+p");
-  await page.locator(".palette-input").fill(">finished plans");
+  await page.locator(".palette-input").fill(">show finished plans");
   await page.keyboard.press("Enter");
 
   // Out of the tree, still on screen: the setting is a view, not a close.
@@ -900,7 +900,7 @@ test("marking a plan done hides it at once, not at the next poll", async ({ page
 
   // Hide finished plans, then finish one.
   await page.keyboard.press("Meta+p");
-  await page.locator(".palette-input").fill(">finished plans");
+  await page.locator(".palette-input").fill(">show finished plans");
   await page.keyboard.press("Enter");
   await expect(page.locator(".row.file", { hasText: "first" })).toBeVisible();
 
@@ -911,4 +911,59 @@ test("marking a plan done hides it at once, not at the next poll", async ({ page
 
   // The tree knows without reading the file back: the value was just typed.
   await expect(page.locator(".row.file", { hasText: "first" })).toHaveCount(0);
+});
+
+test("the context menu stays on screen near the bottom edge", async ({ page }) => {
+  await open(page, { repos: MIXED });
+  await expandAll(page);
+
+  // Right-click the lowest row there is, which is where a menu opening
+  // downwards would run off the window.
+  const rows = page.locator(".row.file");
+  await rows.last().click({ button: "right" });
+
+  const menu = await box(page, ".ctx");
+  const h = page.viewportSize()!.height;
+  const w = page.viewportSize()!.width;
+  expect(menu.y).toBeGreaterThanOrEqual(0);
+  expect(menu.y + menu.height).toBeLessThanOrEqual(h);
+  expect(menu.x + menu.width).toBeLessThanOrEqual(w);
+  // And every item in it is reachable, which is the point of the clamping.
+  await expect(page.locator(".ctx-item").last()).toBeVisible();
+});
+
+test("cmd-backspace deletes the open file, after asking", async ({ page }) => {
+  await open(page);
+  await openPlan(page);
+
+  page.on("dialog", (d) => void d.accept());
+  await page.keyboard.press("Meta+Backspace");
+
+  await expect.poll(() => calls(page, "delete_plan")).toBe(1);
+  const [gone] = await argsOf(page, "delete_plan");
+  expect(gone.relPath).toBe("plans/first.md");
+});
+
+test("cmd-backspace in the page edits the text instead", async ({ page }) => {
+  await open(page);
+  await openPlan(page);
+
+  // The caret is in the document: ⌘⌫ means "delete to start of line" there,
+  // and taking that away to delete a file would be a nasty surprise.
+  await page.locator(".milkdown .ProseMirror.editor").click();
+  page.on("dialog", (d) => void d.dismiss());
+  await page.keyboard.press("Meta+Backspace");
+
+  await page.waitForTimeout(300);
+  expect(await calls(page, "delete_plan")).toBe(0);
+});
+
+test("F2 renames the open file", async ({ page }) => {
+  await open(page);
+  await openPlan(page);
+  await page.keyboard.press("F2");
+
+  // The name sheet, prefilled with what it is called now.
+  await expect(page.locator(".matter-sheet")).toBeVisible();
+  await expect(page.locator(".name-field")).toHaveValue(/first/);
 });
