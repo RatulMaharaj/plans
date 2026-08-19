@@ -26,11 +26,6 @@ which the card already does (`html-view.ts:175`).
 
 ## Comments: the read side is built, the write side is missing
 
-<!--
-@ratul-maharaj: This is a test comment
-@ratul-maharaj: I think something more than this could be another comment in a thread
-@ratul-maharaj: Another comment
--->
 
 More of this exists than the draft assumes. Today:
 
