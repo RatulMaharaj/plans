@@ -167,19 +167,50 @@ pub fn agent_stop(app: AppHandle, repo: String) -> R<()> {
     Ok(())
 }
 
-/// Shut every session down.
+/// Shut every session down, and wait for it.
 ///
 /// Called on quit. The old design's children lived for one turn and cleaned
 /// themselves up; these live as long as the window, and a `node` per
 /// repository left behind after the app closes is the regression this exists
 /// to prevent.
+///
+/// The waiting is the point. Telling a session to stop only queues the
+/// message: the task that reads it has to be scheduled, the connection has to
+/// drop, and only then does the SDK kill the agent's process group. If this
+/// returned immediately the process would exit first, the children would
+/// re-parent to init, and quitting the app would quietly leave an agent
+/// running. So the main thread blocks — briefly, and with a ceiling, because
+/// a quit that hangs is worse than a stray process.
 pub fn shutdown_all(app: &AppHandle) {
     let Some(state) = app.try_state::<Agents>() else {
         return;
     };
-    let all: Vec<_> = state.0.lock().unwrap().drain().collect();
-    for (repo, l) in all {
-        client::cancel_all(&l.perms, &repo);
-        let _ = l.ops.send(session::Op::Shutdown);
+    /*
+     * Told, not removed.
+     *
+     * Each session takes itself out of the map when its task finishes, and
+     * that is the signal being waited for — draining here would empty the map
+     * before anything had actually stopped, and the wait below would pass
+     * instantly while the agents carried on.
+     */
+    {
+        let live = state.0.lock().unwrap();
+        if live.is_empty() {
+            return;
+        }
+        for (repo, l) in live.iter() {
+            client::cancel_all(&l.perms, repo);
+            let _ = l.ops.send(session::Op::Shutdown);
+        }
+    }
+    let started = std::time::Instant::now();
+    loop {
+        if state.0.lock().unwrap().is_empty() {
+            return;
+        }
+        if started.elapsed() > std::time::Duration::from_secs(2) {
+            return;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
     }
 }
