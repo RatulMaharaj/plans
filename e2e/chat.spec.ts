@@ -1420,3 +1420,30 @@ test("an agent can be installed so it stops being fetched every time", async ({ 
   await expect(row).not.toContainText("npx");
   await expect(row.locator(".act.done")).toHaveText("Installed");
 });
+
+test("an old chat is left behind, not dragged into the new one", async ({ page }) => {
+  await open(page);
+  await page.evaluate(() => {
+    // What the previous design wrote: a transcript plus a CLI session id that
+    // no ACP agent can do anything with.
+    localStorage.setItem(
+      "plans.chat.v2::/repo/one",
+      JSON.stringify({
+        messages: [{ role: "user", text: "an old question" }],
+        session: "old-cli-session",
+      }),
+    );
+  });
+  await page.reload();
+  await openPlan(page);
+  await page.keyboard.press("Meta+j");
+  await expect(page.locator(".chat")).toBeVisible();
+
+  // A conversation the agent has no memory of is a conversation on one side.
+  await expect(page.locator(".chat-log")).not.toContainText("an old question");
+  await expect(page.locator(".chat-hint")).toBeVisible();
+
+  // Left on disk, though: not shown is not the same as deleted.
+  const kept = await page.evaluate(() => localStorage.getItem("plans.chat.v2::/repo/one"));
+  expect(kept).toContain("an old question");
+});

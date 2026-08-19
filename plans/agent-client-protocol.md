@@ -191,11 +191,11 @@ the app overnight.
 
 ## Migration
 
-Bump to `plans.chat.v3::<repo>`. v2's `{role,text}` maps cleanly onto the new `note`
-role, so migrate one way and **drop the stored session id** — a Claude CLI session id
-means nothing to `session/load`. Show one `note` at the seam: *"New agent session —
-earlier context is not carried over."* Following the v1→v2 comment's own reasoning:
-preserve what was said, don't pretend a continuity that isn't there.
+Bump to `plans.chat.v3::<repo>` and carry nothing across. This was built the other
+way first — v2's messages copied in as notes with a seam line — and it was wrong in
+use: a transcript the agent has no memory of is a conversation on one side only, and
+it fills the panel with something that cannot be continued. The old key stays on
+disk untouched; not shown is not the same as deleted.
 
 No agent installed behaves as it does now — the panel hides, and Settings shows the
 install hint instead of a chat that fails.

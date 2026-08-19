@@ -83,36 +83,18 @@ type Props = {
 };
 
 /*
- * v3: v2 stored a Claude CLI session id, which means nothing to an ACP agent,
- * and flattened every tool call into grey text. Its messages are still worth
- * keeping — they are what was said — so they migrate in as notes, and the
- * conversation starts again from there. Preserve what was said; do not pretend
- * a continuity that is not there.
+ * v3: a fresh start per repository, and nothing carried across.
+ *
+ * v2 stored a Claude CLI session id, which means nothing to an ACP agent, and
+ * flattened every tool call into grey text. An earlier version of this copied
+ * those messages in as a record — but a transcript the agent has no memory of
+ * is a conversation only on one side, and it filled the panel with something
+ * that could not be continued. The old key is left on disk, untouched: not
+ * shown is not the same as deleted.
  */
 const keyOf = (repo: string) => `plans.chat.v3::${repo}`;
 
-/** v2's `{role,text}` lines, as much of them as still means anything. */
-function migrated(repo: string): Msg[] {
-  try {
-    const raw = localStorage.getItem(`plans.chat.v2::${repo}`);
-    if (!raw) return [];
-    const old = JSON.parse(raw) as { messages?: { role: string; text: string }[] };
-    const kept = (old.messages ?? []).map((m) =>
-      m.role === "user" || m.role === "assistant"
-        ? ({ role: m.role, text: m.text } as Msg)
-        : ({ role: "note", text: m.text } as Msg),
-    );
-    if (!kept.length) return [];
-    return [
-      ...kept,
-      { role: "note", text: "New agent session — earlier context is not carried over." },
-    ];
-  } catch {
-    return [];
-  }
-}
-
-function load(key: string, repo?: string): Thread {
+function load(key: string): Thread {
   try {
     const raw = localStorage.getItem(key);
     if (raw) {
@@ -135,7 +117,7 @@ function load(key: string, repo?: string): Thread {
   } catch {
     // A malformed transcript is a fresh one, not a crash.
   }
-  return { messages: repo ? migrated(repo) : [], plan: null };
+  return { messages: [], plan: null };
 }
 
 export function ChatPanel({
@@ -183,10 +165,10 @@ export function ChatPanel({
       setThread({ messages: [], plan: null });
       return;
     }
-    const t = threads.current.get(key) ?? load(key, repo);
+    const t = threads.current.get(key) ?? load(key);
     threads.current.set(key, t);
     setThread(t);
-  }, [key, repo]);
+  }, [key]);
 
   /** Add to a transcript: a new bubble, or more of the one being written. */
   const say = useCallback(
