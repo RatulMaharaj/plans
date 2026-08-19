@@ -14,10 +14,13 @@ type Props = {
   onForgetRepo: (path: string) => void;
   /** Write the bundled agent skill into this repository. */
   onInstallSkill: (path: string) => void;
+  onInstallCli: () => void;
   /** The version actually running, and the two things you can do about it. */
   version: string;
   onCheckUpdates: () => void;
   onReleaseNotes: () => void;
+  /** The agent CLI's version, false when none answered, null while asking. */
+  agent: string | null | false;
 };
 
 /**
@@ -45,9 +48,11 @@ export function SettingsPage({
   onAddRepo,
   onForgetRepo,
   onInstallSkill,
+  onInstallCli,
   version,
   onCheckUpdates,
   onReleaseNotes,
+  agent,
 }: Props) {
   const [q, setQ] = useState("");
   return (
@@ -338,26 +343,78 @@ export function SettingsPage({
           />
         </Group>
 
-        {/* ---- panels --------------------------------------------------- */}
+        {/* ---- agents ----------------------------------------------------
+            Everything about the agent in one place: which one, what it is
+            told, where its answers appear. The controls were scattered
+            between here and Panels, which made the chat look like a piece of
+            window furniture rather than the thing it is. */}
         <Group
           name="Agents"
-          hint="The chat panel talks to an agent CLI headlessly, one turn per message. It never commits, and edits land in files where git can see them."
+          hint="The chat panel talks to an agent CLI headlessly, one turn per message. It never commits, and its edits land in files where git can see them."
         >
+          <Row
+            label="Agent found"
+            hint={
+              agent === false
+                ? "No agent CLI answered. The chat is hidden until one does."
+                : agent
+                  ? `${agent} — the chat and ⌘J are available.`
+                  : "Looking…"
+            }
+          />
           <Field
             label="Chat agent"
-            hint="A binary name, nothing more — the flags that make it stream are fixed. The panel hides when it is not installed."
+            hint="A binary name, nothing more — the flags that make it stream are fixed, so the parser and the process cannot drift apart."
             value={s.chatCommand}
             placeholder="claude"
             onChange={(chatCommand) => onChange({ chatCommand })}
           />
+          <Area
+            label="Flesh out says"
+            hint="The instruction sent by “Flesh out this plan”. {file} is the plan's path. Yours to argue with — it is the one part of this that is about your house style."
+            value={s.fleshOutPrompt}
+            onChange={(fleshOutPrompt) => onChange({ fleshOutPrompt })}
+            onReset={() => onChange({ fleshOutPrompt: DEFAULTS.fleshOutPrompt })}
+          />
           <Field
             label="Copyable command"
-            hint="For running a plan by hand in a terminal: {prompt} is the instruction, {file} the plan's path."
+            hint="For running a plan by hand in a terminal instead: {prompt} is the instruction, {file} the plan's path."
             value={s.agentCommand}
             placeholder="claude {prompt}"
             onChange={(agentCommand) => onChange({ agentCommand })}
           />
+          <Choice
+            label="Chat sits"
+            hint="A row under the page, or a column beside it. Beside, it and the git panel take turns — they want the same space."
+            value={s.chatPlace}
+            options={[
+              { value: "bottom", label: "Below" },
+              { value: "side", label: "Beside" },
+            ]}
+            onChange={(v) => onChange({ chatPlace: v as "bottom" | "side" })}
+          />
+          {s.chatPlace === "side" ? (
+            <Slider
+              label="Chat width"
+              hint="Or drag the panel's left edge."
+              value={s.chatWidth}
+              display={`${s.chatWidth}px`}
+              {...RANGES.chatWidth}
+              onChange={(chatWidth) => onChange({ chatWidth })}
+            />
+          ) : (
+            <Slider
+              label="Chat height"
+              hint="Or drag the panel's top edge."
+              value={s.muxHeight}
+              display={`${s.muxHeight}px`}
+              {...RANGES.muxHeight}
+              onChange={(muxHeight) => onChange({ muxHeight })}
+            />
+          )}
         </Group>
+
+        {/* ---- panels --------------------------------------------------- */}
 
         <Group name="Panels">
           <Row
@@ -471,6 +528,18 @@ export function SettingsPage({
           <button className="new-plan" onClick={onAddRepo}>
             Add a repository
           </button>
+          <div className="setting-row static">
+            <span className="setting-label">
+              Command line
+              <span className="setting-hint">
+                Puts a `plans` command on your PATH, so `plans .` in a terminal
+                opens that repository here.
+              </span>
+            </span>
+            <button className="act" onClick={onInstallCli}>
+              Install
+            </button>
+          </div>
         </Group>
 
         <Group name="Credits">
@@ -561,6 +630,49 @@ function Field({
         aria-label={label}
         onChange={(e) => onChange(e.target.value)}
       />
+    </div>
+  );
+}
+
+/**
+ * A paragraph rather than a line — a prompt, which wants to be read whole.
+ * It carries its own reset because a default worth shipping is one people
+ * will want back after editing it.
+ */
+function Area({
+  label,
+  hint,
+  value,
+  onChange,
+  onReset,
+}: {
+  label: string;
+  hint?: string;
+  value: string;
+  onChange: (v: string) => void;
+  onReset?: () => void;
+}) {
+  return (
+    <div className="setting-row static tall">
+      <span className="setting-label">
+        {label}
+        {hint && <span className="setting-hint">{hint}</span>}
+      </span>
+      <span className="setting-area">
+        <textarea
+          className="setting-field"
+          value={value}
+          rows={5}
+          spellCheck={false}
+          aria-label={label}
+          onChange={(e) => onChange(e.target.value)}
+        />
+        {onReset && (
+          <button className="setting-reset" onClick={onReset}>
+            reset
+          </button>
+        )}
+      </span>
     </div>
   );
 }
@@ -699,6 +811,7 @@ function Choice({
 
 function Slider({
   label,
+  hint,
   value,
   display,
   min,
@@ -708,6 +821,8 @@ function Slider({
   fallback,
 }: {
   label: string;
+  /** Said once beside the number, for sliders whose units need explaining. */
+  hint?: string;
   value: number;
   display: string;
   min: number;
@@ -724,6 +839,7 @@ function Slider({
         {label}
         <span className="setting-hint">
           {display}
+          {hint && ` · ${hint}`}
           {moved && (
             <button
               className="setting-reset"

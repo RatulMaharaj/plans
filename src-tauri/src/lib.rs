@@ -111,6 +111,12 @@ pub struct GitStatus {
     behind: u32,
     has_upstream: bool,
     entries: Vec<StatusEntry>,
+    /// "merge", "rebase", "cherry-pick" or "revert" while one is unfinished.
+    ///
+    /// The app cannot finish any of them, but it must stop pretending the
+    /// repository is in an ordinary state — offering push mid-merge is how a
+    /// person ends up with a half-merged branch on the remote.
+    operation: Option<String>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -750,8 +756,99 @@ fn reveal_in_finder(repo: String, rel_path: String) -> R<()> {
 }
 
 // ---------------------------------------------------------------------------
+// the `plans` command line
+// ---------------------------------------------------------------------------
+
+/// The repository named on the command line at launch, held until the
+/// frontend boots and takes it. `take` rather than `get`: a reload of the
+/// webview must not re-open a path from a launch long past.
+#[derive(Default)]
+pub struct CliOpen(std::sync::Mutex<Option<String>>);
+
+/// The first non-flag argument, resolved against `cwd` to an existing
+/// directory. `plans .` is the whole point, so relative paths must survive
+/// the trip through exec; canonicalize also throws away trailing `/.`.
+fn cli_repo_arg<S: AsRef<str>>(args: &[S], cwd: &Path) -> Option<String> {
+    let raw = args.iter().skip(1).find(|a| !a.as_ref().starts_with('-'))?;
+    let p = Path::new(raw.as_ref());
+    let abs = if p.is_absolute() { p.to_path_buf() } else { cwd.join(p) };
+    abs.canonicalize()
+        .ok()
+        .filter(|p| p.is_dir())
+        .map(|p| p.to_string_lossy().into_owned())
+}
+
+#[tauri::command]
+fn cli_open_path(state: tauri::State<CliOpen>) -> Option<String> {
+    state.0.lock().unwrap().take()
+}
+
+/// Write a small `plans` script onto the PATH so `plans .` opens the current
+/// repository in the app. The script backgrounds the app and quiets its
+/// output, so the terminal gets its prompt back; a second invocation is
+/// caught by the single-instance plugin and forwarded to the open window.
+#[tauri::command]
+fn install_cli() -> R<String> {
+    let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+    let script = format!(
+        "#!/bin/sh\n# Installed by Plans ({}). Opens a repository in the app.\n\"{}\" \"$@\" >/dev/null 2>&1 &\n",
+        env!("CARGO_PKG_VERSION"),
+        exe.display()
+    );
+    // Homebrew's bin first — on every recent macOS it is the one PATH entry
+    // an admin user can write without sudo.
+    let dirs = ["/opt/homebrew/bin", "/usr/local/bin"];
+    let mut last_err = String::new();
+    for dir in dirs {
+        if !Path::new(dir).is_dir() {
+            continue;
+        }
+        let dest = Path::new(dir).join("plans");
+        match std::fs::write(&dest, &script) {
+            Ok(()) => {
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::PermissionsExt;
+                    std::fs::set_permissions(&dest, std::fs::Permissions::from_mode(0o755))
+                        .map_err(|e| e.to_string())?;
+                }
+                return Ok(dest.to_string_lossy().into_owned());
+            }
+            Err(e) => last_err = format!("{}: {e}", dest.display()),
+        }
+    }
+    Err(if last_err.is_empty() {
+        "no writable bin directory found on PATH".into()
+    } else {
+        last_err
+    })
+}
+
+// ---------------------------------------------------------------------------
 // git commands
 // ---------------------------------------------------------------------------
+
+/// Which multi-step git operation, if any, is part-way through.
+///
+/// Read from the git directory rather than inferred from status codes: a
+/// conflicted file tells you a merge *went wrong*, while these files tell you
+/// one is still open, which is the thing the app needs to say.
+fn in_progress(repo: &str) -> Option<String> {
+    let dir = git(repo, &["rev-parse", "--git-dir"]).ok()?;
+    let dir = Path::new(repo).join(dir.trim());
+    for (file, name) in [
+        ("MERGE_HEAD", "merge"),
+        ("rebase-merge", "rebase"),
+        ("rebase-apply", "rebase"),
+        ("CHERRY_PICK_HEAD", "cherry-pick"),
+        ("REVERT_HEAD", "revert"),
+    ] {
+        if dir.join(file).exists() {
+            return Some(name.to_string());
+        }
+    }
+    None
+}
 
 fn parse_ahead_behind(repo: &str) -> (u32, u32, bool) {
     match git(
@@ -807,6 +904,7 @@ fn git_status(repo: String, scope: Vec<String>) -> R<GitStatus> {
     let (ahead, behind, has_upstream) = parse_ahead_behind(&repo);
 
     Ok(GitStatus {
+        operation: in_progress(&repo),
         branch,
         ahead,
         behind,
@@ -900,9 +998,45 @@ fn git_push(repo: String) -> R<String> {
     }
 }
 
+/// Does this repository have an opinion about `pull.rebase` already?
+///
+/// `git config --get` exits non-zero when the key is unset, so an `Err` here
+/// means "unset" rather than "broken".
+fn pull_configured(repo: &str) -> bool {
+    git(repo, &["config", "--get", "pull.rebase"]).is_ok()
+}
+
+/// Pull, in the two ways `--ff-only` used to refuse.
+///
+/// `--autostash` sets uncommitted work aside and puts it back afterwards:
+/// editing a plan is the normal state of this app, and a pull that fails
+/// because you have unsaved thoughts is a pull that fails always.
+///
+/// `--rebase` is for the other refusal — local commits alongside remote ones.
+/// This is a repository of prose, usually written by one person on more than
+/// one machine, and a merge commit saying "I wrote a paragraph in two places"
+/// records nothing anybody will read. It is passed only when the repository
+/// has no `pull.rebase` of its own: someone who has configured a preference
+/// has already answered this question.
+///
+/// Neither flag makes conflicts impossible. When one happens the repository
+/// is left exactly as git left it — mid-rebase, or with the stash still in
+/// the list — and the message says so, because finishing that is a terminal's
+/// job and pretending otherwise would lose work.
 #[tauri::command]
 fn git_pull(repo: String) -> R<String> {
-    git(&repo, &["pull", "--ff-only"])
+    let mut args = vec!["pull", "--autostash"];
+    if !pull_configured(&repo) {
+        args.push("--rebase");
+    }
+    git(&repo, &args).map_err(|e| {
+        let mid = Path::new(&repo).join(".git");
+        if mid.join("rebase-merge").exists() || mid.join("rebase-apply").exists() {
+            format!("{e}\n\nThe rebase stopped part-way. Finish or abort it in a terminal.")
+        } else {
+            e
+        }
+    })
 }
 
 #[tauri::command]
@@ -1012,7 +1146,23 @@ fn wear_the_development_face() {
 }
 
 pub fn run() {
-    let builder = tauri::Builder::default()
+    let builder = tauri::Builder::default();
+
+    // Registered before every other plugin, as its docs require: a second
+    // `plans <path>` hands its argv and cwd to the running instance here and
+    // exits, instead of opening a second window.
+    #[cfg(desktop)]
+    let builder = builder.plugin(tauri_plugin_single_instance::init(|app, args, cwd| {
+        use tauri::{Emitter, Manager};
+        if let Some(path) = cli_repo_arg(&args, Path::new(&cwd)) {
+            let _ = app.emit("cli-open", path);
+        }
+        if let Some(w) = app.get_webview_window("main") {
+            let _ = w.set_focus();
+        }
+    }));
+
+    let builder = builder
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init());
 
@@ -1026,8 +1176,15 @@ pub fn run() {
 
     builder
         .manage(chat::Chats::default())
+        .manage(CliOpen(std::sync::Mutex::new(
+            std::env::current_dir().ok().and_then(|cwd| {
+                cli_repo_arg(&std::env::args().collect::<Vec<_>>(), &cwd)
+            }),
+        )))
         .invoke_handler(tauri::generate_handler![
             open_repo,
+            cli_open_path,
+            install_cli,
             list_plans,
             stat_plan,
             search_plans,

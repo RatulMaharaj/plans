@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
-import { api, type GitStatus, type PlanFile, type RepoInfo } from "./api";
+import { listen } from "@tauri-apps/api/event";
+import { api, type GitStatus, type PlanFile, type RepoInfo, type StatusEntry } from "./api";
 import { Editor } from "./Editor";
 import { GitPanel } from "./GitPanel";
 import { ChatPanel } from "./ChatPanel";
@@ -40,6 +41,7 @@ import {
 } from "./settings";
 import {
   resumeAnalytics,
+  setRepoCount,
   setAppVersion as stampVersion,
   stopAnalytics,
   track,
@@ -142,7 +144,23 @@ export default function App() {
   tick("render App");
   const [settings, setSettings] = useState<Settings>(loadSettings);
   const set = useCallback((patch: Partial<Settings>) => {
-    setSettings((s) => ({ ...s, ...patch }));
+    setSettings((s) => {
+      const next = { ...s, ...patch };
+      /*
+       * Beside the page there is only room for one right-hand column, so git
+       * and the chat take turns: whichever was just asked for wins, and the
+       * other closes rather than being refused. Enforced here because every
+       * door — the rail, the palette, ⌘G/⌘J, Settings — comes through `set`,
+       * and a rule written at one of them would be missing from the rest.
+       */
+      if (next.chatPlace === "side") {
+        if (patch.showGit && next.showMux) next.showMux = false;
+        if (patch.showMux && next.showGit) next.showGit = false;
+        // Moving the chat to the side with both open: the chat is what moved.
+        if (patch.chatPlace === "side" && next.showGit && next.showMux) next.showGit = false;
+      }
+      return next;
+    });
     // Which knobs get turned, never what they were turned to — a font size is
     // harmless, but "imageFolder" is a path, so only the name goes.
     for (const key of Object.keys(patch)) noteSettingChange(key);
@@ -227,6 +245,12 @@ export default function App() {
     run: (value: string) => void;
   }>(null);
   const [branches, setBranches] = useState<string[]>([]);
+  /**
+   * Set the first time the rail's branch picker is opened. The list is slow
+   * enough to be worth not fetching for people who never change branch, and
+   * the rail is on screen always — so the picker asks rather than the rail.
+   */
+  const [wantBranches, setWantBranches] = useState(false);
   /** Every folder in a repository, for the sheets that place a file. */
   const foldersIn = useCallback(
     (repo: string) => {
@@ -359,9 +383,28 @@ export default function App() {
     setTimeout(() => setToast(null), kind === "error" ? 6000 : 2200);
   }, []);
 
+  /**
+   * Each view change reports where the reader came from and how long they
+   * stayed there, so "where is the time spent — write, source, diff?" is a
+   * sum over `from`/`seconds` rather than a guess from event gaps.
+   */
+  const viewSince = useRef<{ view: View; at: number } | null>(null);
   useEffect(() => {
-    track("view_changed", { view });
+    const prev = viewSince.current;
+    viewSince.current = { view, at: Date.now() };
+    track("view_changed", {
+      view,
+      ...(prev && {
+        from: prev.view,
+        seconds: Math.round((Date.now() - prev.at) / 1000),
+      }),
+    });
   }, [view]);
+
+  // Every event carries the repo count, so any behaviour can be split by it.
+  useEffect(() => {
+    setRepoCount(repos.length);
+  }, [repos.length]);
 
   useEffect(() => {
     applySettings(settings);
@@ -479,6 +522,8 @@ export default function App() {
     Promise.all(paths.map((p) => api.openRepo(p).catch(() => null))).then((rs) => {
       const ok = rs.filter(Boolean) as RepoInfo[];
       setRepos(ok);
+      // One clean sample per launch of how many repositories come back.
+      track("repos_restored", { repos: ok.length });
       const last = stored<string | null>(KEY.last, null);
       const active = ok.find((r) => r.path === last)?.path ?? ok[0]?.path ?? null;
       setActiveRepoPath(active);
@@ -487,6 +532,38 @@ export default function App() {
       if (active) setExpanded((prev) => new Set(prev).add(`${active}::`));
     });
   }, []);
+
+  // A repository named on the command line: `plans .` at launch hands its
+  // path over once the frontend asks; a later `plans .` in another terminal
+  // reaches the running instance as a forwarded event instead.
+  const openRepoPath = useCallback(
+    async (path: string) => {
+      try {
+        const info = await api.openRepo(path);
+        setRepos((prev) =>
+          prev.some((r) => r.path === info.path) ? prev : [...prev, info],
+        );
+        setActiveRepoPath(info.path);
+        setExpanded((prev) => new Set(prev).add(`${info.path}::`));
+        track("repo_opened_cli");
+      } catch (e) {
+        notify(String(e), "error");
+      }
+    },
+    [notify],
+  );
+  useEffect(() => {
+    api
+      .cliOpenPath()
+      .then((p) => {
+        if (p) openRepoPath(p);
+      })
+      .catch(() => {});
+    const un = listen<string>("cli-open", (e) => openRepoPath(e.payload));
+    return () => {
+      un.then((f) => f());
+    };
+  }, [openRepoPath]);
 
   useEffect(() => {
     localStorage.setItem(KEY.repos, JSON.stringify(repos.map((r) => r.path)));
@@ -664,6 +741,9 @@ export default function App() {
   const muxOpen =
     settings.showMux && chat !== false && !!activeRepoPath && view !== "settings" && !zen;
 
+  /** Which of the two places the chat is in — the grid reads this, not the setting. */
+  const chatSide = settings.chatPlace === "side";
+
   /**
    * Is there an agent to talk to at all? Asked when the binary setting
    * changes; `false` hides the feature rather than offering a chat that
@@ -676,13 +756,24 @@ export default function App() {
       .catch(() => setChat(false));
   }, [settings.chatCommand]);
 
+  /**
+   * The porcelain codes that mean "both sides are still in the file".
+   * `U` on either side, or the two same-letter pairs git uses for add/add and
+   * delete/delete — the cases where neither `index` nor `worktree` is `U`.
+   */
+  const conflicted = (e: StatusEntry) =>
+    e.index === "U" || e.worktree === "U" || e.index + e.worktree === "AA" || e.index + e.worktree === "DD";
+
   /** "<repo>::<path>" -> mark, so the tree carries git state with the panel closed. */
   const marks = useMemo(() => {
     const m = new Map<string, Mark>();
     for (const [repo, st] of Object.entries(statusByRepo)) {
       for (const e of st.entries) {
         const k = `${repo}::${e.path}`;
-        if (e.index !== " " && e.index !== "?") m.set(k, "staged");
+        // Conflict first: git writes "UU", "AA", "DU" and friends, and none of
+        // them mean staged — the file on disk still has both sides in it.
+        if (conflicted(e)) m.set(k, "conflict");
+        else if (e.index !== " " && e.index !== "?") m.set(k, "staged");
         else if (e.worktree === "?") m.set(k, "new");
         else if (e.worktree !== " ") m.set(k, "mod");
       }
@@ -699,9 +790,30 @@ export default function App() {
    */
   const fleshOut = useCallback(async () => {
     if (!activeRepoPath || !activePath) return;
-    setChatSeed(FLESH_OUT_PROMPT.replace(/\{file\}/g, activePath));
+    setChatSeed(
+      (settings.fleshOutPrompt || FLESH_OUT_PROMPT).replace(/\{file\}/g, activePath),
+    );
     set({ showMux: true });
-  }, [activeRepoPath, activePath, set]);
+  }, [activeRepoPath, activePath, set, settings.fleshOutPrompt]);
+
+  /**
+   * Pressing a panel button from Settings.
+   *
+   * Both panels are hidden while Settings is open, so a plain toggle there
+   * flips a setting nothing shows — the press appears to do nothing. Leaving
+   * Settings and turning the panel *on* is what the press plainly meant.
+   */
+  const showPanel = useCallback(
+    (key: "showGit" | "showMux") => {
+      if (view === "settings") {
+        setView("write");
+        set({ [key]: true } as Partial<Settings>);
+        return;
+      }
+      set({ [key]: !settings[key] } as Partial<Settings>);
+    },
+    [view, set, settings],
+  );
 
   /** The same command, on the clipboard, for running it somewhere else. */
   const copyAgentCommand = useCallback(async () => {
@@ -714,13 +826,15 @@ export default function App() {
   }, [activePath, settings.agentCommand, notify]);
 
   const changeCount = status?.entries.length ?? 0;
+  /** Git's answer once status has been read, the repo's own until then. */
+  const branch = status?.branch ?? activeRepo?.branch ?? "";
 
   /**
    * Branches, on demand. Measured at over three seconds on a large repository,
    * which is not something to do on a timer for a list nobody has opened.
    */
   useEffect(() => {
-    if (!activeRepoPath || (!palette && !settings.showGit)) return;
+    if (!activeRepoPath || (!palette && !settings.showGit && !wantBranches)) return;
     let live = true;
     api
       .gitBranches(activeRepoPath)
@@ -729,7 +843,7 @@ export default function App() {
     return () => {
       live = false;
     };
-  }, [activeRepoPath, status?.branch, epoch, palette, settings.showGit]);
+  }, [activeRepoPath, status?.branch, epoch, palette, settings.showGit, wantBranches]);
 
   // --- repos ---------------------------------------------------------------
   const addRepo = useCallback(async () => {
@@ -757,6 +871,7 @@ export default function App() {
   const forgetRepo = useCallback(
     (path: string) => {
       setRepos((prev) => prev.filter((r) => r.path !== path));
+      track("repo_removed", { repos: Math.max(0, repos.length - 1) });
       setActiveRepoPath((cur) => (cur === path ? null : cur));
       if (activeRepoPath === path) {
         setActivePath(null);
@@ -764,8 +879,18 @@ export default function App() {
         setMatter(null);
       }
     },
-    [activeRepoPath],
+    [activeRepoPath, repos.length],
   );
+
+  const installCli = useCallback(async () => {
+    try {
+      const dest = await api.installCli();
+      notify(`Installed — try \`plans .\` (${dest})`, "info");
+      track("cli_installed");
+    } catch (e) {
+      notify(String(e), "error");
+    }
+  }, [notify]);
 
   /**
    * Dragging the sidebar's edge. Pointer capture rather than window listeners,
@@ -792,6 +917,42 @@ export default function App() {
       el.addEventListener("pointercancel", done);
     },
     [set],
+  );
+
+  /**
+   * Dragging the chat's edge — its top when it is a row, its left when it is
+   * a column. Both are the same gesture against a different axis, so one
+   * handler measures the panel it was started on and works from that: the
+   * size is the distance from the pointer to the edge that is not moving.
+   */
+  const startChatResize = useCallback(
+    (e: React.PointerEvent<HTMLDivElement>) => {
+      e.preventDefault();
+      const el = e.currentTarget;
+      const panel = el.parentElement;
+      if (!panel) return;
+      const fixed = panel.getBoundingClientRect();
+      const side = settings.chatPlace === "side";
+      const r = side ? RANGES.chatWidth : RANGES.muxHeight;
+      el.setPointerCapture(e.pointerId);
+      const move = (ev: PointerEvent) => {
+        const px = Math.round(side ? fixed.right - ev.clientX : fixed.bottom - ev.clientY);
+        const v = Math.min(r.max, Math.max(r.min, px));
+        set(side ? { chatWidth: v } : { muxHeight: v });
+      };
+      const done = () => {
+        el.removeEventListener("pointermove", move);
+        el.removeEventListener("pointerup", done);
+        el.removeEventListener("pointercancel", done);
+        document.body.classList.remove("resizing", "resizing-row");
+      };
+      document.body.classList.add("resizing");
+      if (!side) document.body.classList.add("resizing-row");
+      el.addEventListener("pointermove", move);
+      el.addEventListener("pointerup", done);
+      el.addEventListener("pointercancel", done);
+    },
+    [set, settings.chatPlace],
   );
 
   const setOpen = useCallback((keys: string[], open: boolean) => {
@@ -1115,6 +1276,10 @@ export default function App() {
        * turned out to be.
        */
       if (at === "absent") return;
+      // The other half of the hand-vs-agent question: `file_saved` counts
+      // edits made here, this counts edits that arrived from outside — in
+      // this app, almost always the agent writing the plan.
+      track("external_change", { conflict: dirty || !!pending.current });
       if (dirty || pending.current) {
         const theirs = await api
           .readPlan(activeRepoPath, activePath)
@@ -1726,10 +1891,10 @@ export default function App() {
         setZen((z) => !z);
       } else if (mod && e.key.toLowerCase() === "j") {
         e.preventDefault();
-        set({ showMux: !settings.showMux });
+        showPanel("showMux");
       } else if (mod && e.key.toLowerCase() === "g") {
         e.preventDefault();
-        set({ showGit: !settings.showGit });
+        showPanel("showGit");
       } else if (mod && e.key.toLowerCase() === "d") {
         e.preventDefault();
         goto(view === "diff" ? "write" : "diff");
@@ -1762,8 +1927,7 @@ export default function App() {
     addRepo,
     newPlan,
     newComment,
-    settings.showGit,
-    settings.showMux,
+    showPanel,
     settings.showIndex,
     settings.treeSize,
     settings.size,
@@ -1844,7 +2008,22 @@ export default function App() {
                 { value: "__add", label: "Add a repository…", apart: true },
               ]}
             />
-            {activeRepo && <span className="branch">{activeRepo.branch}</span>}
+            {activeRepo && (
+              <Dropdown
+                className="branch-pick"
+                ariaLabel="Branch"
+                onOpen={() => setWantBranches(true)}
+                value={branch}
+                disabled={!!busy}
+                onChange={(b) =>
+                  onRun(`Switched to ${b}`, () => api.gitCheckout(activeRepo.path, b))
+                }
+                choices={(branches.length ? branches : [branch]).map((b) => ({
+                  value: b,
+                  label: b,
+                }))}
+              />
+            )}
           </>
         ) : (
           <button className="rail-btn on" onClick={addRepo}>
@@ -1856,7 +2035,7 @@ export default function App() {
 
         <button
           className={`rail-btn ${gitOpen ? "on" : ""}`}
-          onClick={() => set({ showGit: !settings.showGit })}
+          onClick={() => showPanel("showGit")}
           title="Git panel (⌘G)"
           aria-pressed={gitOpen}
         >
@@ -1866,7 +2045,7 @@ export default function App() {
         {chat !== false && (
           <button
             className={`rail-btn ${muxOpen ? "on" : ""}`}
-            onClick={() => set({ showMux: !settings.showMux })}
+            onClick={() => showPanel("showMux")}
             title="Agent chat (⌘J)"
             aria-pressed={muxOpen}
           >
@@ -1888,9 +2067,17 @@ export default function App() {
       {/* --- body ---------------------------------------------------------- */}
       <div
         className={`body ${gitOpen ? "with-git" : ""} ${treeOpen ? "" : "no-files"} ${
-          muxOpen ? "with-mux" : ""
+          muxOpen ? (chatSide ? "with-chat-side" : "with-mux") : ""
         }`}
-        style={muxOpen ? ({ "--mux-h": `${settings.muxHeight}px` } as React.CSSProperties) : undefined}
+        style={
+          muxOpen
+            ? ({
+                [chatSide ? "--chat-w" : "--mux-h"]: `${
+                  chatSide ? settings.chatWidth : settings.muxHeight
+                }px`,
+              } as React.CSSProperties)
+            : undefined
+        }
       >
         {/* tabIndex so ⌘+ / ⌘− can tell the tree has focus. */}
         <section className="files" tabIndex={-1}>
@@ -1965,9 +2152,11 @@ export default function App() {
                   (e) => notify(String(e), "error"),
                 )
               }
+              onInstallCli={installCli}
               version={appVersion}
               onCheckUpdates={() => void lookForUpdate(true)}
               onReleaseNotes={() => void showNotes()}
+              agent={chat}
             />
           ) : (
             <>
@@ -2037,15 +2226,6 @@ export default function App() {
                 <span className="page-path">{activePath ?? ""}</span>
                 {activePath && (
                   <span className="page-actions">
-                    {chat !== false && (
-                      <button
-                        className="page-act"
-                        onClick={() => void fleshOut()}
-                        title="Ask the agent to flesh out this plan"
-                      >
-                        Flesh out
-                      </button>
-                    )}
                     {/* Layout sits to the left of the view switch: appearing
                         between the switch and Delete moved them under the
                         pointer every time the diff was opened. */}
@@ -2260,6 +2440,7 @@ export default function App() {
             onSeedUsed={() => setChatSeed(null)}
             cmd={settings.chatCommand}
             notify={notify}
+            onResize={startChatResize}
           />
         )}
       </div>

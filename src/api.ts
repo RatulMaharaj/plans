@@ -34,6 +34,8 @@ export type GitStatus = {
   behind: number;
   hasUpstream: boolean;
   entries: StatusEntry[];
+  /** An unfinished merge/rebase/cherry-pick/revert, which the app cannot finish. */
+  operation: string | null;
 };
 
 export type BranchList = { current: string; branches: string[] };
@@ -79,11 +81,18 @@ function camelStatus(s: any): GitStatus {
     behind: s.behind,
     hasUpstream: s.has_upstream,
     entries: s.entries,
+    operation: s.operation ?? null,
   };
 }
 
 export const api = {
   openRepo: (path: string) => invoke<any>("open_repo", { path }).then(camelRepo),
+
+  /** The path passed to `plans <path>` at launch, if any. One-shot. */
+  cliOpenPath: () => invoke<string | null>("cli_open_path"),
+
+  /** Put the `plans` command on the PATH; returns where it was written. */
+  installCli: () => invoke<string>("install_cli"),
 
   listPlans: (repo: string, dirs: string[], includeIgnored = false) =>
     invoke<any[]>("list_plans", { repo, dirs, includeIgnored }).then((xs) =>
