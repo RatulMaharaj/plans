@@ -491,11 +491,16 @@ export function Palette(props: Props) {
    * ">" commands, as everywhere. "*" the contents of files — a wildcard is
    * what people already type when they mean "anything containing this", and
    * it reads better than the "?" it replaced, which looked like a question.
-   * "@" a conversation, borrowing the convention for addressing someone.
+   * "#" a conversation, the way a channel is written.
+   *
+   * Not "@", though it was the first instinct: editors already spend it on
+   * "go to symbol", and ACP agents spend it on mentioning a *file* in a
+   * prompt. The composer is three feet below this box, and one character
+   * meaning "a file" there and "a conversation" here is a collision waiting.
    */
   const isCmd = q.startsWith(">");
   const isText = q.startsWith("*");
-  const isChat = q.startsWith("@");
+  const isChat = q.startsWith("#");
   const term = isCmd || isText || isChat ? q.slice(1).trim() : q.trim();
 
   /**
@@ -630,7 +635,7 @@ export function Palette(props: Props) {
           className="palette-input"
           value={q}
           spellCheck={false}
-          placeholder="Find a file · > commands · * search inside · @ chats"
+          placeholder="Find a file · > commands · * search inside · # chats"
           onChange={(e) => setQ(e.target.value)}
           onKeyDown={onKey}
         />

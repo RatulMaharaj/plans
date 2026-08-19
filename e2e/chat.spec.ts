@@ -1745,7 +1745,7 @@ test("the palette does not offer the chat you are already in", async ({ page }) 
   await expect(page.locator(".palette-row", { hasText: "Chat: the only" })).toHaveCount(0);
 });
 
-test("@ shows the chats, and takes you to one", async ({ page }) => {
+test("# shows the chats, and takes you to one", async ({ page }) => {
   await open(page);
   await openPlan(page);
   await page.keyboard.press("Meta+j");
@@ -1756,13 +1756,13 @@ test("@ shows the chats, and takes you to one", async ({ page }) => {
   await finish(page, 2);
 
   await page.keyboard.press("Meta+p");
-  await page.locator(".palette-input").fill("@");
+  await page.locator(".palette-input").fill("#");
   await expect(page.locator(".palette-foot")).toContainText(/chats/i);
   // Both of them: this is a list to read, and one with a hole in it is
   // harder to read than one without.
   await expect(page.locator(".palette-row")).toHaveCount(2);
 
-  await page.locator(".palette-input").fill("@first");
+  await page.locator(".palette-input").fill("#first");
   await expect(page.locator(".palette-row").first()).toContainText("the first conversation");
   await page.keyboard.press("Enter");
   await expect(page.locator(".chat-msg.user")).toContainText("the first conversation");
@@ -1776,6 +1776,6 @@ test("the chat you are in says so", async ({ page }) => {
   await finish(page, 1);
 
   await page.keyboard.press("Meta+p");
-  await page.locator(".palette-input").fill("@only");
+  await page.locator(".palette-input").fill("#only");
   await expect(page.locator(".palette-row").first()).toContainText("current");
 });
