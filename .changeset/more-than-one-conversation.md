@@ -11,3 +11,6 @@ conversation the agent still remembers the last one from is new in name only.
 the agent's context and left the transcript on screen, which was
 indistinguishable from nothing happening; it is the same intent as New, so it
 is the same action.
+
+Both live in the command palette too: "New chat", and every other conversation
+by the name it gave itself.

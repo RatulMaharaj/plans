@@ -3,6 +3,7 @@ import { listen } from "@tauri-apps/api/event";
 import { api, type AgentCommand, type ChatId, type ConfigOption } from "./api";
 import { track } from "./analytics";
 import { AgentOptions } from "./AgentOptions";
+import { chatKey, type ChatRef, type Index } from "./chats";
 import { Markdown } from "./chat-markdown";
 import { Dropdown } from "./Dropdown";
 
@@ -82,6 +83,12 @@ type Props = {
   notify: (message: string, tone?: "error") => void;
   /** Dragging the panel's own edge; which edge that is depends on placement. */
   onResize: (e: React.PointerEvent<HTMLDivElement>) => void;
+  /** The repository's conversations, which App owns so the palette can too. */
+  chats: Index;
+  onNewChat: () => void;
+  onOpenChat: (id: string) => void;
+  /** A chat names itself after the first thing said in it. */
+  onTitle: (id: string, title: string) => void;
 };
 
 /*
@@ -93,45 +100,12 @@ type Props = {
  * can leave and come back to is the honest shape: the agent's session and our
  * record of it begin and end together.
  *
+ * The index is App's, in `chats.ts`, because the palette offers the same
+ * conversations this panel's picker does. Transcripts stay here.
+ *
  * Earlier keys are left on disk, untouched. Not shown is not the same as
  * deleted.
  */
-const indexKey = (repo: string) => `plans.chats.v4::${repo}`;
-const keyOf = (repo: string, id: string) => `plans.chat.v4::${repo}::${id}`;
-
-/** One conversation, as the picker sees it. */
-type ChatRef = { id: string; title: string; at: number };
-type Index = { current: string; list: ChatRef[] };
-
-/** Ids only have to be unique within a repository, and readable in storage. */
-const newId = () => `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
-
-function saveIndex(repo: string, i: Index) {
-  localStorage.setItem(indexKey(repo), JSON.stringify(i));
-}
-
-function loadIndex(repo: string): Index {
-  try {
-    const raw = localStorage.getItem(indexKey(repo));
-    if (raw) {
-      const i = JSON.parse(raw) as Index;
-      if (i.current && Array.isArray(i.list) && i.list.length) return i;
-    }
-  } catch {
-    // A malformed index is a fresh one, not a crash.
-  }
-  /*
-   * Written the moment it is invented.
-   *
-   * Otherwise every caller mints a different id for the same empty state, the
-   * key moves under the panel, and a transcript is written to one address and
-   * read from another — which looks like the agent saying nothing at all.
-   */
-  const id = newId();
-  const made = { current: id, list: [{ id, title: "New chat", at: Date.now() }] };
-  saveIndex(repo, made);
-  return made;
-}
 
 /**
  * A conversation's name, taken from the first thing said in it.
@@ -180,9 +154,12 @@ export function ChatPanel({
   cmd,
   notify,
   onResize,
+  chats,
+  onNewChat,
+  onOpenChat,
+  onTitle,
 }: Props) {
-  const [index, setIndex] = useState<Index>(() => loadIndex(repo));
-  const key = repo ? keyOf(repo, index.current) : null;
+  const key = repo && chats.current ? chatKey(repo, chats.current) : null;
   const [thread, setThread] = useState<Thread>({ messages: [], plan: null });
   const [input, setInput] = useState("");
   /** Which slash suggestion is highlighted, or -1 for "the list is closed". */
@@ -203,6 +180,9 @@ export function ChatPanel({
   /** True from send() being entered until chat_send answers — a synchronous
    *  guard where turn.current has an async gap. */
   const inflight = useRef(false);
+  /** Through a ref: `commit` has no deps, and should not gain any. */
+  const titleRef = useRef<Props["onTitle"] | null>(null);
+  titleRef.current = onTitle;
 
   const commit = useCallback((k: string, up: (t: Thread) => Thread) => {
     const cur = threads.current.get(k) ?? load(k);
@@ -210,19 +190,10 @@ export function ChatPanel({
     threads.current.set(k, next);
     localStorage.setItem(k, JSON.stringify(next));
     // The name follows the first thing said, so a chat stops being called
-    // "New chat" the moment it is about something.
+    // "New chat" the moment it is about something. Reported upward: the index
+    // belongs to App, which is where the palette reads it from.
     const id = k.split("::").pop();
-    if (id) {
-      setIndex((prev) => {
-        const title = titleOf(next);
-        const at = prev.list.find((c) => c.id === id);
-        if (!at || at.title === title) return prev;
-        const list = prev.list.map((c) => (c.id === id ? { ...c, title } : c));
-        const merged = { ...prev, list };
-        saveIndex(k.split("::")[1] ?? "", merged);
-        return merged;
-      });
-    }
+    if (id) titleRef.current?.(id, titleOf(next));
     if (keyRef.current === k) setThread(next);
   }, []);
 
@@ -236,51 +207,10 @@ export function ChatPanel({
     const t = threads.current.get(key) ?? load(key);
     threads.current.set(key, t);
     setThread(t);
-  }, [key]);
-
-  // A different repository has a different set of conversations.
-  useEffect(() => {
-    setIndex(loadIndex(repo));
-  }, [repo]);
-
-  /**
-   * Start again.
-   *
-   * The agent's session ends with the chat rather than outliving it: a new
-   * conversation that the agent still remembers the old one from would be a
-   * new conversation in name only. The old transcript stays in the list.
-   */
-  const newChat = useCallback(() => {
-    void api.agentStop(repo).catch(() => {});
+    // A turn belonging to the chat we just left is no longer this panel's.
     turn.current = null;
     setBusy(false);
-    const id = newId();
-    setIndex((prev) => {
-      const next = {
-        current: id,
-        list: [{ id, title: "New chat", at: Date.now() }, ...prev.list],
-      };
-      saveIndex(repo, next);
-      return next;
-    });
-  }, [repo]);
-
-  const openChat = useCallback(
-    (id: string) => {
-      if (id === index.current) return;
-      // Leaving a conversation ends its session too: the agent holds one
-      // context, and it belongs to whichever chat is on screen.
-      void api.agentStop(repo).catch(() => {});
-      turn.current = null;
-      setBusy(false);
-      setIndex((prev) => {
-        const next = { ...prev, current: id };
-        saveIndex(repo, next);
-        return next;
-      });
-    },
-    [repo, index.current],
-  );
+  }, [key]);
 
   /** Add to a transcript: a new bubble, or more of the one being written. */
   const say = useCallback(
@@ -470,7 +400,7 @@ export function ChatPanel({
        * agent's session ends with it rather than being asked to forget.
        */
       if (text.trim() === "/clear") {
-        newChat();
+        onNewChat();
         return;
       }
       inflight.current = true;
@@ -527,7 +457,7 @@ export function ChatPanel({
         inflight.current = false;
       }
     },
-    [key, relPath, repo, cmd, commit, notify, say, newChat],
+    [key, relPath, repo, cmd, commit, notify, say, onNewChat],
   );
 
   // "Hand off" and friends arrive as a seeded message, sent as if typed.
@@ -605,16 +535,16 @@ export function ChatPanel({
           * neither needs repeating here — what the header is for is knowing
           * which conversation you are in, and leaving it.
           */}
-        {index.list.length > 1 ? (
+        {chats.list.length > 1 ? (
           <Dropdown
             className="chat-pick"
             ariaLabel="Conversation"
-            value={index.current}
-            onChange={openChat}
-            choices={index.list.map((c) => ({ value: c.id, label: c.title }))}
+            value={chats.current}
+            onChange={onOpenChat}
+            choices={chats.list.map((c: ChatRef) => ({ value: c.id, label: c.title }))}
           />
         ) : (
-          <span className="chat-title">{index.list[0]?.title ?? "New chat"}</span>
+          <span className="chat-title">{chats.list[0]?.title ?? "New chat"}</span>
         )}
         <span className="mux-spacer" />
         {busy && (
@@ -624,7 +554,7 @@ export function ChatPanel({
         )}
         <button
           className="mux-key"
-          onClick={newChat}
+          onClick={onNewChat}
           title="Start a new conversation (the agent forgets this one)"
         >
           New

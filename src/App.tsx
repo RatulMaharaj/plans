@@ -13,6 +13,12 @@ import {
 import { Editor } from "./Editor";
 import { GitPanel } from "./GitPanel";
 import { ChatPanel } from "./ChatPanel";
+import {
+  loadIndex as loadChats,
+  saveIndex as saveChats,
+  started as startedChat,
+  type Index as ChatIndex,
+} from "./chats";
 import { agentCommandLine, HANDOFF_PROMPT } from "./agent";
 import { DiffView } from "./DiffView";
 import { SettingsPage } from "./SettingsPage";
@@ -967,6 +973,62 @@ export default function App() {
    */
   const [usage, setUsage] = useState<Record<string, { used: number; size: number; cost?: number }>>(
     {},
+  );
+
+  /**
+   * The active repository's conversations.
+   *
+   * Held here rather than in the panel because the palette offers the same
+   * ones its picker does, and two copies of that list would be two chances to
+   * disagree about which chat you are in.
+   */
+  const [chats, setChats] = useState<ChatIndex>(() => loadChats(activeRepoPath ?? ""));
+  useEffect(() => {
+    setChats(loadChats(activeRepoPath ?? ""));
+  }, [activeRepoPath]);
+
+  const putChats = useCallback(
+    (next: ChatIndex) => {
+      if (activeRepoPath) saveChats(activeRepoPath, next);
+      setChats(next);
+    },
+    [activeRepoPath],
+  );
+
+  /**
+   * Start again. The agent's session ends with the chat rather than outliving
+   * it: a new conversation the agent still remembers the old one from would be
+   * a new conversation in name only.
+   */
+  const newChat = useCallback(() => {
+    if (activeRepoPath) void api.agentStop(activeRepoPath).catch(() => {});
+    putChats(startedChat(chats));
+    set({ showMux: true });
+  }, [activeRepoPath, chats, putChats, set]);
+
+  const openChat = useCallback(
+    (id: string) => {
+      if (id === chats.current) return;
+      // Leaving a conversation ends its session too: the agent holds one
+      // context, and it belongs to whichever chat is on screen.
+      if (activeRepoPath) void api.agentStop(activeRepoPath).catch(() => {});
+      putChats({ ...chats, current: id });
+      set({ showMux: true });
+    },
+    [activeRepoPath, chats, putChats, set],
+  );
+
+  const nameChat = useCallback(
+    (id: string, title: string) => {
+      setChats((prev) => {
+        const at = prev.list.find((c) => c.id === id);
+        if (!at || at.title === title) return prev;
+        const next = { ...prev, list: prev.list.map((c) => (c.id === id ? { ...c, title } : c)) };
+        if (activeRepoPath) saveChats(activeRepoPath, next);
+        return next;
+      });
+    },
+    [activeRepoPath],
   );
 
   useEffect(() => {
@@ -2709,6 +2771,10 @@ export default function App() {
             cmd={settings.chatCommand}
             notify={notify}
             onResize={startChatResize}
+            chats={chats}
+            onNewChat={newChat}
+            onOpenChat={openChat}
+            onTitle={nameChat}
           />
         )}
       </div>
@@ -2906,6 +2972,9 @@ export default function App() {
         canHandOff={!!activePath && chat !== false}
         onHandOff={() => void handOff()}
         onCopyAgentCommand={() => void copyAgentCommand()}
+        chats={chats}
+        onNewChat={newChat}
+        onOpenChat={openChat}
         onMatter={() => {
           if (matter === null) onMatterChange("");
           setMatterOpen(true);

@@ -1709,3 +1709,38 @@ test("chats are per repository, and survive a restart", async ({ page }) => {
   await expect(page.locator(".files")).toBeVisible();
   await expect(page.locator(".chat-msg.user")).toContainText("a question worth keeping");
 });
+
+test("chats are reachable from the palette", async ({ page }) => {
+  await open(page);
+  await openPlan(page);
+  await page.keyboard.press("Meta+j");
+  await say(page, "the first conversation");
+  await finish(page, 1);
+
+  // New, from the palette.
+  await page.keyboard.press("Meta+p");
+  await page.locator(".palette-input").fill(">new chat");
+  await expect(page.locator(".palette-row").first()).toContainText(/new chat/i);
+  await page.keyboard.press("Enter");
+  await expect(page.locator(".chat-msg.user")).toHaveCount(0);
+
+  // And back to the old one, by the name it gave itself.
+  await page.keyboard.press("Meta+p");
+  await page.locator(".palette-input").fill(">first conversation");
+  await expect(page.locator(".palette-row").first()).toContainText("the first conversation");
+  await page.keyboard.press("Enter");
+  await expect(page.locator(".chat-msg.user")).toContainText("the first conversation");
+});
+
+test("the palette does not offer the chat you are already in", async ({ page }) => {
+  await open(page);
+  await openPlan(page);
+  await page.keyboard.press("Meta+j");
+  await say(page, "the only conversation");
+  await finish(page, 1);
+
+  await page.keyboard.press("Meta+p");
+  await page.locator(".palette-input").fill(">only conversation");
+  // "Chat: …" is a way of going somewhere, and you are already there.
+  await expect(page.locator(".palette-row", { hasText: "Chat: the only" })).toHaveCount(0);
+});

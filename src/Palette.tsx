@@ -10,6 +10,7 @@ import type { PlanFile, RepoInfo } from "./api";
 import { displayName } from "./FileTree";
 import { FONTS, MONO_FONTS } from "./fonts";
 import { RANGES, type Settings } from "./settings";
+import type { Index as ChatIndex } from "./chats";
 import { THEMES } from "./theme";
 
 export type Command = {
@@ -72,6 +73,10 @@ type Props = {
   /** False when there is no tmux, so the action is absent rather than broken. */
   canHandOff: boolean;
   onHandOff: () => void;
+  /** The active repository's conversations, and the two things you do with them. */
+  chats: ChatIndex;
+  onNewChat: () => void;
+  onOpenChat: (id: string) => void;
   onCopyAgentCommand: () => void;
   onMatter: () => void;
   /** From settings: what `status:` may be set to from here. */
@@ -136,6 +141,30 @@ function buildCommands(p: Props): Command[] {
       terms: "clipboard claude shell",
       run: p.onCopyAgentCommand,
     });
+    add({
+      id: "chat.new",
+      group: "Agent",
+      label: "New chat",
+      hint: "the agent forgets this one",
+      terms: "clear reset start fresh conversation",
+      run: p.onNewChat,
+    });
+    /*
+     * The conversations themselves, named after what they were about.
+     *
+     * Only the ones you are not already in, and only a handful: the palette
+     * is for reaching something, and a list long enough to scroll is a list
+     * you would be better off reading in the panel's own picker.
+     */
+    for (const c of p.chats.list.filter((x) => x.id !== p.chats.current).slice(0, 8)) {
+      add({
+        id: `chat.${c.id}`,
+        group: "Agent",
+        label: `Chat: ${c.title}`,
+        terms: "conversation history resume switch",
+        run: () => p.onOpenChat(c.id),
+      });
+    }
   }
 
   if (p.canEdit) {
