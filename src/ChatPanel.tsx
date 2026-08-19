@@ -463,8 +463,6 @@ export function ChatPanel({
         )}
       </div>
 
-      <AgentOptions repo={repo} options={thread.options} busy={busy} />
-
       {/* The agent's own task list, when it keeps one — its plan for the
           answer, not one of ours. */}
       {thread.todo?.length ? (
@@ -600,12 +598,24 @@ export function ChatPanel({
             }
           }}
         />
-        <span className="chat-note">
-          {thread.usage
-            ? `${Math.round((thread.usage.used / Math.max(1, thread.usage.size)) * 100)}% of context` +
-              (thread.usage.cost ? ` · $${thread.usage.cost.toFixed(2)}` : "")
-            : "Edits land in the files — see Git for what changed."}
-        </span>
+        {/*
+          * Under the box you type in, not above the transcript.
+          *
+          * Which model and how hard it thinks are decisions about the message
+          * you are about to send, so they belong with the message. At the top
+          * of the panel they read as a status bar for the conversation, which
+          * is the wrong thing entirely — they are not describing what was
+          * said, they are setting what happens next.
+          */}
+        <div className="chat-foot">
+          <AgentOptions repo={repo} options={thread.options} busy={busy} />
+          <span className="chat-note">
+            {thread.usage
+              ? `${Math.round((thread.usage.used / Math.max(1, thread.usage.size)) * 100)}% of context` +
+                (thread.usage.cost ? ` · $${thread.usage.cost.toFixed(2)}` : "")
+              : "Edits land in the files — see Git for what changed."}
+          </span>
+        </div>
       </div>
     </section>
   );

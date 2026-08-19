@@ -18,6 +18,28 @@ import { Dropdown } from "./Dropdown";
 /** Reserved first, in a fixed order, then whatever else the agent sent. */
 const ORDER = ["model", "thought_level", "mode"];
 
+/**
+ * Effort is a scale, so it is shown as one.
+ *
+ * The agent sends these in whatever order it likes, but they are not a set of
+ * alternatives — they are more and less of the same thing, and a list that
+ * jumps around is a list you have to read rather than aim at. The menu opens
+ * upward from the composer, so the order runs hardest-first in the markup and
+ * reads lowest-to-highest from the bottom, nearest the button, with `default`
+ * as the first thing under the cursor.
+ *
+ * An unrecognised level keeps its place among the others rather than being
+ * dropped or pinned: agents may have levels we have not heard of.
+ */
+const EFFORT = ["max", "xhigh", "high", "medium", "low", "minimal", "none", "default"];
+
+function byEffort(a: { value: string }, b: { value: string }) {
+  const ai = EFFORT.indexOf(a.value.toLowerCase());
+  const bi = EFFORT.indexOf(b.value.toLowerCase());
+  if (ai === -1 || bi === -1) return 0;
+  return ai - bi;
+}
+
 function ranked(options: ConfigOption[]) {
   return [...options].sort((a, b) => {
     const ai = ORDER.indexOf(a.category ?? "");
@@ -51,11 +73,9 @@ export function AgentOptions({
           value={o.currentValue}
           disabled={busy}
           onChange={(v) => void api.agentSetConfig(repo, o.id, v).catch(() => {})}
-          choices={o.options.map((c) => ({
-            value: c.value,
-            label: c.name,
-            note: c.description,
-          }))}
+          choices={(o.category === "thought_level" ? [...o.options].sort(byEffort) : o.options).map(
+            (c) => ({ value: c.value, label: c.name, note: c.description }),
+          )}
         />
       ))}
     </div>

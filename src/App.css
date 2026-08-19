@@ -2258,18 +2258,67 @@ body.resizing.resizing-row, body.resizing.resizing-row .chat-edge { cursor: row-
 .chat-ask-was { color: var(--ink-3); flex: none; }
 
 /*
- * The agent's own settings, under its header. A row of quiet dropdowns: what
- * is in them is the agent's business, so they are furniture rather than a
- * feature — present when there is something to choose, gone when there is not.
+ * The agent's own settings, in the composer under what you are typing. A row
+ * of quiet dropdowns: what is in them is the agent's business, so they are
+ * furniture rather than a feature — present when there is something to
+ * choose, gone when there is not.
  */
 .agent-options {
   display: flex;
   align-items: center;
   gap: 2px;
   flex-wrap: wrap;
-  padding: 4px 8px;
-  border-bottom: 1px solid var(--rule);
-  flex: 0 0 auto;
+  min-width: 0;
+}
+
+/* The composer's own line: settings on the left, the reading on the right. */
+.chat-foot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.chat-foot .chat-note { margin-left: auto; flex: none; }
+
+/*
+ * A picker must never decide how wide the panel is.
+ *
+ * The chat is a grid column, and a grid item's default `min-width: auto` lets
+ * an over-wide child stretch its track — so a model called something long, or
+ * an agent persona whose description runs to paragraphs, pushed the whole
+ * window sideways. Every box between the option and the grid gets `min-width:
+ * 0`, and the trigger truncates rather than growing.
+ */
+.mux,
+.chat-input,
+.chat-foot,
+.agent-options { min-width: 0; }
+.agent-option { min-width: 0; }
+.agent-option .dd-trigger { max-width: 128px; }
+.agent-option .dd-value {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/*
+ * The menu hangs from the button's right edge, growing leftwards.
+ *
+ * These sit at the bottom-left of a narrow panel, so a menu anchored on the
+ * left and 320px wide reaches past the panel's edge. Anchored on the end of
+ * the button it grows back into the space that is actually there.
+ */
+.agent-option .dd-menu {
+  left: auto;
+  right: 0;
+  max-width: min(320px, 70vw);
+}
+/* Descriptions can be paragraphs; one line of them is the useful part. */
+.agent-option .dd-note {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 180px;
 }
 .agent-option .dd-trigger {
   color: var(--ink-3);

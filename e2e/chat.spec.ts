@@ -1150,6 +1150,24 @@ test("asking is a setting, and off by default", async ({ page }) => {
  * names, no effort levels, no command list. It draws what arrives.
  */
 
+/** An option whose text is long enough to stretch anything that can stretch. */
+const WORDY = {
+  id: "agent",
+  name: "Agent",
+  currentValue: "delegator",
+  options: [
+    { value: "default", name: "Default", description: "Standard agent" },
+    {
+      value: "delegator",
+      name: "delegator-with-a-very-long-persona-name-indeed",
+      description:
+        "Use this agent when the user has a quick, self-contained idea or tangential task they want explored or executed in parallel without interrupting or queuing onto the main agent's current workflow. ".repeat(
+          3,
+        ),
+    },
+  ],
+};
+
 /** Push the option list a real adapter sends when a session opens. */
 async function advertise(page: Page) {
   await page.evaluate(() => {
@@ -1198,6 +1216,14 @@ test("the model and effort pickers come from the agent", async ({ page }) => {
     els.map((e) => e.getAttribute("aria-label")),
   );
   expect(labels).toEqual(["Model", "Effort", "Agent"]);
+
+  // In the composer, with the message they apply to — not at the top, where
+  // they would read as a status bar for the conversation instead.
+  const options = (await page.locator(".agent-options").boundingBox())!;
+  const box = (await page.locator(".chat-input textarea").boundingBox())!;
+  const log = (await page.locator(".chat-log").boundingBox())!;
+  expect(options.y).toBeGreaterThan(box.y);
+  expect(options.y).toBeGreaterThan(log.y + log.height - 1);
   await expect(page.locator('.agent-option [aria-label="Model"]')).toContainText("Fable");
 });
 
@@ -1446,4 +1472,102 @@ test("an old chat is left behind, not dragged into the new one", async ({ page }
   // Left on disk, though: not shown is not the same as deleted.
   const kept = await page.evaluate(() => localStorage.getItem("plans.chat.v2::/repo/one"));
   expect(kept).toContain("an old question");
+});
+
+test("a wordy option cannot stretch the window", async ({ page }) => {
+  await open(page, { place: "side" });
+  await openPlan(page);
+  await page.keyboard.press("Meta+j");
+  const before = (await page.locator(".chat").boundingBox())!;
+  const overBefore = await page.evaluate(
+    () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
+  );
+
+  await page.evaluate((wordy) => {
+    const f = (window as any).__fake;
+    f.options = [wordy];
+    f.emit("agent-config", { repo: "/repo/one", options: f.options });
+  }, WORDY);
+  await expect(page.locator(".agent-option")).toHaveCount(1);
+
+  // The panel is a grid column, and a grid item's default min-width lets an
+  // over-wide child stretch its track — which pushed the whole window sideways.
+  // Within a pixel: a scrollbar appearing in the log is not the panel moving.
+  const after = (await page.locator(".chat").boundingBox())!;
+  expect(Math.abs(after.width - before.width)).toBeLessThan(2);
+  expect(Math.abs(after.x - before.x)).toBeLessThan(2);
+  // The pickers add no horizontal overflow of their own — measured against
+  // what the window already had, which is not this feature's to fix.
+  const over = await page.evaluate(
+    () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
+  );
+  expect(over).toBeLessThanOrEqual(overBefore);
+});
+
+test("an open menu stays inside the panel", async ({ page }) => {
+  await open(page, { place: "side" });
+  await openPlan(page);
+  await page.keyboard.press("Meta+j");
+  await page.evaluate((wordy) => {
+    const f = (window as any).__fake;
+    f.options = [wordy];
+    f.emit("agent-config", { repo: "/repo/one", options: f.options });
+  }, WORDY);
+
+  await page.locator('.agent-option [aria-label="Agent"]').click();
+  const menu = (await page.locator(".agent-option .dd-menu").boundingBox())!;
+  const trigger = (await page.locator('.agent-option [aria-label="Agent"]').boundingBox())!;
+
+  // Anchored on the end of the button, growing back into the space there is.
+  expect(Math.round(menu.x + menu.width)).toBeLessThanOrEqual(
+    Math.round(trigger.x + trigger.width) + 1,
+  );
+  expect(menu.x).toBeGreaterThanOrEqual(0);
+});
+
+test("effort reads as a scale, not as a list of alternatives", async ({ page }) => {
+  await open(page);
+  await openPlan(page);
+  await page.keyboard.press("Meta+j");
+  await page.evaluate(() => {
+    const f = (window as any).__fake;
+    // The order a real adapter sends: default first, then ascending.
+    f.options = [
+      {
+        id: "effort",
+        name: "Effort",
+        category: "thought_level",
+        currentValue: "low",
+        options: [
+          { value: "default", name: "Default" },
+          { value: "low", name: "Low" },
+          { value: "medium", name: "Medium" },
+          { value: "high", name: "High" },
+          { value: "xhigh", name: "Xhigh" },
+          { value: "max", name: "Max" },
+        ],
+      },
+    ];
+    f.emit("agent-config", { repo: "/repo/one", options: f.options });
+  });
+
+  await page.locator('.agent-option [aria-label="Effort"]').click();
+  const shown = await page.locator(".agent-option .dd-item .dd-label").allTextContents();
+
+  // The menu opens upward from the composer, so hardest-first in the markup
+  // reads lowest-to-highest from the bottom, with Default nearest the button.
+  expect(shown).toEqual(["Max", "Xhigh", "High", "Medium", "Low", "Default"]);
+});
+
+test("a model list is left in the order the agent chose", async ({ page }) => {
+  await open(page);
+  await openPlan(page);
+  await page.keyboard.press("Meta+j");
+  await advertise(page);
+
+  // Only effort is a scale. A model list is a set of alternatives, and the
+  // agent's own order is the one that means something.
+  await page.locator('.agent-option [aria-label="Model"]').click();
+  const shown = await page.locator(".agent-option .dd-item .dd-label").allTextContents();
+  expect(shown).toEqual(["Fable", "Haiku"]);
 });
