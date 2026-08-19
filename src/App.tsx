@@ -739,7 +739,7 @@ export default function App() {
    * flicker in.
    */
   const muxOpen =
-    settings.showMux && chat !== false && !!activeRepoPath && view !== "settings" && !zen;
+    settings.showMux && chat !== false && !!activeRepoPath && !settingsOpen && !zen;
 
   /** Which of the two places the chat is in — the grid reads this, not the setting. */
   const chatSide = settings.chatPlace === "side";
@@ -805,14 +805,14 @@ export default function App() {
    */
   const showPanel = useCallback(
     (key: "showGit" | "showMux") => {
-      if (view === "settings") {
-        setView("write");
+      if (settingsOpen) {
+        setSettingsOpen(false);
         set({ [key]: true } as Partial<Settings>);
         return;
       }
       set({ [key]: !settings[key] } as Partial<Settings>);
     },
-    [view, set, settings],
+    [settingsOpen, set, settings],
   );
 
   /** The same command, on the clipboard, for running it somewhere else. */
