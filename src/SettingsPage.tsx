@@ -414,6 +414,12 @@ export function SettingsPage({
               "Pick an agent above."
             }
           />
+          <Toggle
+            label="Ask before acting"
+            hint="Off, the agent's own mode decides — these are markdown files under git, and a prompt per edit turns a conversation into a turnstile. On, every tool call it is unsure about waits for you in the transcript."
+            on={s.agentAsk}
+            onChange={(agentAsk) => onChange({ agentAsk })}
+          />
           <Area
             label="Handoff prompt"
             hint="What the agent is told when you hand a plan to it, from the tree's right-click menu or the palette. {file} is the plan's path. Yours to argue with — it is the one part of this that is about your house style."

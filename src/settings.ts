@@ -94,6 +94,15 @@ export type Settings = {
    * you cannot see is a prompt you cannot argue with.
    */
   handoffPrompt: string;
+  /**
+   * Whether the agent asks before it acts.
+   *
+   * Off by default, and not out of laziness: these files are markdown under
+   * git, the agent's own mode already classifies what is risky, and a prompt
+   * per edit turns a conversation into a turnstile. On, every tool call the
+   * agent is unsure about waits for you in the transcript.
+   */
+  agentAsk: boolean;
 
   // Panels
   /** The file tree down the left. */
@@ -159,6 +168,7 @@ export const DEFAULTS: Settings = {
   agentCommand: "claude {prompt}",
   chatCommand: "claude",
   handoffPrompt: HANDOFF_PROMPT,
+  agentAsk: false,
   imageFolder: "assets",
   sourceLineNumbers: true,
   sourceWrap: true,

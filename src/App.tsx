@@ -795,6 +795,11 @@ export default function App() {
    * changes; `false` hides the feature rather than offering a chat that
    * fails when spoken to.
    */
+  // The backend answers permission requests for you unless this says not to.
+  useEffect(() => {
+    void api.agentAutoAllow(!settings.agentAsk).catch(() => {});
+  }, [settings.agentAsk]);
+
   useEffect(() => {
     void api
       .agentList()

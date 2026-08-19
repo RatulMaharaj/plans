@@ -2197,12 +2197,65 @@ body.resizing.resizing-row, body.resizing.resizing-row .chat-edge { cursor: row-
   padding: 6px 10px;
 }
 .chat-tool {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
   font-family: var(--mono);
   font-size: 10px;
   letter-spacing: 0.04em;
   color: var(--ink-3);
 }
-.chat-tool::before { content: "· "; }
+/*
+ * The dot is the tool's state, and the reason it is a dot rather than a word:
+ * a line that said "running" would have to say something else later, and the
+ * something else would be longer, and the transcript would reflow while you
+ * were reading it.
+ */
+.chat-tool-dot {
+  flex: none;
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--ink-3);
+  align-self: center;
+}
+.chat-tool.pending .chat-tool-dot,
+.chat-tool.in_progress .chat-tool-dot { background: var(--git-mod); }
+.chat-tool.completed .chat-tool-dot { background: var(--git-new); }
+.chat-tool.failed .chat-tool-dot { background: var(--diff-del); }
+.chat-tool.interrupted .chat-tool-dot { background: transparent; box-shadow: inset 0 0 0 1px var(--ink-3); }
+.chat-tool .chat-where { color: var(--ink-3); opacity: 0.75; }
+
+/* Reasoning, folded away: it is available, not in the way. */
+.chat-thought {
+  font-family: var(--mono);
+  font-size: 10px;
+  line-height: 1.6;
+  color: var(--ink-3);
+}
+.chat-thought summary { cursor: pointer; letter-spacing: 0.06em; }
+
+/*
+ * A question, which is the one thing in the transcript that is waiting on
+ * you. It gets a rule and a background so it does not read as another line
+ * of narration that has already gone past.
+ */
+.chat-ask {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 7px 10px;
+  border: 1px solid var(--rule-strong);
+  border-radius: 6px;
+  background: var(--raised);
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--ink-2);
+}
+.chat-ask-title { flex: 1; min-width: 0; }
+.chat-ask-acts { display: flex; gap: 10px; flex: none; }
+.chat-ask-was { color: var(--ink-3); flex: none; }
 
 .chat-input {
   border-top: 1px solid var(--rule);

@@ -1037,3 +1037,108 @@ test("clicking a plan leaves the tree holding focus, so the chord is usable", as
   await page.keyboard.press("Meta+Backspace");
   await expect.poll(() => calls(page, "delete_plan")).toBe(1);
 });
+
+/*
+ * Permissions.
+ *
+ * The agent blocks while it waits on us, which makes every way of not
+ * answering into a way of wedging the session. These cover the answering and
+ * the not-answering alike.
+ */
+
+test("a permission request waits in the transcript, and answering frees it", async ({ page }) => {
+  await open(page);
+  await openPlan(page);
+  await page.keyboard.press("Meta+j");
+  await say(page, "edit the plan");
+  await expect.poll(() => calls(page, "agent_prompt")).toBe(1);
+
+  await page.evaluate(() => {
+    (window as any).__fake.emit("agent-permission", {
+      repo: "/repo/one",
+      requestId: "/repo/one::t1",
+      title: "Edit first.md",
+      options: [
+        { optionId: "allow", name: "Allow" },
+        { optionId: "always", name: "Always allow" },
+      ],
+    });
+  });
+
+  const ask = page.locator(".chat-ask");
+  await expect(ask).toContainText("Edit first.md");
+  await ask.locator("button", { hasText: "Allow" }).first().click();
+
+  const answered = await page.evaluate(() => (window as any).__fake.answered);
+  expect(answered).toEqual([{ requestId: "/repo/one::t1", option: "allow" }]);
+});
+
+test("an answered question stops being a question", async ({ page }) => {
+  await open(page);
+  await openPlan(page);
+  await page.keyboard.press("Meta+j");
+  await say(page, "edit it");
+  await page.evaluate(() => {
+    (window as any).__fake.emit("agent-permission", {
+      repo: "/repo/one",
+      requestId: "r1",
+      title: "Write note.md",
+      options: [{ optionId: "allow", name: "Allow" }],
+    });
+  });
+  await page.locator(".chat-ask button", { hasText: "Allow" }).click();
+
+  // The backend confirms what was chosen, and the buttons become a statement:
+  // one you could press again after the agent moved on would be a lie.
+  await page.evaluate(() => {
+    (window as any).__fake.emit("agent-permission-done", {
+      repo: "/repo/one",
+      requestId: "r1",
+      chosen: "allow",
+    });
+  });
+  await expect(page.locator(".chat-ask-was")).toHaveText("Allow");
+  await expect(page.locator(".chat-ask button")).toHaveCount(0);
+});
+
+test("a question that was never answered is inert on the next launch", async ({ page }) => {
+  await open(page);
+  await openPlan(page);
+  await page.keyboard.press("Meta+j");
+  await say(page, "edit it");
+  await page.evaluate(() => {
+    (window as any).__fake.emit("agent-permission", {
+      repo: "/repo/one",
+      requestId: "r1",
+      title: "Write note.md",
+      options: [{ optionId: "allow", name: "Allow" }],
+    });
+  });
+  // The agent's options, plus the app's own way out of the question.
+  await expect(page.locator(".chat-ask button")).toHaveCount(2);
+
+  // Reopening the panel rereads the transcript. The process that asked is
+  // gone, so live-looking buttons wired to nothing would be the bug.
+  // No ⌘J here: the panel being open is a persisted setting, so it comes back
+  // open and the chord would close it.
+  await page.reload();
+  await expect(page.locator(".files")).toBeVisible();
+  await expect(page.locator(".chat")).toBeVisible();
+  await expect(page.locator(".chat-ask")).toContainText("Write note.md");
+  await expect(page.locator(".chat-ask button")).toHaveCount(0);
+  await expect(page.locator(".chat-ask-was")).toHaveText("cancelled");
+});
+
+test("asking is a setting, and off by default", async ({ page }) => {
+  await open(page);
+  await page.keyboard.press("Meta+,");
+  await page.locator(".settings-filter").fill("ask before");
+
+  const row = page.locator(".setting-row", { hasText: "Ask before acting" });
+  await expect(row).toBeVisible();
+  // Off means the backend answers for you — which is what it is told.
+  await expect.poll(() => argsOf(page, "agent_auto_allow")).toContainEqual({ on: true });
+
+  await row.locator(".switch").click();
+  await expect.poll(() => argsOf(page, "agent_auto_allow")).toContainEqual({ on: false });
+});

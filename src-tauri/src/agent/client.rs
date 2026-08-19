@@ -109,3 +109,51 @@ pub async fn permission(
 /// that differed between two repositories in the same window would be a thing
 /// nobody could keep in their head.
 pub static AUTO_ALLOW: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The deadlock this module exists to avoid.
+    ///
+    /// While the agent waits on a permission it does nothing else, so every
+    /// way the app can stop caring about the question has to answer it
+    /// anyway. Cancel is the one people actually press.
+    #[tokio::test]
+    async fn cancelling_answers_every_outstanding_question() {
+        let perms = pending();
+        let (tx, rx) = oneshot::channel();
+        perms.lock().unwrap().insert("r::t1".into(), tx);
+
+        cancel_all(&perms, "r");
+
+        // Answered, and answered with "no" — not left hanging, and not
+        // silently allowed.
+        assert_eq!(rx.await.unwrap(), None);
+        assert!(perms.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn an_answer_reaches_the_question_that_asked_it() {
+        let perms = pending();
+        let (tx1, rx1) = oneshot::channel();
+        let (tx2, rx2) = oneshot::channel();
+        perms.lock().unwrap().insert("r::a".into(), tx1);
+        perms.lock().unwrap().insert("r::b".into(), tx2);
+
+        answer(&perms, "r::b", Some("allow".into()));
+
+        assert_eq!(rx2.await.unwrap(), Some("allow".into()));
+        // The other is untouched, not collaterally cancelled.
+        assert_eq!(perms.lock().unwrap().len(), 1);
+        cancel_all(&perms, "r");
+        assert_eq!(rx1.await.unwrap(), None);
+    }
+
+    #[tokio::test]
+    async fn answering_a_question_nobody_asked_is_not_a_panic() {
+        // A stale click from a transcript whose session has gone.
+        let perms = pending();
+        answer(&perms, "r::gone", Some("allow".into()));
+    }
+}
