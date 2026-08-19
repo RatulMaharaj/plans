@@ -1972,3 +1972,25 @@ test("the chat has a floor it cannot be dragged under", async ({ page }) => {
   await drag(page, ".chat-edge", 600, 0);
   expect((await box(page, ".mux")).width).toBeGreaterThanOrEqual(330);
 });
+
+test("an agent that never started is not called a sign-in problem", async ({ page }) => {
+  await open(page);
+  await openPlan(page);
+  await page.keyboard.press("Meta+j");
+  await say(page, "hello");
+
+  // What a missing node looks like: the launcher resolved, the thing it
+  // launches did not.
+  await page.evaluate(() => {
+    (window as any).__fake.emit("agent-down", {
+      repo: "/repo/one",
+      message: "Process exited with exit status: 127: env: node: No such file or directory",
+    });
+  });
+
+  const log = page.locator(".chat-log");
+  await expect(log).toContainText("failing to start");
+  // Telling someone to sign in when node could not be found sends them to fix
+  // the wrong thing.
+  await expect(log).not.toContainText("sign in");
+});

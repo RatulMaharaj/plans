@@ -103,10 +103,11 @@ export type Settings = {
   showMux: boolean;
   showStatusBar: boolean;
   /**
-   * Where the chat sits: a row under the document, or a column on the right.
-   * Two shapes because the panel is read two ways — a transcript you glance
-   * at while writing wants to be tall and narrow, one you are working *in*
-   * wants the width.
+   * Where the chat sits: a column on the right, or a row under the document.
+   *
+   * Beside by default. A conversation is read down, so height is what it
+   * wants, and the plan stays fully visible next to it rather than being
+   * squeezed into the top half of the window.
    */
   chatPlace: "bottom" | "side";
   /** Height of the chat in px, when it is the bottom row. */
@@ -167,7 +168,7 @@ export const DEFAULTS: Settings = {
   showIndex: true,
   showGit: false,
   showMux: false,
-  chatPlace: "bottom",
+  chatPlace: "side",
   muxHeight: 260,
   chatWidth: 420,
   showStatusBar: true,

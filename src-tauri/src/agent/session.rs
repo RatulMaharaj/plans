@@ -18,9 +18,8 @@ use agent_client_protocol::schema::v1::{
     TextContent,
 };
 use agent_client_protocol::schema::ProtocolVersion;
-use agent_client_protocol::{AcpAgent, Agent, ConnectionTo};
+use agent_client_protocol::{AcpAgent, AcpAgentConfig, Agent, ConnectionTo};
 use serde_json::json;
-use std::str::FromStr;
 use tauri::{AppHandle, Emitter};
 use tokio::sync::mpsc::UnboundedReceiver;
 
@@ -46,11 +45,21 @@ pub async fn run(
     mut ops: UnboundedReceiver<Op>,
     perms: crate::agent::client::Pending,
 ) {
-    let line = argv.join(" ");
-    let agent = match AcpAgent::from_str(&line) {
-        Ok(a) => a,
-        Err(e) => return down(&app, &repo, &format!("could not start the agent: {e}")),
-    };
+    /*
+     * The child needs the PATH a terminal would have, not the one we inherited.
+     *
+     * Resolving `npx` to an absolute path is only half the job: `npx` is a
+     * script whose shebang is `#!/usr/bin/env node`, and `env` searches the
+     * *child's* PATH. A GUI app launched from Finder hands down launchd's
+     * PATH, which has no node — so the program we carefully found fails at
+     * exit 127 with "env: node: No such file or directory", which reads like
+     * the agent is broken rather than unfound.
+     */
+    let mut cfg = AcpAgentConfig::new(&argv[0]).args(argv[1..].iter().cloned());
+    if let Some(path) = crate::agent::discover::login_path() {
+        cfg = cfg.env("PATH", path);
+    }
+    let agent = AcpAgent::new(cfg);
 
     let (r2, a2) = (repo.clone(), app.clone());
     let (r3, a3, p3) = (repo.clone(), app.clone(), perms.clone());

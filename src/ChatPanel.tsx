@@ -376,13 +376,27 @@ export function ChatPanel({
       setBusy(false);
       if (!e.payload.message) return;
       /*
-       * A stopped agent is usually a signed-out one, and the message it
-       * leaves — "API key is missing or not configured" — is true and
-       * useless: what to do about it happens in a terminal, not here. So the
-       * note carries the sentence *and* the thing to do.
+       * The message the agent leaves is true and rarely actionable, so a
+       * second line says what to do — but only when it fits.
+       *
+       * A signed-out agent and an agent that never started look nothing alike
+       * and need opposite advice. "exit status: 127" or a missing binary is
+       * the process failing to launch, and telling someone to sign in when
+       * node could not be found sends them to fix the wrong thing.
        */
-      say(key, "note", `the agent stopped — ${e.payload.message}`, false);
-      if (authHint) say(key, "note", authHint, false);
+      const why = e.payload.message;
+      say(key, "note", `the agent stopped — ${why}`, false);
+      const missing = /127|No such file|not found|ENOENT/i.test(why);
+      if (missing) {
+        say(
+          key,
+          "note",
+          "That is the agent failing to start, not a sign-in problem — it could not find what it needs on the PATH. Installing it from Settings → Agents runs it directly instead of through npx.",
+          false,
+        );
+      } else if (authHint) {
+        say(key, "note", authHint, false);
+      }
     });
 
     return () => {
