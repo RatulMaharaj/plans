@@ -860,3 +860,36 @@ test("hiding them does not close one that is open", async ({ page }) => {
   await expect(page.locator(".row.file", { hasText: "second" })).toHaveCount(0);
   await expect(page.locator(".page-path")).toContainText("second.md");
 });
+
+test("a tool call is shown with what it touched, not just its name", async ({ page }) => {
+  await open(page);
+  await openPlan(page);
+  await page.keyboard.press("Meta+j");
+  await say(page, "read it");
+  await expect.poll(() => calls(page, "chat_send")).toBe(1);
+
+  await page.evaluate(() => {
+    const f = (window as any).__fake;
+    f.emit("chat-tool", { id: 1, name: "Read", detail: "first.md" });
+    f.emit("chat-delta", { id: 1, text: "It is a plan." });
+  });
+
+  await expect(page.locator(".chat-tool")).toContainText("Read first.md");
+  await expect(page.locator(".chat-msg.assistant")).toContainText("It is a plan.");
+});
+
+test("a turn that cannot start says so in the transcript", async ({ page }) => {
+  await open(page);
+  await openPlan(page);
+  await page.keyboard.press("Meta+j");
+  // The backend refuses: the binary is not on the PATH this app was given.
+  await page.evaluate(() => {
+    (window as any).__fake.failNextSend = "claude is not installed";
+  });
+  await say(page, "hello?");
+
+  // Not only a toast — a toast is gone by the time you look back, and a turn
+  // that produced nothing must not look like one still thinking.
+  await expect(page.locator(".chat-tool")).toContainText("not installed");
+  await expect(page.locator(".chat-input textarea")).toBeEnabled();
+});

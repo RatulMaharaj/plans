@@ -14,9 +14,10 @@ use crate::R;
 use serde::Serialize;
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Read};
+use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Mutex;
+use std::sync::{Mutex, OnceLock};
 use tauri::{AppHandle, Emitter, Manager, State};
 
 /// Turns still running: id -> the child, held only so Stop can kill it.
@@ -35,6 +36,8 @@ struct ChatDelta {
 struct ChatTool {
     id: u64,
     name: String,
+    /// The one argument worth reading: the file, the command, the pattern.
+    detail: String,
 }
 
 #[derive(Serialize, Clone)]
@@ -53,6 +56,56 @@ struct ChatError {
 
 static NEXT_CHAT: AtomicU64 = AtomicU64::new(1);
 
+/// The PATH a login shell would have, found once and remembered.
+///
+/// A GUI app launched from Finder or the Dock inherits launchd's PATH, which
+/// is `/usr/bin:/bin:/usr/sbin:/sbin` and nothing else. Every way people
+/// actually install an agent CLI — `~/.local/bin`, Homebrew, a node version
+/// manager, `~/.bun/bin` — is outside it, so `Command::new("claude")` fails
+/// with "not found" for someone who can run `claude` perfectly well in a
+/// terminal. The same app started from a terminal works, which is exactly the
+/// kind of difference that makes a bug look like magic.
+///
+/// Asking the login shell is the only honest way to know: the PATH is
+/// assembled by the user's own dotfiles, and guessing a list of directories
+/// would be wrong for the next person.
+static SHELL_PATH: OnceLock<Option<String>> = OnceLock::new();
+
+fn login_path() -> Option<&'static str> {
+    SHELL_PATH
+        .get_or_init(|| {
+            let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".into());
+            let out = Command::new(shell)
+                .args(["-lc", "printf %s \"$PATH\""])
+                .output()
+                .ok()?;
+            if !out.status.success() {
+                return None;
+            }
+            let p = String::from_utf8_lossy(&out.stdout).trim().to_string();
+            (!p.is_empty()).then_some(p)
+        })
+        .as_deref()
+}
+
+/// The binary to run for `name`, as an absolute path where one can be found.
+///
+/// Resolved rather than passed through so a failure is "not installed" rather
+/// than "not on this process's PATH", and so `chat_agents` and `chat_send`
+/// can never disagree about whether something exists.
+pub fn resolve(name: &str) -> Option<PathBuf> {
+    let dirs = login_path()
+        .map(String::from)
+        .or_else(|| std::env::var("PATH").ok())?;
+    for dir in dirs.split(':').filter(|d| !d.is_empty()) {
+        let p = Path::new(dir).join(name);
+        if p.is_file() {
+            return Some(p);
+        }
+    }
+    None
+}
+
 /// A binary name is a word, not a command line. The flags are ours.
 fn checked(cmd: &str) -> R<&str> {
     let c = cmd.trim();
@@ -69,7 +122,8 @@ fn checked(cmd: &str) -> R<&str> {
 #[tauri::command]
 pub fn chat_available(cmd: String) -> Option<String> {
     let c = checked(&cmd).ok()?;
-    let out = Command::new(c).arg("--version").output().ok()?;
+    let bin = resolve(c)?;
+    let out = Command::new(bin).arg("--version").output().ok()?;
     if !out.status.success() {
         return None;
     }
@@ -128,7 +182,10 @@ pub fn chat_send(
     state: State<'_, Chats>,
     app: AppHandle,
 ) -> R<u64> {
-    let bin = checked(&cmd)?.to_string();
+    let name = checked(&cmd)?.to_string();
+    let bin = resolve(&name).ok_or_else(|| {
+        format!("{name} is not installed, or not on the PATH your shell gives this app")
+    })?;
     let id = NEXT_CHAT.fetch_add(1, Ordering::Relaxed);
 
     let mut command = Command::new(&bin);
@@ -148,7 +205,7 @@ pub fn chat_send(
 
     let mut child = command
         .spawn()
-        .map_err(|e| format!("could not run {bin}: {e}"))?;
+        .map_err(|e| format!("could not run {}: {e}", bin.display()))?;
 
     let stdout = child.stdout.take().ok_or("no stdout from the agent")?;
     let stderr = child.stderr.take();
@@ -172,9 +229,30 @@ pub fn chat_send(
                             said_anything = true;
                             let _ = app.emit("chat-delta", ChatDelta { id, text: t.into() });
                         }
-                    } else if ev["content_block"]["type"] == "tool_use" {
-                        if let Some(n) = ev["content_block"]["name"].as_str() {
-                            let _ = app.emit("chat-tool", ChatTool { id, name: n.into() });
+                    }
+                }
+                // The assembled message, which is where a tool's arguments are
+                // whole. `content_block_start` announces the tool before its
+                // input has streamed, so it can only ever say "Edit" — this
+                // says "Edit plan.md", which is what you would see in a
+                // terminal and the only version worth showing.
+                Some("assistant") => {
+                    if let Some(blocks) = v["message"]["content"].as_array() {
+                        for b in blocks {
+                            if b["type"] != "tool_use" {
+                                continue;
+                            }
+                            let Some(n) = b["name"].as_str() else {
+                                continue;
+                            };
+                            let _ = app.emit(
+                                "chat-tool",
+                                ChatTool {
+                                    id,
+                                    name: n.into(),
+                                    detail: tool_detail(&b["input"]),
+                                },
+                            );
                         }
                     }
                 }
@@ -182,6 +260,14 @@ pub fn chat_send(
                     // An older CLI without partial messages still lands here:
                     // the whole answer arrives as one delta rather than none.
                     if !said_anything {
+                        if let Some(t) = v["result"].as_str() {
+                            let _ = app.emit("chat-delta", ChatDelta { id, text: t.into() });
+                        }
+                    }
+                    // An error result carries its message in the same field
+                    // a good one carries the answer, and saying nothing at all
+                    // is the worst of the options.
+                    if v["is_error"] == true && !said_anything {
                         if let Some(t) = v["result"].as_str() {
                             let _ = app.emit("chat-delta", ChatDelta { id, text: t.into() });
                         }
@@ -233,6 +319,42 @@ pub fn chat_send(
     Ok(id)
 }
 
+/// The argument of a tool call worth showing beside its name.
+///
+/// One field, not a dump: a tool line is a glance, and the whole input of an
+/// Edit is the thing you would read the diff for instead. Paths are shortened
+/// to their filename because the repository is already the context.
+fn tool_detail(input: &serde_json::Value) -> String {
+    for key in ["file_path", "path", "notebook_path"] {
+        if let Some(p) = input[key].as_str() {
+            return p.rsplit('/').next().unwrap_or(p).to_string();
+        }
+    }
+    for key in [
+        "command",
+        "pattern",
+        "query",
+        "url",
+        "description",
+        "prompt",
+    ] {
+        if let Some(v) = input[key].as_str() {
+            return first_line(v);
+        }
+    }
+    String::new()
+}
+
+/// A single line, short enough to sit on one row.
+fn first_line(s: &str) -> String {
+    let line = s.lines().next().unwrap_or("").trim();
+    if line.chars().count() > 60 {
+        format!("{}…", line.chars().take(60).collect::<String>())
+    } else {
+        line.to_string()
+    }
+}
+
 /// Stop the turn. The session survives — stopping an answer mid-sentence is
 /// not forgetting the conversation.
 #[tauri::command]
@@ -246,6 +368,7 @@ pub fn chat_cancel(id: u64, state: State<'_, Chats>) -> R<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
 
     #[test]
     fn a_binary_name_is_one_word() {
@@ -253,6 +376,62 @@ mod tests {
         assert!(checked("  claude  ").is_ok());
         assert!(checked("claude --print").is_err());
         assert!(checked("").is_err());
+    }
+
+    #[test]
+    fn a_tool_shows_its_file_by_name_alone() {
+        let input = json!({ "file_path": "/a/b/plan.md", "old_string": "x" });
+        assert_eq!(tool_detail(&input), "plan.md");
+    }
+
+    #[test]
+    fn a_tool_without_a_path_shows_what_it_was_given() {
+        assert_eq!(tool_detail(&json!({ "command": "ls -la" })), "ls -la");
+        assert_eq!(tool_detail(&json!({ "pattern": "TODO" })), "TODO");
+        // Nothing recognisable is nothing shown, rather than a dump of JSON.
+        assert_eq!(tool_detail(&json!({ "unknown": 1 })), "");
+    }
+
+    #[test]
+    fn a_long_argument_is_cut_to_one_line() {
+        let long = "x".repeat(200);
+        let out = tool_detail(&json!({ "command": format!("{long}\nsecond line") }));
+        assert!(out.chars().count() <= 61, "{out}");
+        assert!(!out.contains('\n'));
+    }
+
+    #[test]
+    fn the_assembled_message_is_where_a_tool_use_is_whole() {
+        // `content_block_start` announces a tool with an empty input; the
+        // `assistant` line is the one that carries the arguments, which is why
+        // the reader listens to that instead.
+        let announced = json!({
+            "type": "content_block_start",
+            "content_block": { "type": "tool_use", "name": "Read", "input": {} }
+        });
+        assert_eq!(
+            announced["content_block"]["input"]["file_path"].as_str(),
+            None
+        );
+
+        let whole = json!({
+            "type": "assistant",
+            "message": { "content": [
+                { "type": "tool_use", "name": "Read", "input": { "file_path": "/r/note.md" } }
+            ]}
+        });
+        let block = &whole["message"]["content"][0];
+        assert_eq!(block["name"].as_str(), Some("Read"));
+        assert_eq!(tool_detail(&block["input"]), "note.md");
+    }
+
+    #[test]
+    fn a_binary_outside_this_process_path_is_still_found() {
+        // The point of `resolve`: a GUI app's PATH is not the shell's, so the
+        // lookup goes through the login shell. `sh` is on every PATH there is,
+        // which makes it the one name safe to assert on.
+        assert!(resolve("sh").is_some());
+        assert!(resolve("plans-no-such-agent-9f3").is_none());
     }
 
     #[test]

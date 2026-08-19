@@ -41,6 +41,8 @@ export function installFakeBackend(repos: FakeRepo[], update?: FakeUpdate) {
      * whereas on disk it is a real directory that `existing_dirs` can see.
      */
     dirs: new Set<string>(),
+    /** Set to a message to make the next chat_send reject with it. */
+    failNextSend: null as string | null,
     /** A codex binary's version, when a test wants one installed. */
     codex: null as string | null,
     /** The installed `plans` script, null until one is installed. */
@@ -252,6 +254,12 @@ export function installFakeBackend(repos: FakeRepo[], update?: FakeUpdate) {
     // sent out of `calls`, which is the same boundary the real backend has.
     chat_available: () => (state.chat ? "claude 9.9.9 (fake)" : null),
     chat_send: () => {
+      // A backend that refuses, for the "the agent is not installed" path.
+      if (state.failNextSend) {
+        const why = state.failNextSend;
+        state.failNextSend = null;
+        throw new Error(why);
+      }
       const id = nextChat++;
       state.chats[id] = true;
       return id;

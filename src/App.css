@@ -2021,8 +2021,9 @@ body.resizing.resizing-row, body.resizing.resizing-row .chat-edge { cursor: row-
   background: var(--raised);
   border: 1px solid var(--rule-strong);
   border-radius: 4px;
-  padding: 9px 10px 9px 16px;
+  padding: 9px 16px;
   box-shadow: var(--shadow);
+  flex-wrap: nowrap;
   font-family: var(--mono);
   font-size: 10px;
   letter-spacing: 0.08em;
@@ -2031,14 +2032,21 @@ body.resizing.resizing-row, body.resizing.resizing-row .chat-edge { cursor: row-
   animation: sheet-in 150ms ease;
 }
 .update-text { display: flex; align-items: baseline; gap: 10px; min-width: 0; }
-.update-text b { color: var(--ink); font-weight: 500; }
+.update-text b { color: var(--ink); font-weight: 500; white-space: nowrap; }
 .update-notes {
   color: var(--ink-3);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.update-acts { display: flex; align-items: center; gap: 4px; flex: none; }
+/*
+ * The two actions are a decision, not a pair of links: 14px apart so "Later"
+ * cannot be pressed by aiming at "Install", and nowrap because these labels
+ * are uppercase and letter-spaced — broken across lines they stop reading as
+ * words at all.
+ */
+.update-acts { display: flex; align-items: center; gap: 14px; flex: none; }
+.update-acts .act { white-space: nowrap; padding: 3px 2px; }
 
 .update-progress {
   position: relative;

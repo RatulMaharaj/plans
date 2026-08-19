@@ -111,10 +111,9 @@ export function ChatPanel({
     setThread(t);
   }, [key]);
 
-  // One listener set for the panel's lifetime; the turn ref says whose
-  // events these are.
-  useEffect(() => {
-    const say = (k: string, role: Msg["role"], text: string, append: boolean) =>
+  /** Add to a transcript: a new bubble, or more of the one being written. */
+  const say = useCallback(
+    (k: string, role: Msg["role"], text: string, append: boolean) =>
       commit(k, (t) => {
         const m = [...t.messages];
         if (append) {
@@ -130,15 +129,21 @@ export function ChatPanel({
         }
         m.push({ role, text });
         return { ...t, messages: m };
-      });
+      }),
+    [commit],
+  );
 
+  // One listener set for the panel's lifetime; the turn ref says whose
+  // events these are.
+  useEffect(() => {
     const delta = listen<{ id: number; text: string }>("chat-delta", (e) => {
       if (e.payload.id !== turn.current?.id) return;
       say(turn.current.key, "assistant", e.payload.text, true);
     });
-    const tool = listen<{ id: number; name: string }>("chat-tool", (e) => {
+    const tool = listen<{ id: number; name: string; detail: string }>("chat-tool", (e) => {
       if (e.payload.id !== turn.current?.id) return;
-      say(turn.current.key, "tool", e.payload.name, false);
+      const { name, detail } = e.payload;
+      say(turn.current.key, "tool", detail ? `${name} ${detail}` : name, false);
     });
     const done = listen<{ id: number; session: string | null; ok: boolean }>("chat-done", (e) => {
       if (e.payload.id !== turn.current?.id) return;
@@ -165,7 +170,7 @@ export function ChatPanel({
     return () => {
       for (const u of [delta, tool, done, failed]) void u.then((f) => f());
     };
-  }, [commit]);
+  }, [say]);
 
   const send = useCallback(
     async (text: string, seeded = false) => {
@@ -200,12 +205,16 @@ export function ChatPanel({
         turn.current = { id, key, at: Date.now() };
       } catch (e) {
         setBusy(false);
+        // In the transcript as well as the toast: a turn that produced nothing
+        // must not look like a turn that is still thinking, and a toast is
+        // gone by the time you look back at the conversation.
+        say(key, "tool", String(e).replace(/^Error:\s*/, ""), false);
         notify(String(e), "error");
       } finally {
         inflight.current = false;
       }
     },
-    [key, relPath, repo, cmd, commit, notify],
+    [key, relPath, repo, cmd, commit, notify, say],
   );
 
   // "Hand off" and friends arrive as a seeded message, sent as if typed.
