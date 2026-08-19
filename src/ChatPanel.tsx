@@ -60,6 +60,9 @@ export function ChatPanel({ repo, relPath, seed, onSeedUsed, cmd, notify }: Prop
    */
   const threads = useRef(new Map<string, Thread>());
   const keyRef = useRef<string | null>(null);
+  /** True from send() being entered until chat_send answers — a synchronous
+   *  guard where turn.current has an async gap. */
+  const inflight = useRef(false);
 
   const commit = useCallback((k: string, up: (t: Thread) => Thread) => {
     const cur = threads.current.get(k) ?? load(k);
@@ -87,12 +90,18 @@ export function ChatPanel({ repo, relPath, seed, onSeedUsed, cmd, notify }: Prop
     const say = (k: string, role: Msg["role"], text: string, append: boolean) =>
       commit(k, (t) => {
         const m = [...t.messages];
-        const last = m[m.length - 1];
-        if (append && last?.role === role) {
-          m[m.length - 1] = { role, text: last.text + text };
-        } else {
-          m.push({ role, text });
+        if (append) {
+          // The turn's answer is one bubble: append to the assistant message
+          // of the current turn — anything after the last user message — so a
+          // tool line arriving mid-stream does not split the prose in two.
+          for (let i = m.length - 1; i >= 0 && m[i].role !== "user"; i--) {
+            if (m[i].role === role) {
+              m[i] = { role, text: m[i].text + text };
+              return { ...t, messages: m };
+            }
+          }
         }
+        m.push({ role, text });
         return { ...t, messages: m };
       });
 
@@ -125,7 +134,8 @@ export function ChatPanel({ repo, relPath, seed, onSeedUsed, cmd, notify }: Prop
 
   const send = useCallback(
     async (text: string) => {
-      if (!key || !relPath || !text.trim() || turn.current) return;
+      if (!key || !relPath || !text.trim() || turn.current || inflight.current) return;
+      inflight.current = true;
       const t = threads.current.get(key) ?? load(key);
       // The plan's identity rides the first turn; --resume carries it after.
       const preamble = t.session
@@ -141,14 +151,20 @@ export function ChatPanel({ repo, relPath, seed, onSeedUsed, cmd, notify }: Prop
       } catch (e) {
         setBusy(false);
         notify(String(e), "error");
+      } finally {
+        inflight.current = false;
       }
     },
     [key, relPath, repo, cmd, commit, notify],
   );
 
   // "Flesh out" and friends arrive as a seeded message, sent as if typed.
+  // Consumed through a ref: the parent's state update that clears the seed
+  // has not re-rendered yet when StrictMode runs this effect the second time.
+  const seenSeed = useRef<string | null>(null);
   useEffect(() => {
-    if (!seed || !key) return;
+    if (!seed || !key || seenSeed.current === seed) return;
+    seenSeed.current = seed;
     onSeedUsed();
     void send(seed);
   }, [seed, key, send, onSeedUsed]);
@@ -207,8 +223,9 @@ export function ChatPanel({ repo, relPath, seed, onSeedUsed, cmd, notify }: Prop
           placeholder={relPath ? "Ask the agent…" : "Nothing open"}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={(e) => {
-            // The conversation's keys, not the app's — but Escape still leaves.
-            e.stopPropagation();
+            // The conversation's keys, not the app's — but chords stay the
+            // app's (⌘J must still close the panel), and Escape still leaves.
+            if (!e.metaKey && !e.ctrlKey) e.stopPropagation();
             if (e.key === "Enter" && !e.shiftKey) {
               e.preventDefault();
               const text = input;

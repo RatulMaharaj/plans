@@ -45,11 +45,11 @@ export function installFakeBackend(repos: FakeRepo[], update?: FakeUpdate) {
     chat: true,
     /** Chat turns still "running": id -> true, for asserting cancel. */
     chats: {} as Record<number, boolean>,
-    /** Event listeners the app has registered, by event name. */
-    listeners: {} as Record<string, ((e: unknown) => void)[]>,
+    /** Event listeners the app has registered, by event name and id. */
+    listeners: {} as Record<string, { id: number; fn: (e: unknown) => void }[]>,
     /** Push an event at the app, as the Rust side would. */
     emit(event: string, payload: unknown) {
-      for (const fn of state.listeners[event] ?? []) fn({ event, id: 0, payload });
+      for (const l of state.listeners[event] ?? []) l.fn({ event, id: 0, payload });
     },
   };
   let nextChat = 1;
@@ -244,11 +244,18 @@ export function installFakeBackend(repos: FakeRepo[], update?: FakeUpdate) {
 
     // The event plumbing under @tauri-apps/api `listen`. transformCallback is
     // the identity above, so the handler arrives as the function itself.
+    // Unlisten must really unregister, exactly as Tauri's does: React's
+    // StrictMode mounts, cleans up, and mounts again, and a fake that keeps
+    // the first listener delivers every event twice.
     "plugin:event|listen": ({ event, handler }) => {
-      (state.listeners[event] ??= []).push(handler);
-      return 1;
+      const id = nextListener++;
+      (state.listeners[event] ??= []).push({ id, fn: handler });
+      return id;
     },
-    "plugin:event|unlisten": () => null,
+    "plugin:event|unlisten": ({ event, eventId }) => {
+      state.listeners[event] = (state.listeners[event] ?? []).filter((l) => l.id !== eventId);
+      return null;
+    },
     perf_log: () => null,
 
     // The updater has to be genuinely inert here, not merely never triggered:
@@ -262,10 +269,14 @@ export function installFakeBackend(repos: FakeRepo[], update?: FakeUpdate) {
     "plugin:app|version": () => "0.0.0-test",
   };
 
+  let nextListener = 1;
   // Every other command answers plainly rather than throwing, so a test is
   // never derailed by something incidental like a push.
   const fallback = () => "";
 
+  // The event plugin's own shim calls this before invoking unlisten; without
+  // it, unlisten throws and every re-mounted listener is delivered twice.
+  (window as any).__TAURI_EVENT_PLUGIN_INTERNALS__ = { unregisterListener: () => {} };
   (window as any).__TAURI_INTERNALS__ = {
     ...(window as any).__TAURI_INTERNALS__,
     transformCallback: (cb: unknown) => cb,
