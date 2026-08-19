@@ -1404,3 +1404,19 @@ test("what you typed is shown as you typed it", async ({ page }) => {
   await expect(page.locator(".chat-msg.user")).toContainText("**this**");
   await expect(page.locator(".chat-msg.user strong")).toHaveCount(0);
 });
+
+test("an agent can be installed so it stops being fetched every time", async ({ page }) => {
+  await open(page);
+  await page.keyboard.press("Meta+,");
+  await page.locator(".settings-filter").fill("started as");
+
+  const row = page.locator(".setting-row", { hasText: "Started as" });
+  // npx is the fallback: it re-resolves the package on every launch.
+  await expect(row).toContainText("npx");
+  await row.locator("button.act", { hasText: "Install" }).click();
+
+  // Afterwards it runs the binary directly, and stops offering.
+  await expect(row).toContainText("claude-agent-acp");
+  await expect(row).not.toContainText("npx");
+  await expect(row.locator(".act.done")).toHaveText("Installed");
+});

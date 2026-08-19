@@ -1259,6 +1259,7 @@ pub fn run() {
             mux::mux_start,
             mux::mux_send,
             agent::discover::agent_list,
+            agent::discover::agent_install,
             agent::agent_prompt,
             agent::agent_cancel,
             agent::agent_set_config,

@@ -2407,6 +2407,15 @@ export default function App() {
               }
               skills={skills}
               onInstallCli={installCli}
+              onInstallAgent={(id) =>
+                void api.agentInstall(id).then(
+                  (pkg) => {
+                    notify(`Installed ${pkg}`);
+                    void readInstalls();
+                  },
+                  (e) => notify(String(e), "error"),
+                )
+              }
               cli={cli}
               agents={agents}
               version={appVersion}

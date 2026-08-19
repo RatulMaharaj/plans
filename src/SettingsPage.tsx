@@ -18,6 +18,8 @@ type Props = {
   /** What each repository already has, by path — absent while still looking. */
   skills: Record<string, SkillState>;
   onInstallCli: () => void;
+  /** `npm i -g` the chosen agent. */
+  onInstallAgent: (id: string) => void;
   /** The installed `plans` script, null when there is none. */
   cli: CliStatus | null;
   /** Which known agents are on this machine. */
@@ -81,6 +83,7 @@ export function SettingsPage({
   onInstallSkill,
   skills,
   onInstallCli,
+  onInstallAgent,
   cli,
   agents,
   version,
@@ -407,12 +410,24 @@ export function SettingsPage({
           {installHint(agents, s.chatCommand) && (
             <Row label="Not installed" hint={installHint(agents, s.chatCommand)!} />
           )}
-          <Row
+          {/* What it will actually run — an installed binary, or npx fetching
+              the package each time. The difference is a second or two on the
+              first prompt of every session, so it is worth being able to see. */}
+          <ActionRow
             label="Started as"
             hint={
               agents.find((a) => a.id === s.chatCommand)?.argv.join(" ") ??
               "Pick an agent above."
             }
+            action={
+              agents.find((a) => a.id === s.chatCommand)?.installable
+                ? "Install"
+                : agents.find((a) => a.id === s.chatCommand)?.installed
+                  ? "Installed"
+                  : null
+            }
+            done={!!agents.find((a) => a.id === s.chatCommand)?.installed}
+            onAction={() => onInstallAgent(s.chatCommand)}
           />
           <Toggle
             label="Ask before acting"
@@ -676,6 +691,43 @@ function Row({ label, hint }: { label: string; hint: string }) {
         {label}
         <span className="setting-hint">{hint}</span>
       </span>
+    </div>
+  );
+}
+
+/**
+ * A row that says something and offers one thing to do about it.
+ *
+ * A component rather than a bare div because the settings filter reads
+ * `label` and `hint` off the elements themselves — anything hand-rolled is
+ * invisible to search, which is a quiet way for a setting to disappear.
+ */
+function ActionRow({
+  label,
+  hint,
+  action,
+  done,
+  onAction,
+}: {
+  label: string;
+  hint: string;
+  action: string | null;
+  done: boolean;
+  onAction: () => void;
+}) {
+  return (
+    <div className="setting-row static">
+      <span className="setting-label">
+        {label}
+        <span className="setting-hint">{hint}</span>
+      </span>
+      {action && done ? (
+        <span className="act done">{action}</span>
+      ) : action ? (
+        <button className="act" onClick={onAction}>
+          {action}
+        </button>
+      ) : null}
     </div>
   );
 }

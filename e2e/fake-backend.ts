@@ -48,6 +48,8 @@ export function installFakeBackend(repos: FakeRepo[], update?: FakeUpdate) {
     failNextSend: null as string | null,
     /** Whether a second agent is installed, when a test wants one. */
     codex: null as string | null,
+    /** Whether the agent has been installed globally rather than run via npx. */
+    agentInstalled: false,
     /** Permission answers the app has sent back. */
     answered: [] as { requestId: string; option: string | null }[],
     /** The options the fake agent advertises; `agent_set_config` mutates it. */
@@ -275,6 +277,10 @@ export function installFakeBackend(repos: FakeRepo[], update?: FakeUpdate) {
       return id;
     },
     agent_cancel: () => null,
+    agent_install: () => {
+      state.agentInstalled = true;
+      return "@agentclientprotocol/claude-agent-acp";
+    },
     agent_permission: ({ requestId, option }) => {
       state.answered.push({ requestId: String(requestId), option: (option ?? null) as string | null });
       return null;
@@ -345,8 +351,12 @@ export function installFakeBackend(repos: FakeRepo[], update?: FakeUpdate) {
         id: "claude",
         label: "Claude Code",
         ready: state.chat,
-        install: "Needs Node. Runs via npx on first use.",
-        argv: ["npx", "-y", "@agentclientprotocol/claude-agent-acp@0.70.0"],
+        install: "Needs Node. Install it to start instantly instead of fetching each time.",
+        argv: state.agentInstalled
+          ? ["claude-agent-acp"]
+          : ["npx", "-y", "@agentclientprotocol/claude-agent-acp@0.70.0"],
+        installed: state.agentInstalled,
+        installable: !state.agentInstalled,
       },
       {
         id: "codex",
@@ -354,6 +364,8 @@ export function installFakeBackend(repos: FakeRepo[], update?: FakeUpdate) {
         ready: !!state.codex,
         install: "Needs Node and a Codex login.",
         argv: ["npx", "-y", "@agentclientprotocol/codex-acp"],
+        installed: false,
+        installable: true,
       },
     ],
     install_cli: () => {

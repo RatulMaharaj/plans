@@ -66,6 +66,10 @@ export type AgentFound = {
   install: string;
   /** The argv, shown in settings so nothing about the launch is hidden. */
   argv: string[];
+  /** Installed, rather than fetched by npx on every launch. */
+  installed: boolean;
+  /** The app can install it for you. */
+  installable: boolean;
 };
 
 /** One picker the agent advertises: models, reasoning effort, mode, anything. */
@@ -132,6 +136,9 @@ export const api = {
 
   /** Which of the agents the app knows about can be started here. */
   agentList: () => invoke<AgentFound[]>("agent_list"),
+
+  /** `npm i -g` the agent, so it starts without npx fetching it first. */
+  agentInstall: (id: string) => invoke<string>("agent_install", { id }),
 
   listPlans: (repo: string, dirs: string[], includeIgnored = false) =>
     invoke<any[]>("list_plans", { repo, dirs, includeIgnored }).then((xs) =>

@@ -71,6 +71,15 @@ pub struct Known {
     pub args: &'static [&'static str],
     /// What to tell someone who does not have it.
     pub install: &'static str,
+    /// The command this agent installs as, when it is installed properly.
+    ///
+    /// Checked before `program`, because `npx` is a fallback rather than the
+    /// good path: it re-resolves the package on every launch, which costs a
+    /// second or two of a person's attention on the first prompt of every
+    /// session. A globally installed binary just runs.
+    pub bin: Option<&'static str>,
+    /// The npm package to install, for the agents that come from npm.
+    pub package: Option<&'static str>,
 }
 
 /// The agents worth offering, in the order they are offered.
@@ -85,7 +94,9 @@ pub const KNOWN: &[Known] = &[
         label: "Claude Code",
         program: "npx",
         args: &["-y", "@agentclientprotocol/claude-agent-acp@0.70.0"],
-        install: "Needs Node. Runs via npx on first use.",
+        install: "Needs Node. Install it to start instantly instead of fetching each time.",
+        bin: Some("claude-agent-acp"),
+        package: Some("@agentclientprotocol/claude-agent-acp@0.70.0"),
     },
     Known {
         id: "codex",
@@ -93,13 +104,17 @@ pub const KNOWN: &[Known] = &[
         program: "npx",
         args: &["-y", "@agentclientprotocol/codex-acp"],
         install: "Needs Node and a Codex login.",
+        bin: Some("codex-acp"),
+        package: Some("@agentclientprotocol/codex-acp"),
     },
     Known {
         id: "gemini",
         label: "Gemini",
         program: "gemini",
         args: &["--experimental-acp"],
-        install: "npm i -g @google/gemini-cli",
+        install: "Needs the Gemini CLI.",
+        bin: None,
+        package: Some("@google/gemini-cli"),
     },
     Known {
         id: "opencode",
@@ -107,6 +122,8 @@ pub const KNOWN: &[Known] = &[
         program: "opencode",
         args: &["acp"],
         install: "See opencode.ai for install instructions.",
+        bin: None,
+        package: None,
     },
 ];
 
@@ -126,6 +143,10 @@ pub struct AgentFound {
     pub install: String,
     /// The argv, shown in settings so nothing about the launch is hidden.
     pub argv: Vec<String>,
+    /// Whether it is installed rather than fetched by npx on every launch.
+    pub installed: bool,
+    /// Whether the app can install it for you.
+    pub installable: bool,
 }
 
 pub fn find(id: &str) -> Option<&'static Known> {
@@ -133,8 +154,14 @@ pub fn find(id: &str) -> Option<&'static Known> {
 }
 
 /// The argv for an agent id, resolved to an absolute program.
+///
+/// The installed binary wins over the `npx` fallback: same protocol, same
+/// agent, without re-resolving a package every time a session opens.
 pub fn argv_for(id: &str) -> Option<Vec<String>> {
     let k = find(id)?;
+    if let Some(direct) = k.bin.and_then(resolve) {
+        return Some(vec![direct.to_string_lossy().into_owned()]);
+    }
     let bin = resolve(k.program)?;
     let mut argv = vec![bin.to_string_lossy().into_owned()];
     argv.extend(k.args.iter().map(|a| (*a).to_string()));
@@ -147,15 +174,23 @@ pub fn agent_list() -> Vec<AgentFound> {
     KNOWN
         .iter()
         .map(|k| {
-            let found = resolve(k.program);
+            let installed = k.bin.and_then(resolve).is_some();
             AgentFound {
                 id: k.id.to_string(),
                 label: k.label.to_string(),
-                ready: found.is_some(),
+                ready: installed || resolve(k.program).is_some(),
                 install: k.install.to_string(),
-                argv: std::iter::once(k.program.to_string())
-                    .chain(k.args.iter().map(|a| (*a).to_string()))
-                    .collect(),
+                // What it would actually run, not what the table says: the
+                // difference between the two is the point of this change.
+                argv: if installed {
+                    vec![k.bin.unwrap_or(k.program).to_string()]
+                } else {
+                    std::iter::once(k.program.to_string())
+                        .chain(k.args.iter().map(|a| (*a).to_string()))
+                        .collect()
+                },
+                installed,
+                installable: k.package.is_some() && !installed,
             }
         })
         .collect()
@@ -194,5 +229,56 @@ mod tests {
     #[test]
     fn an_unknown_agent_has_no_argv() {
         assert!(argv_for("no-such-agent").is_none());
+    }
+
+    #[test]
+    fn npx_is_the_fallback_not_the_plan() {
+        // Every npm-based entry names the binary it installs as, so a global
+        // install can be preferred over re-resolving a package each launch.
+        // An entry with a package but no binary would silently never take the
+        // fast path.
+        for k in KNOWN {
+            if k.program == "npx" {
+                assert!(k.bin.is_some(), "{} would always go through npx", k.id);
+                assert!(k.package.is_some(), "{} could never be installed", k.id);
+            }
+        }
+    }
+
+    #[test]
+    fn an_agent_the_app_cannot_install_does_not_offer_to() {
+        let list = agent_list();
+        for a in &list {
+            let k = find(&a.id).unwrap();
+            if k.package.is_none() {
+                assert!(!a.installable, "{}", a.id);
+            }
+            // Offering to install something already installed is a button
+            // that does nothing you can see.
+            if a.installed {
+                assert!(!a.installable, "{}", a.id);
+            }
+        }
+    }
+}
+
+/// Install an agent globally, so it starts without npx fetching it first.
+///
+/// `npm i -g`, and nothing cleverer: the packages are npm packages, npm is
+/// what put node on this machine in the first place, and a bespoke downloader
+/// would be a second thing to trust.
+#[tauri::command]
+pub fn agent_install(id: String) -> Result<String, String> {
+    let k = find(&id).ok_or("no such agent")?;
+    let package = k.package.ok_or("this agent is not installed through npm")?;
+    let npm = resolve("npm").ok_or("npm is not on the PATH your shell gives this app")?;
+    let out = Command::new(npm)
+        .args(["install", "-g", package])
+        .output()
+        .map_err(|e| format!("could not run npm: {e}"))?;
+    if out.status.success() {
+        Ok(package.to_string())
+    } else {
+        Err(String::from_utf8_lossy(&out.stderr).trim().to_string())
     }
 }
