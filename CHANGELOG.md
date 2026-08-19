@@ -1,5 +1,28 @@
 # plans
 
+## 0.4.1
+
+### Patch Changes
+
+- f9bb39b: A long chat name is truncated rather than wrapped — the title is the first
+  thing you said, so it is a sentence, and a sentence in a fixed-height bar wraps
+  out of it and over the row below.
+
+  The chat panel has a wider floor: it cannot be dragged narrower than the
+  pickers, the title and the composer need to sit beside each other.
+
+  The chat opens beside the page rather than under it. A conversation is read
+  down, so height is what it wants — and the plan stays fully visible next to it.
+
+- 32749a9: Fixes the agent failing with "env: node: No such file or directory" when the
+  app is launched from Finder. Resolving `npx` to an absolute path was only half
+  the job — `npx` is a script whose shebang runs `env node`, and `env` searches
+  the _child's_ PATH, which was launchd's. The agent is now started with the PATH
+  your shell would give it.
+
+  A launch failure no longer suggests signing in. An agent that never started and
+  one that is signed out look nothing alike and need opposite advice.
+
 ## 0.4.0
 
 ### Minor Changes
