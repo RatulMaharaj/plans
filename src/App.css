@@ -219,8 +219,8 @@ button, .rail, .bar, .tabs, .ctx {
  * the same time and the permutations that would have needed collapse to the
  * tree being there or not.
  */
-.body.with-chat-side { grid-template-columns: var(--files-w) minmax(0, 1fr) var(--chat-w, 380px); }
-.body.no-files.with-chat-side { grid-template-columns: minmax(0, 1fr) var(--chat-w, 380px); }
+.body.with-chat-side { grid-template-columns: var(--files-w) minmax(0, 1fr) var(--chat-w, 420px); }
+.body.no-files.with-chat-side { grid-template-columns: minmax(0, 1fr) var(--chat-w, 420px); }
 /* Last column, whichever number that turns out to be. */
 .body.with-chat-side > .mux {
   grid-column: -2 / -1;
@@ -1128,7 +1128,7 @@ input[type="range"]::-webkit-slider-thumb {
     right: 0;
     top: 0;
     bottom: 0;
-    width: var(--chat-w, 380px);
+    width: var(--chat-w, 420px);
     box-shadow: var(--shadow);
     z-index: 20;
   }
@@ -2219,7 +2219,18 @@ body.resizing.resizing-row, body.resizing.resizing-row .chat-edge { cursor: row-
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/*
+ * One line, always.
+ *
+ * The title is the first thing you said in the chat, so it is a sentence, not
+ * a label — and a sentence in a fixed-height bar wraps out of it, over the
+ * row below. Truncating is the only option a header has.
+ */
 .chat-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-family: var(--mono);
   font-size: 10px;
   letter-spacing: 0.06em;

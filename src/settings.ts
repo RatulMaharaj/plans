@@ -169,7 +169,7 @@ export const DEFAULTS: Settings = {
   showMux: false,
   chatPlace: "bottom",
   muxHeight: 260,
-  chatWidth: 380,
+  chatWidth: 420,
   showStatusBar: true,
   watchSeconds: 4,
   updates: "notify",
@@ -189,7 +189,7 @@ export const RANGES = {
   treeSize: { min: 9, max: 16, step: 0.5 },
   treeWidth: { min: 170, max: 480, step: 2 },
   muxHeight: { min: 120, max: 600, step: 10 },
-  chatWidth: { min: 260, max: 640, step: 10 },
+  chatWidth: { min: 340, max: 720, step: 10 },
 };
 
 const KEY = "plans.settings.v1";

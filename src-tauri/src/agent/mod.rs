@@ -24,14 +24,10 @@ use std::sync::Mutex;
 use tauri::{AppHandle, Emitter, Manager, State};
 use tokio::sync::mpsc::{unbounded_channel, UnboundedSender};
 
-/// The turn a notification belongs to.
-///
-/// ACP's updates carry a session, not a turn — the session is the long-lived
-/// thing and the protocol has no reason to care which prompt is in flight.
-/// The panel does care, because it routes late events to the right transcript,
-/// so updates are stamped with the turn most recently sent. One at a time per
-/// session is the model here, which is what makes a single value enough.
-pub static CURRENT_TURN: AtomicU64 = AtomicU64::new(0);
+/// Turn ids stay globally unique — a turn names one prompt, wherever it ran —
+/// but *which* turn a notification belongs to is each session's own business
+/// now. The single `CURRENT_TURN` this replaced stopped being an answer the
+/// moment two sessions could be mid-answer at once.
 static NEXT_TURN: AtomicU64 = AtomicU64::new(1);
 
 struct Live {
@@ -41,17 +37,23 @@ struct Live {
     agent: String,
 }
 
-/// One agent per repository, keyed the way the transcript already is.
+/// One agent per *conversation*, keyed by repository and chat id.
+///
+/// Keyed by repo alone until several-agents-at-once: one session per repo by
+/// construction meant switching chats had to kill the running one. The chat is
+/// the unit a person thinks in — set one going, start another, move between
+/// them — so the chat is the key.
 #[derive(Default)]
-pub struct Agents(Mutex<HashMap<String, Live>>);
+pub struct Agents(Mutex<HashMap<(String, String), Live>>);
 
-/// Start a session for `repo` if there is not one already.
+/// Start a session for `(repo, chat)` if there is not one already.
 ///
 /// Lazily, on the first thing anyone says — booting an agent process for
 /// someone who opens the panel and then closes it again is rude, and the
 /// handshake can prompt for authentication.
-fn ensure(app: &AppHandle, repo: &str, agent_id: &str, resume: Option<String>) -> R<()> {
+fn ensure(app: &AppHandle, repo: &str, chat: &str, agent_id: &str, resume: Option<String>) -> R<()> {
     let state: State<Agents> = app.state();
+    let key = (repo.to_string(), chat.to_string());
     /*
      * A live session is reused — unless it is the wrong agent.
      *
@@ -63,11 +65,11 @@ fn ensure(app: &AppHandle, repo: &str, agent_id: &str, resume: Option<String>) -
      */
     let stale = {
         let live = state.0.lock().unwrap();
-        live.get(repo).map(|l| l.agent != agent_id)
+        live.get(&key).map(|l| l.agent != agent_id)
     };
     match stale {
         Some(false) => return Ok(()),
-        Some(true) => stop(app, repo),
+        Some(true) => stop(app, repo, chat),
         None => {}
     }
     let argv = discover::argv_for(agent_id).ok_or_else(|| {
@@ -77,7 +79,7 @@ fn ensure(app: &AppHandle, repo: &str, agent_id: &str, resume: Option<String>) -
     let (tx, rx) = unbounded_channel();
     let perms = client::pending();
     state.0.lock().unwrap().insert(
-        repo.to_string(),
+        key.clone(),
         Live {
             ops: tx,
             perms: perms.clone(),
@@ -85,24 +87,24 @@ fn ensure(app: &AppHandle, repo: &str, agent_id: &str, resume: Option<String>) -
         },
     );
 
-    let (a, r) = (app.clone(), repo.to_string());
+    let (a, r, c) = (app.clone(), repo.to_string(), chat.to_string());
     tauri::async_runtime::spawn(async move {
-        session::run(a.clone(), r.clone(), argv, resume, rx, perms).await;
+        session::run(a.clone(), r.clone(), c.clone(), argv, resume, rx, perms).await;
         // However it ended, it is no longer live: the next prompt starts a
         // fresh one rather than writing into a channel nobody reads.
         if let Some(s) = a.try_state::<Agents>() {
-            s.0.lock().unwrap().remove(&r);
+            s.0.lock().unwrap().remove(&(r, c));
         }
     });
     Ok(())
 }
 
-fn send(app: &AppHandle, repo: &str, op: session::Op) -> R<()> {
+fn send(app: &AppHandle, repo: &str, chat: &str, op: session::Op) -> R<()> {
     let state: State<Agents> = app.state();
     let live = state.0.lock().unwrap();
     let l = live
-        .get(repo)
-        .ok_or("no agent is running for this repository")?;
+        .get(&(repo.to_string(), chat.to_string()))
+        .ok_or("no agent is running for this conversation")?;
     l.ops
         .send(op)
         .map_err(|_| "the agent has stopped".to_string())
@@ -113,24 +115,31 @@ fn send(app: &AppHandle, repo: &str, op: session::Op) -> R<()> {
 pub fn agent_prompt(
     app: AppHandle,
     repo: String,
+    chat: String,
     agent: String,
     text: String,
     resume: Option<String>,
 ) -> R<u64> {
-    ensure(&app, &repo, &agent, resume)?;
+    ensure(&app, &repo, &chat, &agent, resume)?;
     let turn = NEXT_TURN.fetch_add(1, Ordering::Relaxed);
-    send(&app, &repo, session::Op::Prompt { turn, text })?;
+    send(&app, &repo, &chat, session::Op::Prompt { turn, text })?;
     Ok(turn)
 }
 
 #[tauri::command]
-pub fn agent_cancel(app: AppHandle, repo: String, turn: u64) -> R<()> {
-    send(&app, &repo, session::Op::Cancel { turn })
+pub fn agent_cancel(app: AppHandle, repo: String, chat: String, turn: u64) -> R<()> {
+    send(&app, &repo, &chat, session::Op::Cancel { turn })
 }
 
 #[tauri::command]
-pub fn agent_set_config(app: AppHandle, repo: String, id: String, value: String) -> R<()> {
-    send(&app, &repo, session::Op::SetConfig { id, value })
+pub fn agent_set_config(
+    app: AppHandle,
+    repo: String,
+    chat: String,
+    id: String,
+    value: String,
+) -> R<()> {
+    send(&app, &repo, &chat, session::Op::SetConfig { id, value })
 }
 
 /// Answer a permission request. `option` of `None` means "cancelled".
@@ -138,32 +147,55 @@ pub fn agent_set_config(app: AppHandle, repo: String, id: String, value: String)
 pub fn agent_permission(
     app: AppHandle,
     repo: String,
+    chat: String,
     request_id: String,
     option: Option<String>,
 ) -> R<()> {
     let state: State<Agents> = app.state();
     let live = state.0.lock().unwrap();
-    if let Some(l) = live.get(&repo) {
+    if let Some(l) = live.get(&(repo, chat)) {
         client::answer(&l.perms, &request_id, option);
     }
     Ok(())
 }
 
-/// End a repository's session, if there is one.
-fn stop(app: &AppHandle, repo: &str) {
+/// Which chats have a live session right now. How the panel repopulates its
+/// active/archived split after a reload, when the events that built it are
+/// gone.
+#[tauri::command]
+pub fn agent_active(app: AppHandle, repo: String) -> R<Vec<String>> {
     let state: State<Agents> = app.state();
-    let live = state.0.lock().unwrap().remove(repo);
+    let live = state.0.lock().unwrap();
+    Ok(live
+        .keys()
+        .filter(|(r, _)| *r == repo)
+        .map(|(_, c)| c.clone())
+        .collect())
+}
+
+/// End one conversation's session, if there is one.
+fn stop(app: &AppHandle, repo: &str, chat: &str) {
+    let state: State<Agents> = app.state();
+    let live = state
+        .0
+        .lock()
+        .unwrap()
+        .remove(&(repo.to_string(), chat.to_string()));
     if let Some(l) = live {
         client::cancel_all(&l.perms, repo);
         let _ = l.ops.send(session::Op::Shutdown);
     }
-    let _ = app.emit("agent-down", json!({ "repo": repo, "message": "" }));
+    let _ = app.emit(
+        "agent-down",
+        json!({ "repo": repo, "chat": chat, "message": "" }),
+    );
 }
 
-/// Stop a repository's agent. Also what quitting does, for every one of them.
+/// Stop one conversation's agent. What closing a chat does; switching to
+/// another no longer calls this — the session runs on while you are elsewhere.
 #[tauri::command]
-pub fn agent_stop(app: AppHandle, repo: String) -> R<()> {
-    stop(&app, &repo);
+pub fn agent_stop(app: AppHandle, repo: String, chat: String) -> R<()> {
+    stop(&app, &repo, &chat);
     Ok(())
 }
 
@@ -171,7 +203,7 @@ pub fn agent_stop(app: AppHandle, repo: String) -> R<()> {
 ///
 /// Called on quit. The old design's children lived for one turn and cleaned
 /// themselves up; these live as long as the window, and a `node` per
-/// repository left behind after the app closes is the regression this exists
+/// conversation left behind after the app closes is the regression this exists
 /// to prevent.
 ///
 /// The waiting is the point. Telling a session to stop only queues the
@@ -198,7 +230,7 @@ pub fn shutdown_all(app: &AppHandle) {
         if live.is_empty() {
             return;
         }
-        for (repo, l) in live.iter() {
+        for ((repo, _chat), l) in live.iter() {
             client::cancel_all(&l.perms, repo);
             let _ = l.ops.send(session::Op::Shutdown);
         }

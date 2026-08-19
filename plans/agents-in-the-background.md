@@ -1,5 +1,5 @@
 ---
-status: draft
+status: ready
 ---
 # Agents That Outlive The Window
 

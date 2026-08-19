@@ -1,5 +1,5 @@
 ---
-status: draft
+status: ready
 ---
 # Several Agents At Once, And A Shelf For Finished Ones
 

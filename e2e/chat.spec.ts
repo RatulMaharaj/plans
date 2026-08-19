@@ -1945,3 +1945,30 @@ test("a clean stop says nothing at all", async ({ page }) => {
   });
   await expect(page.locator(".chat-log")).not.toContainText("sign in");
 });
+
+test("a long chat name stays on one line", async ({ page }) => {
+  await open(page, { place: "side" });
+  await openPlan(page);
+  await page.keyboard.press("Meta+j");
+  const head = (await box(page, ".chat .panel-head")).height;
+
+  // The title is the first thing you said, so it is a sentence — and a
+  // sentence in a fixed-height bar wraps out of it, over the row below.
+  await say(page, "does the current plan include vertical and horizontal splits, and a maximum?");
+  await finish(page, 1);
+
+  await expect(page.locator(".chat-title, .chat-pick")).toBeVisible();
+  expect((await box(page, ".chat .panel-head")).height).toBe(head);
+});
+
+test("the chat has a floor it cannot be dragged under", async ({ page }) => {
+  await open(page, { place: "side" });
+  await openPlan(page);
+  await page.keyboard.press("Meta+j");
+  await settle(page, ".mux");
+
+  // Dragged as far right as it will go: narrower than this and the pickers,
+  // the title and the composer stop fitting beside each other.
+  await drag(page, ".chat-edge", 600, 0);
+  expect((await box(page, ".mux")).width).toBeGreaterThanOrEqual(330);
+});
