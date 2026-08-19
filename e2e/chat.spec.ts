@@ -932,9 +932,11 @@ test("the context menu stays on screen near the bottom edge", async ({ page }) =
   await expect(page.locator(".ctx-item").last()).toBeVisible();
 });
 
-test("cmd-backspace deletes the open file, after asking", async ({ page }) => {
+test("cmd-backspace deletes the selected file, after asking", async ({ page }) => {
   await open(page);
   await openPlan(page);
+  // Selected in the tree, which is the surface this chord belongs to.
+  await page.locator(".row.file.active").focus();
 
   await page.keyboard.press("Meta+Backspace");
 
@@ -948,7 +950,7 @@ test("cmd-backspace deletes the open file, after asking", async ({ page }) => {
   expect(gone.relPath).toBe("plans/first.md");
 });
 
-test("cmd-backspace in the page edits the text instead", async ({ page }) => {
+test("cmd-backspace outside the tree is not a delete", async ({ page }) => {
   await open(page);
   await openPlan(page);
 
@@ -975,6 +977,7 @@ test("saying no to the question leaves the file alone", async ({ page }) => {
   await open(page);
   await openPlan(page);
   await page.evaluate(() => ((window as any).__fake.confirmAnswer = false));
+  await page.locator(".row.file.active").focus();
 
   await page.keyboard.press("Meta+Backspace");
 
@@ -983,4 +986,18 @@ test("saying no to the question leaves the file alone", async ({ page }) => {
     .toBeGreaterThan(0);
   expect(await calls(page, "delete_plan")).toBe(0);
   await expect(page.locator(".page-path")).toContainText("first.md");
+});
+
+test("clicking a plan leaves the tree holding focus, so the chord is usable", async ({ page }) => {
+  await open(page);
+  await expandAll(page);
+  await page.locator(".row.file").first().click();
+
+  // The gate is only workable if a plain click puts you in a state where the
+  // chord fires — otherwise it would be a shortcut nobody can reach.
+  const inTree = await page.evaluate(() => !!document.activeElement?.closest(".files"));
+  expect(inTree).toBe(true);
+
+  await page.keyboard.press("Meta+Backspace");
+  await expect.poll(() => calls(page, "delete_plan")).toBe(1);
 });

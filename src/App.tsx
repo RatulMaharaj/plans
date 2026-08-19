@@ -2060,11 +2060,17 @@ export default function App() {
         showPanel("showMux");
       } else if (mod && (e.key === "Backspace" || e.key === "Delete")) {
         /*
-         * The Finder gesture, and the one place it must not fire: with the
-         * caret in the page, ⌘⌫ deletes to the start of the line, which is a
-         * thing people mean. Chrome only gets it while the chrome has focus.
+         * The Finder gesture, and it belongs to the tree.
+         *
+         * Anywhere else this chord already means something — in the page it
+         * deletes to the start of the line — and "delete the file I happen to
+         * have open" is too easy to fire by accident from a surface that has
+         * nothing to do with files. The tree is where you point at a file, so
+         * the tree is where deleting one is unambiguous.
          */
-        if (editing) return;
+        const el = document.activeElement as HTMLElement | null;
+        const row = el?.closest(".files")?.querySelector(".row.file.active");
+        if (!el?.closest(".files") || !row) return;
         e.preventDefault();
         if (activeRepoPath && activePath && activeRepoPath !== MEMORY) {
           void deleteFile(activeRepoPath, activePath);
