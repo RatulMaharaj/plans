@@ -2,6 +2,9 @@ use serde::{Deserialize, Serialize};
 use std::path::{Component, Path, PathBuf};
 use std::process::Command;
 
+pub mod chat;
+pub mod mux;
+
 // ---------------------------------------------------------------------------
 // helpers
 // ---------------------------------------------------------------------------
@@ -24,23 +27,32 @@ fn safe_join(repo: &str, rel: &str) -> R<PathBuf> {
     Ok(root.join(rel))
 }
 
-fn git(repo: &str, args: &[&str]) -> R<String> {
-    let out = Command::new("git")
-        .arg("-C")
-        .arg(repo)
+/// Run a binary with an explicit argv and return its stdout.
+///
+/// No shell, ever: the argv is passed through as given, so nothing in a path or
+/// a prompt can turn into a second command. Failure carries the process's own
+/// stderr, because that is always more useful than anything we would invent.
+pub(crate) fn exec(bin: &str, args: &[&str]) -> R<String> {
+    let out = Command::new(bin)
         .args(args)
         .output()
-        .map_err(|e| format!("failed to run git: {e}"))?;
+        .map_err(|e| format!("failed to run {bin}: {e}"))?;
     if out.status.success() {
         Ok(String::from_utf8_lossy(&out.stdout).into_owned())
     } else {
         let err = String::from_utf8_lossy(&out.stderr).trim().to_string();
         Err(if err.is_empty() {
-            format!("git {} failed", args.join(" "))
+            format!("{bin} {} failed", args.join(" "))
         } else {
             err
         })
     }
+}
+
+fn git(repo: &str, args: &[&str]) -> R<String> {
+    let mut argv = vec!["-C", repo];
+    argv.extend_from_slice(args);
+    exec("git", &argv)
 }
 
 const SKIP_DIRS: &[&str] = &[
@@ -1013,6 +1025,7 @@ pub fn run() {
         .plugin(tauri_plugin_process::init());
 
     builder
+        .manage(chat::Chats::default())
         .invoke_handler(tauri::generate_handler![
             open_repo,
             list_plans,
@@ -1046,6 +1059,13 @@ pub fn run() {
             git_fetch,
             git_log,
             git_identity,
+            mux::mux_available,
+            mux::mux_panes,
+            mux::mux_start,
+            mux::mux_send,
+            chat::chat_available,
+            chat::chat_send,
+            chat::chat_cancel,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

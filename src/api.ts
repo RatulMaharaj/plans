@@ -38,6 +38,27 @@ export type GitStatus = {
 
 export type BranchList = { current: string; branches: string[] };
 
+/** A tmux pane. `id` is tmux's own `%17`, stable for the pane's whole life. */
+export type Pane = {
+  id: string;
+  /** `session:window`, for showing a human where this is. */
+  target: string;
+  /** The foreground command — `zsh` when nothing is running. */
+  command: string;
+  dead: boolean;
+  width: number;
+  height: number;
+  path: string;
+};
+
+export type MuxInfo = { kind: string; version: string };
+
+/**
+ * A chat turn's handle. Its narration arrives as `chat-delta` / `chat-tool`
+ * events carrying `{ id, ... }`, and `chat-done` / `chat-error` end it.
+ */
+export type ChatId = number;
+
 /** Rust serialises snake_case; convert the few fields we care about. */
 function camelRepo(r: any): RepoInfo {
   return { path: r.path, name: r.name, branch: r.branch, planDirs: r.plan_dirs };
@@ -188,4 +209,29 @@ export const api = {
           return { hash, date, author, subject };
         }),
     ),
+
+  // --- tmux ---------------------------------------------------------------
+  // The struct fields come back camelCase already (serde renames them), so
+  // unlike the older commands these need no conversion here.
+
+  muxAvailable: () => invoke<MuxInfo | null>("mux_available"),
+
+  muxPanes: (repo: string) => invoke<Pane[]>("mux_panes", { repo }),
+
+  muxStart: (repo: string, argv: string[]) => invoke<string>("mux_start", { repo, argv }),
+
+  muxSend: (id: string, text: string, submit = true) =>
+    invoke<null>("mux_send", { id, text, submit }),
+
+  // --- the conversation -----------------------------------------------------
+  // One turn is one headless child; the conversation is the session id the
+  // CLI hands back. The flags live in Rust so the stream shape is guaranteed.
+
+  /** The agent binary's version, or null when it is not installed. */
+  chatAvailable: (cmd: string) => invoke<string | null>("chat_available", { cmd }),
+
+  chatSend: (repo: string, cmd: string, prompt: string, session: string | null) =>
+    invoke<ChatId>("chat_send", { repo, cmd, prompt, session }),
+
+  chatCancel: (id: ChatId) => invoke<null>("chat_cancel", { id }),
 };

@@ -64,11 +64,31 @@ export type Settings = {
   /** Sidebar width in px, dragged by its edge. */
   treeWidth: number;
 
+  // Agents
+  /**
+   * The command run by "Flesh out this plan", as a template.
+   *
+   * `{prompt}` is the instruction, `{file}` the plan's repo-relative path.
+   * A template rather than a binary name because no two agents take a prompt
+   * the same way, and this app has no business preferring one.
+   */
+  agentCommand: string;
+  /**
+   * The binary the chat panel talks to. A name rather than a template: the
+   * flags that make it stream are owned by the Rust side, so the one thing to
+   * configure is which agent answers.
+   */
+  chatCommand: string;
+
   // Panels
   /** The file tree down the left. */
   showIndex: boolean;
   showGit: boolean;
+  /** The tmux pane along the bottom. Nothing polls while it is closed. */
+  showMux: boolean;
   showStatusBar: boolean;
+  /** Height of the tmux pane in px, dragged by its top edge. */
+  muxHeight: number;
   /** Poll interval for picking up outside edits, in seconds. 0 turns it off. */
   watchSeconds: number;
 
@@ -111,6 +131,8 @@ export const DEFAULTS: Settings = {
   showExtensions: true,
   showFrontmatter: true,
   statuses: "draft, ready, busy, done",
+  agentCommand: "claude {prompt}",
+  chatCommand: "claude",
   imageFolder: "assets",
   sourceLineNumbers: true,
   sourceWrap: true,
@@ -118,6 +140,8 @@ export const DEFAULTS: Settings = {
   treeWidth: 232,
   showIndex: true,
   showGit: false,
+  showMux: false,
+  muxHeight: 260,
   showStatusBar: true,
   watchSeconds: 4,
   updates: "notify",
@@ -136,6 +160,7 @@ export const RANGES = {
   autosaveDelay: { min: 0.5, max: 10, step: 0.5 },
   treeSize: { min: 9, max: 16, step: 0.5 },
   treeWidth: { min: 170, max: 480, step: 2 },
+  muxHeight: { min: 120, max: 600, step: 10 },
 };
 
 const KEY = "plans.settings.v1";

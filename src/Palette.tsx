@@ -69,6 +69,10 @@ type Props = {
   onNewComment: () => void;
   hasMatter: boolean;
   canEdit: boolean;
+  /** False when there is no tmux, so the action is absent rather than broken. */
+  canFleshOut: boolean;
+  onFleshOut: () => void;
+  onCopyAgentCommand: () => void;
   onMatter: () => void;
   /** From settings: what `status:` may be set to from here. */
   statuses: string[];
@@ -117,6 +121,23 @@ function buildCommands(p: Props): Command[] {
     hint: "repos, files, git, open file",
     run: p.onReload,
   });
+  if (p.canFleshOut) {
+    add({
+      id: "agent.flesh",
+      group: "Agent",
+      label: "Flesh out this plan",
+      terms: "claude agent run tmux write expand",
+      run: p.onFleshOut,
+    });
+    add({
+      id: "agent.copy",
+      group: "Agent",
+      label: "Copy the agent command",
+      terms: "clipboard claude shell",
+      run: p.onCopyAgentCommand,
+    });
+  }
+
   if (p.canEdit) {
     add({
       id: "matter",
@@ -343,6 +364,7 @@ function buildCommands(p: Props): Command[] {
       | "sourceWrap"
       | "showIndex"
       | "showGit"
+      | "showMux"
       | "showStatusBar",
     group: string,
     label: string,
@@ -371,6 +393,7 @@ function buildCommands(p: Props): Command[] {
   toggle("sourceWrap", "Source", "Wrap long lines");
   toggle("showIndex", "Panels", "File tree", "⌘B", "sidebar files explorer");
   toggle("showGit", "Panels", "Git panel", "⌘G");
+  toggle("showMux", "Panels", "Agent chat", "⌘J", "chat agent talk ask");
   toggle("showStatusBar", "Panels", "Status bar");
 
   add({

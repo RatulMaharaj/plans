@@ -37,7 +37,22 @@ export function installFakeBackend(repos: FakeRepo[], update?: FakeUpdate) {
      * whereas on disk it is a real directory that `existing_dirs` can see.
      */
     dirs: new Set<string>(),
+    /** Whether the machine has tmux at all. */
+    mux: true,
+    /** Panes the fake tmux server is running. */
+    panes: [] as any[],
+    /** Whether the machine has an agent CLI to chat with. */
+    chat: true,
+    /** Chat turns still "running": id -> true, for asserting cancel. */
+    chats: {} as Record<number, boolean>,
+    /** Event listeners the app has registered, by event name. */
+    listeners: {} as Record<string, ((e: unknown) => void)[]>,
+    /** Push an event at the app, as the Rust side would. */
+    emit(event: string, payload: unknown) {
+      for (const fn of state.listeners[event] ?? []) fn({ event, id: 0, payload });
+    },
   };
+  let nextChat = 1;
 
   const hash = (s: string) => {
     let h = 0;
@@ -196,6 +211,44 @@ export function installFakeBackend(repos: FakeRepo[], update?: FakeUpdate) {
       branches: [repo(p)?.branch ?? "main", "other"],
     }),
     read_asset: () => "data:image/png;base64,iVBORw0KGgo=",
+
+    // tmux: present, with whatever panes the test asked for. A test that says
+    // nothing gets an empty list, which is the same thing a machine with no
+    // tmux server shows — the app must be happy with both.
+    mux_available: () => (state.mux ? { kind: "tmux", version: "tmux 3.6b" } : null),
+    mux_panes: ({ repo: p }) => (state.panes ?? []).filter((x: any) => x.path.startsWith(p)),
+    mux_start: ({ repo: p, argv }) => {
+      const id = `%${100 + (state.panes?.length ?? 0)}`;
+      state.panes = [
+        ...(state.panes ?? []),
+        { id, target: `plans:${(state.panes?.length ?? 0) + 1}`, command: argv[0], dead: false, width: 80, height: 24, path: p },
+      ];
+      return id;
+    },
+    mux_send: () => null,
+    mux_open_terminal: () => null,
+
+    // The chat. The fake runs no agent: a test pushes narration with
+    // `__fake.emit("chat-delta", ...)` / `"chat-done"` and reads what the app
+    // sent out of `calls`, which is the same boundary the real backend has.
+    chat_available: () => (state.chat ? "claude 9.9.9 (fake)" : null),
+    chat_send: () => {
+      const id = nextChat++;
+      state.chats[id] = true;
+      return id;
+    },
+    chat_cancel: ({ id }) => {
+      delete state.chats[id];
+      return null;
+    },
+
+    // The event plumbing under @tauri-apps/api `listen`. transformCallback is
+    // the identity above, so the handler arrives as the function itself.
+    "plugin:event|listen": ({ event, handler }) => {
+      (state.listeners[event] ??= []).push(handler);
+      return 1;
+    },
+    "plugin:event|unlisten": () => null,
     perf_log: () => null,
 
     // The updater has to be genuinely inert here, not merely never triggered:

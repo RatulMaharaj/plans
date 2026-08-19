@@ -339,6 +339,26 @@ export function SettingsPage({
         </Group>
 
         {/* ---- panels --------------------------------------------------- */}
+        <Group
+          name="Agents"
+          hint="The chat panel talks to an agent CLI headlessly, one turn per message. It never commits, and edits land in files where git can see them."
+        >
+          <Field
+            label="Chat agent"
+            hint="A binary name, nothing more — the flags that make it stream are fixed. The panel hides when it is not installed."
+            value={s.chatCommand}
+            placeholder="claude"
+            onChange={(chatCommand) => onChange({ chatCommand })}
+          />
+          <Field
+            label="Copyable command"
+            hint="For running a plan by hand in a terminal: {prompt} is the instruction, {file} the plan's path."
+            value={s.agentCommand}
+            placeholder="claude {prompt}"
+            onChange={(agentCommand) => onChange({ agentCommand })}
+          />
+        </Group>
+
         <Group name="Panels">
           <Row
             label="Zen"
@@ -355,6 +375,12 @@ export function SettingsPage({
             hint="⌘G. The index marks changed plans whether it's open or not."
             on={s.showGit}
             onChange={(showGit) => onChange({ showGit })}
+          />
+          <Toggle
+            label="Agent chat"
+            hint="⌘J. A conversation about the open plan. Each plan keeps its own transcript, resumed when reopened."
+            on={s.showMux}
+            onChange={(showMux) => onChange({ showMux })}
           />
           <Toggle
             label="Status bar"

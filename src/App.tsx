@@ -3,6 +3,8 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { api, type GitStatus, type PlanFile, type RepoInfo } from "./api";
 import { Editor } from "./Editor";
 import { GitPanel } from "./GitPanel";
+import { ChatPanel } from "./ChatPanel";
+import { agentCommandLine, FLESH_OUT_PROMPT } from "./agent";
 import { DiffView } from "./DiffView";
 import { SettingsPage } from "./SettingsPage";
 import { installSkill } from "./skill";
@@ -90,6 +92,7 @@ function sameFiles(
   return true;
 }
 
+
 function sameStatus(
   a: Record<string, GitStatus>,
   b: Record<string, GitStatus>,
@@ -160,6 +163,10 @@ export default function App() {
   const [savedAt, setSavedAt] = useState<string | null>(null);
   const [filter, setFilter] = useState("");
   const [busy, setBusy] = useState<string | null>(null);
+  /** null until asked, then the CLI's version string or false for "no agent". */
+  const [chat, setChat] = useState<string | null | false>(null);
+  /** A message the app wants the chat to send — "Flesh out" arrives this way. */
+  const [chatSeed, setChatSeed] = useState<string | null>(null);
   const [toast, setToast] = useState<Toast>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [epoch, setEpoch] = useState(0);
@@ -647,6 +654,28 @@ export default function App() {
     settings.watchSeconds,
   ]);
 
+  /**
+   * Whether the chat is on screen.
+   *
+   * `chat !== false` rather than `chat`: null means "not asked yet", and
+   * hiding the panel for the first moments after launch would make it
+   * flicker in.
+   */
+  const muxOpen =
+    settings.showMux && chat !== false && !!activeRepoPath && view !== "settings" && !zen;
+
+  /**
+   * Is there an agent to talk to at all? Asked when the binary setting
+   * changes; `false` hides the feature rather than offering a chat that
+   * fails when spoken to.
+   */
+  useEffect(() => {
+    void api
+      .chatAvailable(settings.chatCommand)
+      .then((v) => setChat(v ?? false))
+      .catch(() => setChat(false));
+  }, [settings.chatCommand]);
+
   /** "<repo>::<path>" -> mark, so the tree carries git state with the panel closed. */
   const marks = useMemo(() => {
     const m = new Map<string, Mark>();
@@ -660,6 +689,29 @@ export default function App() {
     }
     return m;
   }, [statusByRepo]);
+
+  /**
+   * Start the agent on the open plan, as the first message of its chat.
+   *
+   * The prompt is the same instruction the tmux template carried; the
+   * difference is where the run lives. Nothing is committed and nothing is
+   * watched from here: the agent writes files and the poll notices.
+   */
+  const fleshOut = useCallback(async () => {
+    if (!activeRepoPath || !activePath) return;
+    setChatSeed(FLESH_OUT_PROMPT.replace(/\{file\}/g, activePath));
+    set({ showMux: true });
+  }, [activeRepoPath, activePath, set]);
+
+  /** The same command, on the clipboard, for running it somewhere else. */
+  const copyAgentCommand = useCallback(async () => {
+    if (!activePath) return;
+    const line = agentCommandLine(settings.agentCommand, activePath);
+    await navigator.clipboard.writeText(line).then(
+      () => notify(line),
+      () => notify("Could not write to the clipboard", "error"),
+    );
+  }, [activePath, settings.agentCommand, notify]);
 
   const changeCount = status?.entries.length ?? 0;
 
@@ -1672,6 +1724,9 @@ export default function App() {
       } else if (mod && e.shiftKey && e.key.toLowerCase() === "l") {
         e.preventDefault();
         setZen((z) => !z);
+      } else if (mod && e.key.toLowerCase() === "j") {
+        e.preventDefault();
+        set({ showMux: !settings.showMux });
       } else if (mod && e.key.toLowerCase() === "g") {
         e.preventDefault();
         set({ showGit: !settings.showGit });
@@ -1708,6 +1763,7 @@ export default function App() {
     newPlan,
     newComment,
     settings.showGit,
+    settings.showMux,
     settings.showIndex,
     settings.treeSize,
     settings.size,
@@ -1807,6 +1863,16 @@ export default function App() {
           Git
           {changeCount > 0 && <span className="count">{changeCount}</span>}
         </button>
+        {chat !== false && (
+          <button
+            className={`rail-btn ${muxOpen ? "on" : ""}`}
+            onClick={() => set({ showMux: !settings.showMux })}
+            title="Agent chat (⌘J)"
+            aria-pressed={muxOpen}
+          >
+            Chat
+          </button>
+        )}
         <button
           className={`rail-btn ${settingsOpen ? "on" : ""}`}
           onClick={() => setSettingsOpen((o) => !o)}
@@ -1820,7 +1886,12 @@ export default function App() {
       </header>
 
       {/* --- body ---------------------------------------------------------- */}
-      <div className={`body ${gitOpen ? "with-git" : ""} ${treeOpen ? "" : "no-files"}`}>
+      <div
+        className={`body ${gitOpen ? "with-git" : ""} ${treeOpen ? "" : "no-files"} ${
+          muxOpen ? "with-mux" : ""
+        }`}
+        style={muxOpen ? ({ "--mux-h": `${settings.muxHeight}px` } as React.CSSProperties) : undefined}
+      >
         {/* tabIndex so ⌘+ / ⌘− can tell the tree has focus. */}
         <section className="files" tabIndex={-1}>
           <input
@@ -1966,6 +2037,15 @@ export default function App() {
                 <span className="page-path">{activePath ?? ""}</span>
                 {activePath && (
                   <span className="page-actions">
+                    {chat !== false && (
+                      <button
+                        className="page-act"
+                        onClick={() => void fleshOut()}
+                        title="Ask the agent to flesh out this plan"
+                      >
+                        Flesh out
+                      </button>
+                    )}
                     {/* Layout sits to the left of the view switch: appearing
                         between the switch and Delete moved them under the
                         pointer every time the diff was opened. */}
@@ -2171,6 +2251,17 @@ export default function App() {
             }}
           />
         )}
+
+        {muxOpen && (
+          <ChatPanel
+            repo={activeRepoPath!}
+            relPath={activePath}
+            seed={chatSeed}
+            onSeedUsed={() => setChatSeed(null)}
+            cmd={settings.chatCommand}
+            notify={notify}
+          />
+        )}
       </div>
 
       {/* --- bar ----------------------------------------------------------- */}
@@ -2351,6 +2442,9 @@ export default function App() {
         gitCommands={gitCommands}
         hasMatter={matter !== null}
         canEdit={!!activePath}
+        canFleshOut={!!activePath && chat !== false}
+        onFleshOut={() => void fleshOut()}
+        onCopyAgentCommand={() => void copyAgentCommand()}
         onMatter={() => {
           if (matter === null) onMatterChange("");
           setMatterOpen(true);
