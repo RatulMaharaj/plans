@@ -16,7 +16,9 @@ import { ChatPanel } from "./ChatPanel";
 import {
   loadIndex as loadChats,
   saveIndex as saveChats,
+  sizeOf as chatSize,
   started as startedChat,
+  without as chatWithout,
   type Index as ChatIndex,
 } from "./chats";
 import { agentCommandLine, HANDOFF_PROMPT } from "./agent";
@@ -801,11 +803,6 @@ export default function App() {
    * changes; `false` hides the feature rather than offering a chat that
    * fails when spoken to.
    */
-  // The backend answers permission requests for you unless this says not to.
-  useEffect(() => {
-    void api.agentAutoAllow(!settings.agentAsk).catch(() => {});
-  }, [settings.agentAsk]);
-
   useEffect(() => {
     void api
       .agentList()
@@ -1018,11 +1015,60 @@ export default function App() {
     [activeRepoPath, chats, putChats, set],
   );
 
+  /**
+   * Forget a conversation.
+   *
+   * Asked about only when there is something to lose: an empty chat is a
+   * click to remake, and a confirmation for it is a question with one
+   * sensible answer.
+   */
+  const deleteChat = useCallback(
+    async (id: string) => {
+      if (!activeRepoPath) return;
+      const held = chatSize(activeRepoPath, id);
+      const name = chats.list.find((c) => c.id === id)?.title ?? "this chat";
+      if (held > 0 && !(await confirmed(`Delete “${name}”?`, { ok: "Delete" }))) return;
+      if (id === chats.current) void api.agentStop(activeRepoPath).catch(() => {});
+      putChats(chatWithout(activeRepoPath, chats, id));
+    },
+    [activeRepoPath, chats, putChats],
+  );
+
+  /**
+   * Name a conversation yourself.
+   *
+   * The automatic name is the first thing you said, which is usually right and
+   * occasionally not — a chat that wandered somewhere else keeps a title about
+   * where it started. A renamed chat stops following the transcript.
+   */
+  const renameChat = useCallback(
+    (id: string) => {
+      const at = chats.list.find((c) => c.id === id);
+      if (!at) return;
+      setAsking({
+        title: "Rename chat",
+        placeholder: at.title,
+        initial: at.title,
+        confirm: "Rename",
+        run: (next) => {
+          const title = next.trim();
+          if (!title) return;
+          putChats({
+            ...chats,
+            list: chats.list.map((c) => (c.id === id ? { ...c, title, named: true } : c)),
+          });
+        },
+      });
+    },
+    [chats, putChats],
+  );
+
   const nameChat = useCallback(
     (id: string, title: string) => {
       setChats((prev) => {
         const at = prev.list.find((c) => c.id === id);
-        if (!at || at.title === title) return prev;
+        // A name you chose outranks the one the transcript suggests.
+        if (!at || at.named || at.title === title) return prev;
         const next = { ...prev, list: prev.list.map((c) => (c.id === id ? { ...c, title } : c)) };
         if (activeRepoPath) saveChats(activeRepoPath, next);
         return next;
@@ -1588,6 +1634,23 @@ export default function App() {
     },
     [tabs, flush, activeRepoPath, activePath, openFile, openMemory],
   );
+
+  /**
+   * Close everything.
+   *
+   * Pending edits are flushed first, as closing one tab does — the point is an
+   * empty tab row, not a lost paragraph.
+   */
+  const closeAllTabs = useCallback(async () => {
+    if (saveTimer.current) clearTimeout(saveTimer.current);
+    await flush();
+    setTabs([]);
+    setActivePath(null);
+    setContent("");
+    setMatter(null);
+    setConflict(null);
+    setMatterOpen(false);
+  }, [flush]);
 
   /** Resolving a conflict: keep what you wrote, or take what arrived. */
   const resolveConflict = useCallback(
@@ -2181,9 +2244,6 @@ export default function App() {
       } else if (mod && e.key.toLowerCase() === "g") {
         e.preventDefault();
         showPanel("showGit");
-      } else if (mod && e.key.toLowerCase() === "d") {
-        e.preventDefault();
-        goto(view === "diff" ? "write" : "diff");
       } else if (mod && e.key === ",") {
         e.preventDefault();
         setSettingsOpen((o) => !o);
@@ -2362,7 +2422,7 @@ export default function App() {
             <button
               className={view === "diff" ? "on" : ""}
               onClick={() => goto("diff")}
-              title="Live diff against the last commit (⌘D)"
+              title="Live diff against the last commit (⌘3)"
             >
               Diff
             </button>
@@ -2505,7 +2565,6 @@ export default function App() {
               version={appVersion}
               onCheckUpdates={() => void lookForUpdate(true)}
               onReleaseNotes={() => void showNotes()}
-              agent={chat}
             />
           ) : (
             <>
@@ -2774,7 +2833,10 @@ export default function App() {
             chats={chats}
             onNewChat={newChat}
             onOpenChat={openChat}
+            onDeleteChat={(id) => void deleteChat(id)}
+            onRenameChat={renameChat}
             onTitle={nameChat}
+            authHint={agents.find((a) => a.id === settings.chatCommand)?.auth ?? ""}
           />
         )}
       </div>
@@ -2817,7 +2879,7 @@ export default function App() {
               <b>{changeCount}</b> uncommitted
             </span>
           )}
-          <span>⌘G git · ⌘D diff · ⌘, settings</span>
+          <span>⌘G git · ⌘3 diff · ⌘, settings</span>
         </footer>
       )}
 
@@ -2975,6 +3037,12 @@ export default function App() {
         chats={chats}
         onNewChat={newChat}
         onOpenChat={openChat}
+        onDeleteChat={(id) => void deleteChat(id)}
+        onRenameChat={renameChat}
+        agents={agents}
+        onUseAgent={(id) => set({ chatCommand: id })}
+        onCloseAll={() => void closeAllTabs()}
+        openCount={tabs.length}
         onMatter={() => {
           if (matter === null) onMatterChange("");
           setMatterOpen(true);

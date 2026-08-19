@@ -149,13 +149,6 @@ pub fn agent_permission(
     Ok(())
 }
 
-/// Whether the app answers permission requests on your behalf.
-#[tauri::command]
-pub fn agent_auto_allow(on: bool) -> R<()> {
-    client::AUTO_ALLOW.store(on, Ordering::Relaxed);
-    Ok(())
-}
-
 /// End a repository's session, if there is one.
 fn stop(app: &AppHandle, repo: &str) {
     let state: State<Agents> = app.state();

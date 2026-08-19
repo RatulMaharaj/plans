@@ -1939,6 +1939,66 @@ body.resizing.resizing-row, body.resizing.resizing-row .chat-edge { cursor: row-
   gap: 10px;
 }
 .setting-row.tall .setting-label { max-width: none; }
+/*
+ * The agents, as a list you read down rather than a row of buttons.
+ *
+ * Four of them with word-length names, each with a state and sometimes an
+ * action — a segmented control would wrap into a paragraph of chrome, and the
+ * state would have nowhere to go.
+ */
+.agent-list { display: flex; flex-direction: column; gap: 1px; }
+.agent-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 6px;
+  border-radius: 4px;
+}
+.agent-row.on { background: var(--shade); }
+.agent-choose {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  text-align: left;
+  padding: 3px 0;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--ink-2);
+}
+.agent-row.on .agent-choose { color: var(--ink); }
+.agent-mark { flex: none; font-size: 8px; color: var(--ink-3); }
+.agent-row.on .agent-mark { color: var(--ink); }
+.agent-name { flex: none; }
+.agent-state {
+  flex: 1;
+  min-width: 0;
+  font-size: 9px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+/* Said before it bites, on the one you have chosen. */
+.agent-row { flex-wrap: wrap; }
+.agent-auth {
+  flex: 1 0 100%;
+  padding: 0 0 3px 20px;
+  font-family: var(--mono);
+  font-size: 9.5px;
+  line-height: 1.5;
+  color: var(--ink-3);
+}
+
+/* Left, under the sentence that explains it — not floated off to one side. */
+.setting-pick { align-self: flex-start; }
+.setting-pick .dd-trigger {
+  border-color: var(--rule);
+  padding: 5px 9px;
+}
 .setting-area { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; }
 .setting-area textarea.setting-field {
   width: 100%;

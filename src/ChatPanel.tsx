@@ -87,8 +87,12 @@ type Props = {
   chats: Index;
   onNewChat: () => void;
   onOpenChat: (id: string) => void;
+  onDeleteChat: (id: string) => void;
+  onRenameChat: (id: string) => void;
   /** A chat names itself after the first thing said in it. */
   onTitle: (id: string, title: string) => void;
+  /** What to tell someone whose agent will not start. */
+  authHint: string;
 };
 
 /*
@@ -157,7 +161,10 @@ export function ChatPanel({
   chats,
   onNewChat,
   onOpenChat,
+  onDeleteChat,
+  onRenameChat,
   onTitle,
+  authHint,
 }: Props) {
   const key = repo && chats.current ? chatKey(repo, chats.current) : null;
   const [thread, setThread] = useState<Thread>({ messages: [], plan: null });
@@ -367,7 +374,15 @@ export function ChatPanel({
       if (!mine(e.payload.repo) || !key) return;
       turn.current = null;
       setBusy(false);
-      if (e.payload.message) say(key, "note", `the agent stopped — ${e.payload.message}`, false);
+      if (!e.payload.message) return;
+      /*
+       * A stopped agent is usually a signed-out one, and the message it
+       * leaves — "API key is missing or not configured" — is true and
+       * useless: what to do about it happens in a terminal, not here. So the
+       * note carries the sentence *and* the thing to do.
+       */
+      say(key, "note", `the agent stopped — ${e.payload.message}`, false);
+      if (authHint) say(key, "note", authHint, false);
     });
 
     return () => {
@@ -386,7 +401,7 @@ export function ChatPanel({
       ])
         void u.then((f) => f());
     };
-  }, [say, upsertTool, commit, key, repo]);
+  }, [say, upsertTool, commit, key, repo, authHint]);
 
   const send = useCallback(
     async (text: string, seeded = false) => {
@@ -552,6 +567,22 @@ export function ChatPanel({
             Stop
           </button>
         )}
+        <button
+          className="mux-key"
+          onClick={() => onRenameChat(chats.current)}
+          title="Rename this conversation"
+          aria-label="Rename this conversation"
+        >
+          Rename
+        </button>
+        <button
+          className="mux-key"
+          onClick={() => onDeleteChat(chats.current)}
+          title="Delete this conversation"
+          aria-label="Delete this conversation"
+        >
+          Delete
+        </button>
         <button
           className="mux-key"
           onClick={onNewChat}

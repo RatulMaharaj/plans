@@ -6,7 +6,7 @@
  * palette is a second face on the same state rather than a separate feature.
  */
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { PlanFile, RepoInfo } from "./api";
+import type { AgentFound, PlanFile, RepoInfo } from "./api";
 import { displayName } from "./FileTree";
 import { FONTS, MONO_FONTS } from "./fonts";
 import { RANGES, type Settings } from "./settings";
@@ -77,6 +77,14 @@ type Props = {
   chats: ChatIndex;
   onNewChat: () => void;
   onOpenChat: (id: string) => void;
+  onDeleteChat: (id: string) => void;
+  onRenameChat: (id: string) => void;
+  /** Which agents this machine has, and switching to one. */
+  agents: AgentFound[];
+  onUseAgent: (id: string) => void;
+  /** Close every open buffer, and how many there are to close. */
+  onCloseAll: () => void;
+  openCount: number;
   onCopyAgentCommand: () => void;
   onMatter: () => void;
   /** From settings: what `status:` may be set to from here. */
@@ -140,6 +148,35 @@ function buildCommands(p: Props): Command[] {
       label: "Copy the agent command",
       terms: "clipboard claude shell",
       run: p.onCopyAgentCommand,
+    });
+    /*
+     * Switching agent, without going to settings. Only the ones this machine
+     * has: offering an agent that cannot start is offering a failure.
+     */
+    for (const a of p.agents.filter((x) => x.ready && x.id !== p.settings.chatCommand)) {
+      add({
+        id: `agent.use.${a.id}`,
+        group: "Agent",
+        label: `Use ${a.label}`,
+        hint: "ends the running session",
+        terms: "switch agent claude codex gemini opencode",
+        run: () => p.onUseAgent(a.id),
+      });
+    }
+    add({
+      id: "chat.rename",
+      group: "Agent",
+      label: "Rename this chat",
+      terms: "title name conversation",
+      run: () => p.onRenameChat(p.chats.current),
+    });
+    add({
+      id: "chat.delete",
+      group: "Agent",
+      label: "Delete this chat",
+      hint: p.chats.list.find((c) => c.id === p.chats.current)?.title,
+      terms: "remove forget conversation",
+      run: () => p.onDeleteChat(p.chats.current),
     });
     add({
       id: "chat.new",
@@ -285,9 +322,19 @@ function buildCommands(p: Props): Command[] {
     id: "v.diff",
     group: "Go",
     label: "Diff",
-    hint: "⌘D",
+    hint: "⌘3",
     run: () => p.onView("diff"),
   });
+  if (p.openCount > 0) {
+    add({
+      id: "tabs.closeAll",
+      group: "Go",
+      label: "Close all editors",
+      hint: `${p.openCount} open`,
+      terms: "tabs buffers close everything clear",
+      run: p.onCloseAll,
+    });
+  }
   add({
     id: "v.settings",
     group: "Go",
@@ -404,8 +451,16 @@ function buildCommands(p: Props): Command[] {
     add({
       id: key,
       group,
-      label: `${label}: turn ${s[key] ? "off" : "on"}`,
-      value: onOff(s[key]),
+      /*
+       * Panels are shown or hidden; everything else is turned on or off. A
+       * panel that has been "turned off" sounds like it stopped working,
+       * which for the agent chat is exactly the wrong thing to imply.
+       */
+      label:
+        group === "Panels"
+          ? `${s[key] ? "Hide" : "Show"} ${label.toLowerCase()}`
+          : `${label}: turn ${s[key] ? "off" : "on"}`,
+      value: group === "Panels" ? (s[key] ? "shown" : "hidden") : onOff(s[key]),
       hint,
       terms,
       run: () => set({ [key]: !s[key] } as Partial<Settings>),

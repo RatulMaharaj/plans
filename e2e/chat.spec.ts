@@ -27,6 +27,8 @@ type Boot = {
   place?: "bottom" | "side";
   /** Replaces the default single-plan repository. */
   repos?: FakeRepo[];
+  /** A second agent this machine has, for the switching tests. */
+  codex?: boolean;
 };
 
 async function open(page: Page, boot: Boot = {}) {
@@ -42,6 +44,7 @@ async function open(page: Page, boot: Boot = {}) {
       new Function(`return ${fn}`)()(list);
       const s = (window as any).__fake;
       s.chat = (b as Boot).chat ?? true;
+      if ((b as Boot).codex) s.codex = "codex 1.0";
       const place = (b as Boot).place;
       if (place) localStorage.setItem("plans.settings.v1", JSON.stringify({ chatPlace: place }));
       localStorage.setItem(
@@ -763,31 +766,19 @@ test("no agent means no handoff in the menu, rather than one that fails", async 
   await expect(page.locator(".ctx-item", { hasText: "Hand off to agent" })).toHaveCount(0);
 });
 
-test("the agent is chosen from the ones the machine has", async ({ page }) => {
+test("every supported agent is listed, with where you stand on each", async ({ page }) => {
   await open(page);
   await page.keyboard.press("Meta+,");
   await page.locator(".settings-filter").fill("chat agent");
 
-  const pick = page.locator(".setting-row", { hasText: "Chat agent" });
-  // Both known agents are offered, and the one that is missing says so
-  // rather than vanishing from the list.
-  await expect(pick.locator("button", { hasText: "claude" })).toBeVisible();
-  await expect(pick.locator("button", { hasText: "codex (not installed)" })).toBeVisible();
-});
-
-test("an agent that is not installed says how to get it", async ({ page }) => {
-  await open(page);
-  await page.keyboard.press("Meta+,");
-  await page.locator(".settings-filter").fill("chat agent");
-  await page
-    .locator(".setting-row", { hasText: "Chat agent" })
-    .locator("button", { hasText: "Codex" })
-    .click();
-
-  // Every agent speaks the same protocol now, so the only thing that can be
-  // wrong is that this machine does not have it.
-  await page.locator(".settings-filter").fill("");
-  await expect(page.locator(".settings")).toContainText("Needs Node and a Codex login.");
+  // The answer in one place: which exist, which is chosen, which are here.
+  const rows = page.locator(".agent-row");
+  await expect(rows).toHaveCount(2);
+  await expect(rows.nth(0)).toContainText("Claude Code");
+  await expect(rows.nth(0)).toContainText(/via npx|installed/i);
+  await expect(rows.nth(1)).toContainText("Codex");
+  await expect(rows.nth(1)).toContainText(/not installed/i);
+  await expect(page.locator(".agent-row.on")).toContainText("Claude Code");
 });
 
 test("switching plans keeps the conversation, and says where you moved", async ({ page }) => {
@@ -1129,27 +1120,6 @@ test("a question that was never answered is inert on the next launch", async ({ 
   await expect(page.locator(".chat-ask-was")).toHaveText("cancelled");
 });
 
-test("asking is a setting, and off by default", async ({ page }) => {
-  await open(page);
-  await page.keyboard.press("Meta+,");
-  await page.locator(".settings-filter").fill("ask before");
-
-  const row = page.locator(".setting-row", { hasText: "Ask before acting" });
-  await expect(row).toBeVisible();
-  // Off means the backend answers for you — which is what it is told.
-  await expect.poll(() => argsOf(page, "agent_auto_allow")).toContainEqual({ on: true });
-
-  await row.locator(".switch").click();
-  await expect.poll(() => argsOf(page, "agent_auto_allow")).toContainEqual({ on: false });
-});
-
-/*
- * What the agent says it can do.
- *
- * The point of every one of these is that the app knows nothing: no model
- * names, no effort levels, no command list. It draws what arrives.
- */
-
 /** An option whose text is long enough to stretch anything that can stretch. */
 const WORDY = {
   id: "agent",
@@ -1439,17 +1409,15 @@ test("what you typed is shown as you typed it", async ({ page }) => {
 test("an agent can be installed so it stops being fetched every time", async ({ page }) => {
   await open(page);
   await page.keyboard.press("Meta+,");
-  await page.locator(".settings-filter").fill("started as");
+  await page.locator(".settings-filter").fill("chat agent");
 
-  const row = page.locator(".setting-row", { hasText: "Started as" });
+  const claude = page.locator(".agent-row", { hasText: "Claude Code" });
   // npx is the fallback: it re-resolves the package on every launch.
-  await expect(row).toContainText("npx");
-  await row.locator("button.act", { hasText: "Install" }).click();
+  await expect(claude).toContainText(/via npx/i);
+  await claude.locator("button.act", { hasText: "Install" }).click();
 
-  // Afterwards it runs the binary directly, and stops offering.
-  await expect(row).toContainText("claude-agent-acp");
-  await expect(row).not.toContainText("npx");
-  await expect(row.locator(".act.done")).toHaveText("Installed");
+  await expect(claude).toContainText(/installed/i);
+  await expect(claude.locator("button.act")).toHaveCount(0);
 });
 
 test("an old chat is left behind, not dragged into the new one", async ({ page }) => {
@@ -1620,10 +1588,7 @@ test("switching agents starts a new session, and says so", async ({ page }) => {
 
   // Pick the other agent.
   await page.keyboard.press("Meta+,");
-  await page
-    .locator(".setting-row", { hasText: "Chat agent" })
-    .locator("button", { hasText: "Codex" })
-    .click();
+  await page.locator(".agent-row", { hasText: "Codex" }).locator(".agent-choose").click();
   // Leaving settings is enough: the panel being open is a persisted setting.
   await page.keyboard.press("Escape");
   await expect(page.locator(".chat")).toBeVisible();
@@ -1778,4 +1743,205 @@ test("the chat you are in says so", async ({ page }) => {
   await page.keyboard.press("Meta+p");
   await page.locator(".palette-input").fill("#only");
   await expect(page.locator(".palette-row").first()).toContainText("current");
+});
+
+test("a chat can be deleted, and is asked about when there is something to lose", async ({
+  page,
+}) => {
+  await open(page);
+  await openPlan(page);
+  await page.keyboard.press("Meta+j");
+  await say(page, "the first conversation");
+  await finish(page, 1);
+  await page.locator(".mux-key", { hasText: "New" }).click();
+  await say(page, "the second conversation");
+  await finish(page, 2);
+
+  await page.locator('[aria-label="Delete this conversation"]').click();
+
+  // Asked, because there was something in it.
+  await expect
+    .poll(() => page.evaluate(() => (window as any).__fake.asked))
+    .toContainEqual(expect.stringContaining("the second conversation"));
+
+  // Gone, transcript and all, and the other one is on screen.
+  await expect(page.locator(".chat-msg.user")).toContainText("the first conversation");
+  const left = await page.evaluate(() =>
+    Object.keys(localStorage).filter((k) => k.startsWith("plans.chat.v4::")),
+  );
+  expect(left).toHaveLength(1);
+});
+
+test("an empty chat is deleted without a question", async ({ page }) => {
+  await open(page);
+  await openPlan(page);
+  await page.keyboard.press("Meta+j");
+  await say(page, "worth keeping");
+  await finish(page, 1);
+  await page.locator(".mux-key", { hasText: "New" }).click();
+
+  // Nothing in it, so nothing to ask about: a confirmation here would be a
+  // question with one sensible answer.
+  await page.locator('[aria-label="Delete this conversation"]').click();
+  await expect(page.locator(".chat-msg.user")).toContainText("worth keeping");
+  expect(await page.evaluate(() => (window as any).__fake.asked.length)).toBe(0);
+});
+
+test("deleting the only chat leaves a fresh one, not an empty panel", async ({ page }) => {
+  await open(page);
+  await openPlan(page);
+  await page.keyboard.press("Meta+j");
+  await say(page, "the only one");
+  await finish(page, 1);
+
+  await page.locator('[aria-label="Delete this conversation"]').click();
+  await expect(page.locator(".chat")).toBeVisible();
+  await expect(page.locator(".chat-msg.user")).toHaveCount(0);
+  // Still usable: there is always a conversation on screen.
+  await say(page, "starting over");
+  await expect(page.locator(".chat-msg.user")).toContainText("starting over");
+});
+
+test("delete is in the palette too", async ({ page }) => {
+  await open(page);
+  await openPlan(page);
+  await page.keyboard.press("Meta+j");
+  await say(page, "a conversation to remove");
+  await finish(page, 1);
+
+  await page.keyboard.press("Meta+p");
+  await page.locator(".palette-input").fill(">delete this chat");
+  await expect(page.locator(".palette-row").first()).toContainText(/delete this chat/i);
+  await page.keyboard.press("Enter");
+
+  await expect(page.locator(".chat-msg.user")).toHaveCount(0);
+});
+
+test("a chat can be renamed, and stops renaming itself", async ({ page }) => {
+  await open(page);
+  await openPlan(page);
+  await page.keyboard.press("Meta+j");
+  await say(page, "a question about the tree");
+  await finish(page, 1);
+
+  await page.locator('[aria-label="Rename this conversation"]').click();
+  await page.locator(".name-field").fill("Tree work");
+  await page.locator("button", { hasText: "Rename" }).last().click();
+
+  await page.keyboard.press("Meta+p");
+  await page.locator(".palette-input").fill("#tree work");
+  await expect(page.locator(".palette-row").first()).toContainText("Tree work");
+  await page.keyboard.press("Escape");
+
+  // A name you chose outranks the one the transcript suggests, so a later
+  // message does not rename it back.
+  await say(page, "and another thing");
+  await page.keyboard.press("Meta+p");
+  await page.locator(".palette-input").fill("#");
+  await expect(page.locator(".palette-row").first()).toContainText("Tree work");
+});
+
+test("panels are shown and hidden, not turned on and off", async ({ page }) => {
+  await open(page);
+  await page.keyboard.press("Meta+p");
+  await page.locator(".palette-input").fill(">agent chat");
+
+  // "Turned off" sounds like it stopped working, which for a panel is the
+  // wrong thing to imply.
+  await expect(page.locator(".palette-row").first()).toContainText(/show agent chat/i);
+  await expect(page.locator(".palette-row").first()).not.toContainText(/turn/i);
+});
+
+test("the agent can be switched from the palette", async ({ page }) => {
+  await open(page, { codex: true });
+  await openPlan(page);
+
+  await page.keyboard.press("Meta+p");
+  await page.locator(".palette-input").fill(">use codex");
+  await expect(page.locator(".palette-row").first()).toContainText("Use Codex");
+  await page.keyboard.press("Enter");
+
+  const saved = await page.evaluate(
+    () => JSON.parse(localStorage.getItem("plans.settings.v1") ?? "{}").chatCommand,
+  );
+  expect(saved).toBe("codex");
+});
+
+test("an agent this machine lacks is not offered in the palette", async ({ page }) => {
+  await open(page);
+  await openPlan(page);
+  await page.keyboard.press("Meta+p");
+  await page.locator(".palette-input").fill(">use ");
+  // Offering an agent that cannot start is offering a failure.
+  await expect(page.locator(".palette-row", { hasText: "Use Codex" })).toHaveCount(0);
+});
+
+test("every editor can be closed at once", async ({ page }) => {
+  await open(page, { repos: MIXED });
+  await expandAll(page);
+  await page.locator(".row.file").nth(0).click();
+  await page.locator(".row.file").nth(1).click();
+  await expect(page.locator(".tab")).toHaveCount(2);
+
+  await page.keyboard.press("Meta+p");
+  await page.locator(".palette-input").fill(">close all editors");
+  await expect(page.locator(".palette-row").first()).toContainText(/close all editors/i);
+  await page.keyboard.press("Enter");
+
+  await expect(page.locator(".tab")).toHaveCount(0);
+  await expect(page.locator(".page-path")).toHaveText("");
+});
+
+test("closing everything is not offered when nothing is open", async ({ page }) => {
+  await open(page);
+  await page.keyboard.press("Meta+p");
+  await page.locator(".palette-input").fill(">close all editors");
+  await expect(page.locator(".palette-row", { hasText: "Close all editors" })).toHaveCount(0);
+});
+
+test("cmd-D no longer opens the diff", async ({ page }) => {
+  await open(page);
+  await openPlan(page);
+  await page.keyboard.press("Meta+d");
+
+  // ⌘3 is the diff; ⌘D was a second way to say it and is now free.
+  await expect(page.locator(".diff-view, .cm-merge-view")).toHaveCount(0);
+  await expect(page.locator(".milkdown")).toBeVisible();
+});
+
+test("an agent that will not start says what to do about it", async ({ page }) => {
+  await open(page);
+  await openPlan(page);
+  await page.keyboard.press("Meta+j");
+  await say(page, "hello");
+
+  // What a signed-out agent actually leaves behind: true, and useless on its
+  // own, because the fix happens in a terminal.
+  await page.evaluate(() => {
+    (window as any).__fake.emit("agent-down", {
+      repo: "/repo/one",
+      message: "Gemini API key is missing or not configured.",
+    });
+  });
+
+  const log = page.locator(".chat-log");
+  await expect(log).toContainText("API key is missing");
+  await expect(log).toContainText("in a terminal once and sign in");
+  // And the panel is usable again rather than stuck mid-turn.
+  await expect(page.locator(".chat-input textarea")).toBeEnabled();
+});
+
+test("a clean stop says nothing at all", async ({ page }) => {
+  await open(page);
+  await openPlan(page);
+  await page.keyboard.press("Meta+j");
+  await say(page, "hello");
+  await finish(page, 1);
+
+  // Ending a session on purpose is not news, and a sign-in hint after one
+  // would be an answer to a question nobody asked.
+  await page.evaluate(() => {
+    (window as any).__fake.emit("agent-down", { repo: "/repo/one", message: "" });
+  });
+  await expect(page.locator(".chat-log")).not.toContainText("sign in");
 });

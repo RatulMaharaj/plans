@@ -352,6 +352,7 @@ export function installFakeBackend(repos: FakeRepo[], update?: FakeUpdate) {
         label: "Claude Code",
         ready: state.chat,
         install: "Needs Node. Install it to start instantly instead of fetching each time.",
+        auth: "Run `claude` in a terminal once and sign in.",
         argv: state.agentInstalled
           ? ["claude-agent-acp"]
           : ["npx", "-y", "@agentclientprotocol/claude-agent-acp@0.70.0"],
@@ -363,6 +364,7 @@ export function installFakeBackend(repos: FakeRepo[], update?: FakeUpdate) {
         label: "Codex",
         ready: !!state.codex,
         install: "Needs Node and a Codex login.",
+        auth: "Run `codex` in a terminal once and sign in.",
         argv: ["npx", "-y", "@agentclientprotocol/codex-acp"],
         installed: false,
         installable: true,

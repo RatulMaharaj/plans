@@ -70,6 +70,8 @@ export type AgentFound = {
   installed: boolean;
   /** The app can install it for you. */
   installable: boolean;
+  /** What to do when it starts but will not answer — signing in, usually. */
+  auth: string;
 };
 
 /** One picker the agent advertises: models, reasoning effort, mode, anything. */
@@ -296,9 +298,6 @@ export const api = {
   /** Answer a permission request. `null` means "cancelled". */
   agentPermission: (repo: string, requestId: string, option: string | null) =>
     invoke<null>("agent_permission", { repo, requestId, option }),
-
-  /** Whether the app answers permission requests on your behalf. */
-  agentAutoAllow: (on: boolean) => invoke<null>("agent_auto_allow", { on }),
 
   agentStop: (repo: string) => invoke<null>("agent_stop", { repo }),
 };

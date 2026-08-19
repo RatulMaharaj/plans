@@ -4,7 +4,13 @@ import skillText from "../skills/plans/SKILL.md?raw";
 /**
  * The agent skill ships inside the bundle, imported at build time from the
  * one canonical file in this repo — the app can never drift from it.
- * It installs where Claude Code discovers skills.
+ *
+ * The path is Claude Code's, and only Claude Code's. Now that the chat can
+ * talk to four agents this is the one place left that assumes one of them:
+ * Codex reads AGENTS.md, Gemini reads GEMINI.md, and neither will ever look
+ * here. Written down rather than quietly generalised, because guessing at
+ * three more conventions from this file would be worse than admitting the
+ * gap — see plans/conventions-per-agent.md.
  */
 export const SKILL_PATH = ".claude/skills/plans/SKILL.md";
 

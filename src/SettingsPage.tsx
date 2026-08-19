@@ -28,8 +28,6 @@ type Props = {
   version: string;
   onCheckUpdates: () => void;
   onReleaseNotes: () => void;
-  /** The agent CLI's version, false when none answered, null while asking. */
-  agent: string | null | false;
 };
 
 /**
@@ -39,30 +37,6 @@ type Props = {
  * rather than threading a prop through every call site.
  */
 const Query = createContext("");
-
-/**
- * The agents to offer: the ones found, plus whatever is configured.
- *
- * An absent agent stays in the list, greyed by its label rather than removed —
- * you may be about to install it, and a setting that silently drops its own
- * value is worse than one showing a value that is not ready yet.
- */
-function agentOptions(agents: AgentFound[], current: string) {
-  const opts = agents.map((a) => ({
-    value: a.id,
-    label: a.ready ? a.label : `${a.label} (not installed)`,
-  }));
-  if (current && !opts.some((o) => o.value === current)) {
-    opts.push({ value: current, label: current });
-  }
-  return opts;
-}
-
-/** What to tell someone whose chosen agent is not on this machine. */
-function installHint(agents: AgentFound[], current: string) {
-  const a = agents.find((x) => x.id === current);
-  return a && !a.ready ? a.install : null;
-}
 
 /** Does this element's own text match? Elements without labels never do. */
 function matches(node: ReactNode, q: string): boolean {
@@ -89,7 +63,6 @@ export function SettingsPage({
   version,
   onCheckUpdates,
   onReleaseNotes,
-  agent,
 }: Props) {
   const [q, setQ] = useState("");
   return (
@@ -396,44 +369,21 @@ export function SettingsPage({
             * the app does not know is still kept — whatever is configured is
             * always in the list, so nothing is lost by choosing from it.
             */}
-          <Choice
+          {/*
+            * Every agent the app knows, and where you stand with each.
+            *
+            * A picker plus a separate "not installed" line made you assemble
+            * the answer from two places. This is the answer: the four rows,
+            * which one is chosen, which are here, and — for the ones that are
+            * not — a button rather than a command to copy out.
+            */}
+          <AgentList
             label="Chat agent"
-            hint={
-              agent === false
-                ? "None of these are installed. The chat stays hidden until one is."
-                : "Every one of these speaks the Agent Client Protocol, so what it can do — models, effort, commands — comes from the agent rather than from this app."
-            }
-            value={s.chatCommand}
-            options={agentOptions(agents, s.chatCommand)}
-            onChange={(chatCommand) => onChange({ chatCommand })}
-          />
-          {installHint(agents, s.chatCommand) && (
-            <Row label="Not installed" hint={installHint(agents, s.chatCommand)!} />
-          )}
-          {/* What it will actually run — an installed binary, or npx fetching
-              the package each time. The difference is a second or two on the
-              first prompt of every session, so it is worth being able to see. */}
-          <ActionRow
-            label="Started as"
-            hint={
-              agents.find((a) => a.id === s.chatCommand)?.argv.join(" ") ??
-              "Pick an agent above."
-            }
-            action={
-              agents.find((a) => a.id === s.chatCommand)?.installable
-                ? "Install"
-                : agents.find((a) => a.id === s.chatCommand)?.installed
-                  ? "Installed"
-                  : null
-            }
-            done={!!agents.find((a) => a.id === s.chatCommand)?.installed}
-            onAction={() => onInstallAgent(s.chatCommand)}
-          />
-          <Toggle
-            label="Ask before acting"
-            hint="Off, the agent's own mode decides — these are markdown files under git, and a prompt per edit turns a conversation into a turnstile. On, every tool call it is unsure about waits for you in the transcript."
-            on={s.agentAsk}
-            onChange={(agentAsk) => onChange({ agentAsk })}
+            hint="Every one of these speaks the Agent Client Protocol, so what it can do — models, effort, commands — comes from the agent rather than from this app."
+            agents={agents}
+            current={s.chatCommand}
+            onChoose={(chatCommand) => onChange({ chatCommand })}
+            onInstall={onInstallAgent}
           />
           <Area
             label="Handoff prompt"
@@ -578,7 +528,7 @@ export function SettingsPage({
         {/* ---- library -------------------------------------------------- */}
         <Group
           name="Repositories"
-          hint="Forgetting a repository removes it from this list only. Nothing on disk changes. Install skill writes the plan-writing conventions to .claude/skills/plans/SKILL.md in that repository, where coding agents find them."
+          hint="Forgetting a repository removes it from this list only. Nothing on disk changes. Install skill writes the plan-writing conventions to .claude/skills/plans/SKILL.md — which is where Claude Code looks. Other agents read their own files, and do not read this one."
         >
           {repos.length === 0 && <p className="none">None yet.</p>}
           {repos.map((r) => (
@@ -695,39 +645,61 @@ function Row({ label, hint }: { label: string; hint: string }) {
   );
 }
 
-/**
- * A row that says something and offers one thing to do about it.
- *
- * A component rather than a bare div because the settings filter reads
- * `label` and `hint` off the elements themselves — anything hand-rolled is
- * invisible to search, which is a quiet way for a setting to disappear.
- */
-function ActionRow({
+/** Every supported agent, what it is called, and whether it is here. */
+function AgentList({
   label,
   hint,
-  action,
-  done,
-  onAction,
+  agents,
+  current,
+  onChoose,
+  onInstall,
 }: {
+  /** Named and explained through props, so the settings filter can find it. */
   label: string;
   hint: string;
-  action: string | null;
-  done: boolean;
-  onAction: () => void;
+  agents: AgentFound[];
+  current: string;
+  onChoose: (id: string) => void;
+  onInstall: (id: string) => void;
 }) {
   return (
-    <div className="setting-row static">
+    <div className="setting-row static tall">
       <span className="setting-label">
         {label}
         <span className="setting-hint">{hint}</span>
       </span>
-      {action && done ? (
-        <span className="act done">{action}</span>
-      ) : action ? (
-        <button className="act" onClick={onAction}>
-          {action}
-        </button>
-      ) : null}
+      <div className="agent-list">
+      {agents.map((a) => (
+        <div key={a.id} className={`agent-row ${a.id === current ? "on" : ""}`}>
+          <button
+            className="agent-choose"
+            onClick={() => onChoose(a.id)}
+            aria-pressed={a.id === current}
+            // Choosing one you do not have is allowed: you may be about to
+            // install it, and a setting that refuses to hold your answer is
+            // more annoying than one that waits for the world to catch up.
+          >
+            <span className="agent-mark" aria-hidden>
+              {a.id === current ? "●" : "○"}
+            </span>
+            <span className="agent-name">{a.label}</span>
+            <span className="agent-state">
+              {a.installed ? "installed" : a.ready ? "via npx" : "not installed"}
+            </span>
+          </button>
+          {a.id === current && a.auth && (
+            // Said before it bites: every one of these needs signing in, and
+            // the failure it produces otherwise names a key rather than a fix.
+            <span className="agent-auth">{a.auth}</span>
+          )}
+          {a.installable && (
+            <button className="act" onClick={() => onInstall(a.id)}>
+              Install
+            </button>
+          )}
+        </div>
+        ))}
+      </div>
     </div>
   );
 }

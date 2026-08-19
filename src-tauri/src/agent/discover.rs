@@ -71,6 +71,13 @@ pub struct Known {
     pub args: &'static [&'static str],
     /// What to tell someone who does not have it.
     pub install: &'static str,
+    /// What to do when it starts but refuses to work.
+    ///
+    /// Every one of these needs signing in, and none of them can do it over
+    /// ACP — the handshake fails and the process exits with a sentence about
+    /// a missing key. The sentence is true and useless, because the thing to
+    /// do about it happens in a terminal.
+    pub auth: &'static str,
     /// The command this agent installs as, when it is installed properly.
     ///
     /// Checked before `program`, because `npx` is a fallback rather than the
@@ -95,6 +102,7 @@ pub const KNOWN: &[Known] = &[
         program: "npx",
         args: &["-y", "@agentclientprotocol/claude-agent-acp@0.70.0"],
         install: "Needs Node. Install it to start instantly instead of fetching each time.",
+        auth: "Run `claude` in a terminal once and sign in.",
         bin: Some("claude-agent-acp"),
         package: Some("@agentclientprotocol/claude-agent-acp@0.70.0"),
     },
@@ -104,6 +112,7 @@ pub const KNOWN: &[Known] = &[
         program: "npx",
         args: &["-y", "@agentclientprotocol/codex-acp"],
         install: "Needs Node and a Codex login.",
+        auth: "Run `codex` in a terminal once and sign in.",
         bin: Some("codex-acp"),
         package: Some("@agentclientprotocol/codex-acp"),
     },
@@ -113,6 +122,7 @@ pub const KNOWN: &[Known] = &[
         program: "gemini",
         args: &["--experimental-acp"],
         install: "Needs the Gemini CLI.",
+        auth: "Run `gemini` in a terminal once to sign in, or set GEMINI_API_KEY.",
         bin: None,
         package: Some("@google/gemini-cli"),
     },
@@ -122,6 +132,7 @@ pub const KNOWN: &[Known] = &[
         program: "opencode",
         args: &["acp"],
         install: "See opencode.ai for install instructions.",
+        auth: "Run `opencode auth login` in a terminal.",
         bin: None,
         package: None,
     },
@@ -143,6 +154,8 @@ pub struct AgentFound {
     pub install: String,
     /// The argv, shown in settings so nothing about the launch is hidden.
     pub argv: Vec<String>,
+    /// What to do when it starts but will not answer.
+    pub auth: String,
     /// Whether it is installed rather than fetched by npx on every launch.
     pub installed: bool,
     /// Whether the app can install it for you.
@@ -180,6 +193,7 @@ pub fn agent_list() -> Vec<AgentFound> {
                 label: k.label.to_string(),
                 ready: installed || resolve(k.program).is_some(),
                 install: k.install.to_string(),
+                auth: k.auth.to_string(),
                 // What it would actually run, not what the table says: the
                 // difference between the two is the point of this change.
                 argv: if installed {

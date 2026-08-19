@@ -42,11 +42,11 @@ pub fn cancel_all(perms: &Pending, _repo: &str) {
 
 /// Ask, and wait.
 ///
-/// Stage 1 answers for you: the mode the adapter starts in already decides
-/// these without a human, and this app's files are markdown under git, so the
-/// worst case is a diff you can read. `AUTO_ALLOW` is the switch stage 2
-/// turns off; the plumbing is here so that turning it off is a UI change
-/// rather than a protocol change.
+/// Always asked, never answered on your behalf. The app briefly had a setting
+/// for that, which was a second answer to a question the agent already asks
+/// itself: every ACP agent advertises a permission mode, and its Auto or
+/// Accept Edits settings decide these without a human far better than a
+/// blanket switch here could. One control, and it is the agent's.
 pub async fn permission(
     app: AppHandle,
     repo: String,
@@ -60,19 +60,6 @@ pub async fn permission(
         repo,
         raw["toolCall"]["toolCallId"].as_str().unwrap_or("?")
     );
-
-    let first = req.options.first().map(|o| o.option_id.clone());
-
-    if AUTO_ALLOW.load(std::sync::atomic::Ordering::Relaxed) {
-        return match first {
-            Some(id) => responder.respond(RequestPermissionResponse::new(
-                RequestPermissionOutcome::Selected(SelectedPermissionOutcome::new(id)),
-            )),
-            None => responder.respond(RequestPermissionResponse::new(
-                RequestPermissionOutcome::Cancelled,
-            )),
-        };
-    }
 
     let (tx, rx) = oneshot::channel();
     perms.lock().unwrap().insert(request_id.clone(), tx);
@@ -102,13 +89,6 @@ pub async fn permission(
         )),
     }
 }
-
-/// Whether permission requests are answered for you.
-///
-/// Global rather than per-session because it is a preference, and a preference
-/// that differed between two repositories in the same window would be a thing
-/// nobody could keep in their head.
-pub static AUTO_ALLOW: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
 
 #[cfg(test)]
 mod tests {
