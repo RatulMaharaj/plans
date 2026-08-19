@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { confirmed } from "./confirm";
 import { api, type GitStatus, type StatusEntry } from "./api";
 
 type Props = {
@@ -188,8 +189,9 @@ export function GitPanel({ repo, status, busy, onRun, notify, onOpen }: Props) {
         onOpen={onOpen}
         onDiscard={(path) => {
           // Discarding cannot be undone by git, so it asks first.
-          if (!window.confirm(`Throw away your changes to ${path}?`)) return;
-          onRun("Change discarded", () => api.gitDiscard(repo, [path]));
+          void confirmed(`Throw away your changes to ${path}?`, { ok: "Discard" }).then((yes) => {
+            if (yes) onRun("Change discarded", () => api.gitDiscard(repo, [path]));
+          });
         }}
         onAll={
           unstaged.length

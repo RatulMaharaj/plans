@@ -936,9 +936,13 @@ test("cmd-backspace deletes the open file, after asking", async ({ page }) => {
   await open(page);
   await openPlan(page);
 
-  page.on("dialog", (d) => void d.accept());
   await page.keyboard.press("Meta+Backspace");
 
+  // It asked — a native sheet, not the browser's confirm, which a WKWebView
+  // swallows without showing anything.
+  await expect
+    .poll(() => page.evaluate(() => (window as any).__fake.asked))
+    .toContainEqual(expect.stringContaining("Delete plans/first.md"));
   await expect.poll(() => calls(page, "delete_plan")).toBe(1);
   const [gone] = await argsOf(page, "delete_plan");
   expect(gone.relPath).toBe("plans/first.md");
@@ -951,7 +955,6 @@ test("cmd-backspace in the page edits the text instead", async ({ page }) => {
   // The caret is in the document: ⌘⌫ means "delete to start of line" there,
   // and taking that away to delete a file would be a nasty surprise.
   await page.locator(".milkdown .ProseMirror.editor").click();
-  page.on("dialog", (d) => void d.dismiss());
   await page.keyboard.press("Meta+Backspace");
 
   await page.waitForTimeout(300);
@@ -966,4 +969,18 @@ test("F2 renames the open file", async ({ page }) => {
   // The name sheet, prefilled with what it is called now.
   await expect(page.locator(".matter-sheet")).toBeVisible();
   await expect(page.locator(".name-field")).toHaveValue(/first/);
+});
+
+test("saying no to the question leaves the file alone", async ({ page }) => {
+  await open(page);
+  await openPlan(page);
+  await page.evaluate(() => ((window as any).__fake.confirmAnswer = false));
+
+  await page.keyboard.press("Meta+Backspace");
+
+  await expect
+    .poll(() => page.evaluate(() => (window as any).__fake.asked.length))
+    .toBeGreaterThan(0);
+  expect(await calls(page, "delete_plan")).toBe(0);
+  await expect(page.locator(".page-path")).toContainText("first.md");
 });

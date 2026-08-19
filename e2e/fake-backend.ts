@@ -41,6 +41,9 @@ export function installFakeBackend(repos: FakeRepo[], update?: FakeUpdate) {
      * whereas on disk it is a real directory that `existing_dirs` can see.
      */
     dirs: new Set<string>(),
+    /** Every question the app has put up, and the answer it will get. */
+    asked: [] as string[],
+    confirmAnswer: true,
     /** Set to a message to make the next chat_send reject with it. */
     failNextSend: null as string | null,
     /** A codex binary's version, when a test wants one installed. */
@@ -284,6 +287,34 @@ export function installFakeBackend(repos: FakeRepo[], update?: FakeUpdate) {
       return null;
     },
     perf_log: () => null,
+
+    // The native ask sheet. Recorded and answered from `state`, so a test can
+    // assert that something irreversible asked before doing it — the browser's
+    // own confirm() is not used inside the app, because a WKWebView swallows
+    // it.
+    "plugin:dialog|ask": ({ message }) => {
+      state.asked.push(String(message ?? ""));
+      return state.confirmAnswer;
+    },
+    "plugin:dialog|confirm": ({ message }) => {
+      state.asked.push(String(message ?? ""));
+      return state.confirmAnswer;
+    },
+    // What `ask()` actually invokes in plugin-dialog v2 — the name is
+    // "message" whichever of the three helpers you called.
+    // `ask()` compares the response to its own ok label, so the answer is a
+    // button name rather than a boolean.
+    "plugin:dialog|message": ({ message, buttons }) => {
+      state.asked.push(String(message ?? ""));
+      // Custom labels arrive as { OkCancelCustom: [ok, cancel] }; the plain
+      // "YesNo" form arrives as the string.
+      const custom = (buttons as { OkCancelCustom?: [string, string] } | string | undefined);
+      const pair =
+        typeof custom === "object" && custom?.OkCancelCustom
+          ? custom.OkCancelCustom
+          : ["Yes", "No"];
+      return state.confirmAnswer ? pair[0] : pair[1];
+    },
 
     // The CLI script: absent until installed, and this build's once it is.
     cli_status: () => state.cli,

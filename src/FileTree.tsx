@@ -8,6 +8,7 @@
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { trace } from "./perf";
 import { statusTone } from "./matter";
+import { confirmed } from "./confirm";
 import type { PlanFile, RepoInfo } from "./api";
 
 export type Mark = "clean" | "new" | "mod" | "staged" | "conflict";
@@ -677,9 +678,12 @@ export const FileTree = memo(function FileTree(p: Props) {
                 className="ctx-item warn"
                 onClick={() =>
                   act(() => {
-                    if (window.confirm("Forget this repository? Nothing on disk is touched.")) {
-                      p.onForgetRepo(menu.repo);
-                    }
+                    void confirmed(
+                      "Forget this repository? Nothing on disk is touched.",
+                      { ok: "Forget" },
+                    ).then((yes) => {
+                      if (yes) p.onForgetRepo(menu.repo);
+                    });
                   })
                 }
               >

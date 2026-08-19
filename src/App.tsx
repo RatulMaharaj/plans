@@ -30,6 +30,7 @@ import { RELEASE_SECTIONS, RELEASE_VERSION } from "./release-notes";
 import { checkForUpdate, installUpdate, isNewer, runningVersion, type Available } from "./update";
 import { PerfHud } from "./PerfHud";
 import { start, tick, trace } from "./perf";
+import { confirmed } from "./confirm";
 import { authorSlug, htmlBridge, type HtmlEdit } from "./html-view";
 import {
   inDoneFolder,
@@ -1633,7 +1634,7 @@ export default function App() {
       const ask = gone
         ? `${relPath} has never been committed. Discarding deletes it. Continue?`
         : `Throw away your changes to ${relPath} and return it to the last commit?`;
-      if (!window.confirm(ask)) return;
+      if (!(await confirmed(ask, { ok: gone ? "Delete" : "Discard" }))) return;
       if (repoPath === activeRepoPath && relPath === activePath) {
         // Don't let a pending autosave write the old text back afterwards.
         if (saveTimer.current) clearTimeout(saveTimer.current);
@@ -1659,7 +1660,7 @@ export default function App() {
 
   const deleteFile = useCallback(
     async (repoPath: string, relPath: string) => {
-      if (!window.confirm(`Delete ${relPath} from disk?`)) return;
+      if (!(await confirmed(`Delete ${relPath} from disk?`, { ok: "Delete" }))) return;
       if (repoPath === activeRepoPath && relPath === activePath) {
         if (saveTimer.current) clearTimeout(saveTimer.current);
         pending.current = null;
@@ -1692,7 +1693,7 @@ export default function App() {
           census.hidden > 0
             ? ` ${census.hidden === census.files ? (census.files === 1 ? "It is" : "All of them are") : `${census.hidden} of them are`} not markdown, so the sidebar does not show ${census.hidden === 1 ? "it" : "them"}.`
             : "";
-        if (!window.confirm(`Delete ${relPath} and the ${files} inside it?${unseen}`)) {
+        if (!(await confirmed(`Delete ${relPath} and the ${files} inside it?${unseen}`, { ok: "Delete" }))) {
           return;
         }
       }

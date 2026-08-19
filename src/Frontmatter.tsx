@@ -6,6 +6,7 @@
  * Edited as plain text so the YAML survives exactly as written.
  */
 import { useEffect, useRef } from "react";
+import { confirmed } from "./confirm";
 
 type Props = {
   /** Null when the file has no frontmatter; the sheet is then not shown. */
@@ -31,10 +32,11 @@ export function FrontmatterSheet({ matter, onChange, onClose }: Props) {
           <button
             className="act quiet"
             onClick={() => {
-              if (window.confirm("Remove the frontmatter block?")) {
+              void confirmed("Remove the frontmatter block?", { ok: "Remove" }).then((yes) => {
+                if (!yes) return;
                 onChange(null);
                 onClose();
-              }
+              });
             }}
           >
             Remove
