@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { api, type AgentCommand, type ChatId, type ConfigOption } from "./api";
 import { track } from "./analytics";
+import { AgentOptions } from "./AgentOptions";
 
 /**
  * A conversation with the agent about the open plan.
@@ -140,6 +141,8 @@ export function ChatPanel({
   const key = repo ? keyOf(repo) : null;
   const [thread, setThread] = useState<Thread>({ messages: [], plan: null });
   const [input, setInput] = useState("");
+  /** Which slash suggestion is highlighted, or -1 for "the list is closed". */
+  const [pick, setPick] = useState(-1);
   /** The turn in flight, if any, and which conversation it belongs to. */
   const turn = useRef<{ id: ChatId; key: string; at: number } | null>(null);
   const [busy, setBusy] = useState(false);
@@ -411,6 +414,27 @@ export function ChatPanel({
     void api.agentPermission(repo, requestId, optionId).catch(() => {});
   };
 
+  /*
+   * Slash commands, which are not a feature so much as a filter.
+   *
+   * The agent advertises them and parses them itself — a command is ordinary
+   * prompt text that happens to start with "/". All this does is help you
+   * type one, which is why it needs no backend call and no state beyond the
+   * highlight.
+   */
+  const slash = /^\/(\S*)$/.exec(input);
+  const suggestions =
+    slash && thread.commands?.length
+      ? thread.commands
+          .filter((c) => c.name.toLowerCase().startsWith(slash[1].toLowerCase()))
+          .slice(0, 8)
+      : [];
+
+  const complete = (name: string) => {
+    setInput(`/${name} `);
+    setPick(-1);
+  };
+
   // A growing answer should stay in view, as a conversation would.
   useEffect(() => {
     const el = logRef.current;
@@ -435,6 +459,8 @@ export function ChatPanel({
           </button>
         )}
       </div>
+
+      <AgentOptions repo={repo} options={thread.options} busy={busy} />
 
       <div className="chat-log" ref={logRef}>
         {thread.messages.length === 0 && (
@@ -506,6 +532,21 @@ export function ChatPanel({
       </div>
 
       <div className="chat-input">
+        {suggestions.length > 0 && (
+          <div className="chat-slash" role="listbox">
+            {suggestions.map((c, i) => (
+              <button
+                key={c.name}
+                className={`chat-slash-item ${i === pick ? "on" : ""}`}
+                onMouseMove={() => setPick(i)}
+                onClick={() => complete(c.name)}
+              >
+                <span className="chat-slash-name">/{c.name}</span>
+                <span className="chat-slash-desc">{c.description ?? c.input?.hint ?? ""}</span>
+              </button>
+            ))}
+          </div>
+        )}
         <textarea
           rows={1}
           value={input}
@@ -515,17 +556,39 @@ export function ChatPanel({
             // The conversation's keys, not the app's — but chords stay the
             // app's (⌘J must still close the panel), and Escape still leaves.
             if (!e.metaKey && !e.ctrlKey) e.stopPropagation();
+            // The list owns the arrows and Tab while it is open, and Enter
+            // when something in it is chosen — otherwise Enter still sends,
+            // because typing "/" and meaning it is allowed.
+            if (suggestions.length) {
+              if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+                e.preventDefault();
+                const d = e.key === "ArrowDown" ? 1 : -1;
+                setPick((i) => (i + d + suggestions.length) % suggestions.length);
+                return;
+              }
+              if (e.key === "Tab" || (e.key === "Enter" && pick >= 0)) {
+                e.preventDefault();
+                complete(suggestions[Math.max(0, pick)].name);
+                return;
+              }
+            }
             if (e.key === "Enter" && !e.shiftKey) {
               e.preventDefault();
               const text = input;
               setInput("");
+              setPick(-1);
               void send(text);
             } else if (e.key === "Escape") {
               (e.target as HTMLTextAreaElement).blur();
             }
           }}
         />
-        <span className="chat-note">Edits land in the files — see Git for what changed.</span>
+        <span className="chat-note">
+          {thread.usage
+            ? `${Math.round((thread.usage.used / Math.max(1, thread.usage.size)) * 100)}% of context` +
+              (thread.usage.cost ? ` · $${thread.usage.cost.toFixed(2)}` : "")
+            : "Edits land in the files — see Git for what changed."}
+        </span>
       </div>
     </section>
   );

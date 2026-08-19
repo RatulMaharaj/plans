@@ -1142,3 +1142,155 @@ test("asking is a setting, and off by default", async ({ page }) => {
   await row.locator(".switch").click();
   await expect.poll(() => argsOf(page, "agent_auto_allow")).toContainEqual({ on: false });
 });
+
+/*
+ * What the agent says it can do.
+ *
+ * The point of every one of these is that the app knows nothing: no model
+ * names, no effort levels, no command list. It draws what arrives.
+ */
+
+/** Push the option list a real adapter sends when a session opens. */
+async function advertise(page: Page) {
+  await page.evaluate(() => {
+    const f = (window as any).__fake;
+    f.options = [
+      {
+        id: "agent",
+        name: "Agent",
+        currentValue: "default",
+        options: [{ value: "default", name: "Default" }],
+      },
+      {
+        id: "effort",
+        name: "Effort",
+        category: "thought_level",
+        currentValue: "low",
+        options: [
+          { value: "low", name: "Low" },
+          { value: "high", name: "High" },
+        ],
+      },
+      {
+        id: "model",
+        name: "Model",
+        category: "model",
+        currentValue: "fable",
+        options: [
+          { value: "fable", name: "Fable" },
+          { value: "haiku", name: "Haiku" },
+        ],
+      },
+    ];
+    f.emit("agent-config", { repo: "/repo/one", options: f.options });
+  });
+}
+
+test("the model and effort pickers come from the agent", async ({ page }) => {
+  await open(page);
+  await openPlan(page);
+  await page.keyboard.press("Meta+j");
+  await advertise(page);
+
+  // Reserved categories first, in a fixed order, then anything else — the
+  // uncategorised "Agent" option must survive, not be curated away.
+  const labels = await page.locator(".agent-option .dd-trigger").evaluateAll((els) =>
+    els.map((e) => e.getAttribute("aria-label")),
+  );
+  expect(labels).toEqual(["Model", "Effort", "Agent"]);
+  await expect(page.locator('.agent-option [aria-label="Model"]')).toContainText("Fable");
+});
+
+test("choosing a model asks the agent, and shows the agent's answer", async ({ page }) => {
+  await open(page);
+  await openPlan(page);
+  await page.keyboard.press("Meta+j");
+  await advertise(page);
+
+  await page.locator('.agent-option [aria-label="Model"]').click();
+  await page.locator(".dd-item", { hasText: "Haiku" }).click();
+
+  const [set] = await argsOf(page, "agent_set_config");
+  expect(set).toEqual({ repo: "/repo/one", id: "model", value: "haiku" });
+
+  // Redrawn from what the agent replied, not from the click: a choice can
+  // change what else is on offer, and only the agent knows that.
+  await page.evaluate(() => {
+    const f = (window as any).__fake;
+    f.emit("agent-config", { repo: "/repo/one", options: f.options });
+  });
+  await expect(page.locator('.agent-option [aria-label="Model"]')).toContainText("Haiku");
+});
+
+test("an agent with nothing to configure gets no toolbar", async ({ page }) => {
+  await open(page);
+  await openPlan(page);
+  await page.keyboard.press("Meta+j");
+  await expect(page.locator(".chat")).toBeVisible();
+  await expect(page.locator(".agent-options")).toHaveCount(0);
+});
+
+test("slash commands complete from what the agent advertised", async ({ page }) => {
+  await open(page);
+  await openPlan(page);
+  await page.keyboard.press("Meta+j");
+  await page.evaluate(() => {
+    (window as any).__fake.emit("agent-commands", {
+      repo: "/repo/one",
+      commands: [
+        { name: "compact", description: "Shorten the conversation" },
+        { name: "context", description: "What is in the context" },
+        { name: "review", description: "Review the diff" },
+      ],
+    });
+  });
+
+  const box = page.locator(".chat-input textarea");
+  await box.fill("/co");
+  await expect(page.locator(".chat-slash-item")).toHaveCount(2);
+
+  await box.press("ArrowDown");
+  await box.press("Enter");
+  await expect(box).toHaveValue("/compact ");
+  // Completing is not sending: the agent parses the slash itself.
+  expect(await calls(page, "agent_prompt")).toBe(0);
+});
+
+test("a slash you meant literally still sends", async ({ page }) => {
+  await open(page);
+  await openPlan(page);
+  await page.keyboard.press("Meta+j");
+  await page.evaluate(() => {
+    (window as any).__fake.emit("agent-commands", {
+      repo: "/repo/one",
+      commands: [{ name: "compact", description: "Shorten" }],
+    });
+  });
+
+  const box = page.locator(".chat-input textarea");
+  await box.fill("/compact");
+  // Enter with nothing highlighted sends, rather than completing something
+  // you have already finished typing.
+  await box.press("Enter");
+  await expect.poll(() => calls(page, "agent_prompt")).toBe(1);
+  const [sent] = await argsOf(page, "agent_prompt");
+  expect(sent.text).toContain("/compact");
+});
+
+test("context and cost are shown once the agent reports them", async ({ page }) => {
+  await open(page);
+  await openPlan(page);
+  await page.keyboard.press("Meta+j");
+  await expect(page.locator(".chat-note")).toContainText("Edits land in the files");
+
+  await page.evaluate(() => {
+    (window as any).__fake.emit("agent-usage", {
+      repo: "/repo/one",
+      used: 250000,
+      size: 1000000,
+      cost: 0.2811,
+    });
+  });
+  await expect(page.locator(".chat-note")).toContainText("25% of context");
+  await expect(page.locator(".chat-note")).toContainText("$0.28");
+});
