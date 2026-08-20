@@ -1498,12 +1498,20 @@ export default function App() {
   const sourceOnEntry = useRef<string | null>(null);
 
   const goto = useCallback(
-    (next: View) => {
-      // The switch acts on the focused pane. The split has no diff — its
-      // buffer's repo may not even be open — so Diff is simply not offered.
-      if (paneRoute.current.split && paneRoute.current.paneFocus === "split") {
-        if (next !== "diff") setSplitView(next);
-        return;
+    (next: View, focusedOnly = false) => {
+      if (focusedOnly && paneRoute.current.split) {
+        if (paneRoute.current.paneFocus === "split") {
+          // Pin the split alone; the main pane stays where it is.
+          setSplitOverride(next);
+          return;
+        }
+        // Pin the split where it stands, so changing the main pane alone
+        // does not drag it along.
+        setSplitOverride((cur) => cur ?? viewNow.current);
+      } else if (!focusedOnly) {
+        // The plain switch is global: one state, both panes, override gone.
+        // A split buffer with nothing to diff against falls back to Source.
+        setSplitOverride(null);
       }
       // The view switch offers what the buffer can do: a dropped file has no
       // repository, so there is nothing for Diff to compare against.
@@ -1678,11 +1686,12 @@ export default function App() {
     }
   });
   /**
-   * The split pane's view. Its own state, set through the same chrome switch
-   * as the main pane's — the switch acts on whichever pane has focus, so the
-   * split needs no buttons of its own.
+   * The split pane's view *override*. Null follows the global switch — one
+   * state, both panes — and a value pins this pane: the same file can sit
+   * rich on one side and raw on the other. ⌥-click on the switch (or the
+   * palette's "This pane" commands) sets it; a plain click clears it.
    */
-  const [splitView, setSplitView] = useState<"write" | "source">("write");
+  const [splitOverride, setSplitOverride] = useState<"write" | "source" | "diff" | null>(null);
   const splitFlush = useRef<(() => Promise<void>) | null>(null);
 
   /**
@@ -1730,6 +1739,12 @@ export default function App() {
    */
   const paneRoute = useRef({ split, paneFocus, activeRepoPath, activePath });
   paneRoute.current = { split, paneFocus, activeRepoPath, activePath };
+  /** The main pane's current view, readable from callbacks defined earlier. */
+  const viewNow = useRef<View>("write");
+  viewNow.current = view;
+  /** The main buffer's assembled text, for same-file mirroring and watchers. */
+  const sourceNow = useRef("");
+  sourceNow.current = source;
 
   /** Opening a file in another repository makes that repository the active one. */
   const openFile = useCallback(
@@ -1904,6 +1919,41 @@ export default function App() {
   );
 
   /**
+   * The split pane typing into the file the main pane is showing.
+   *
+   * Same-file panes mirror instantly rather than waiting for the watcher:
+   * the pane being typed in owns the buffer and the save; this side adopts
+   * the text with nothing pending and nothing dirty. Source and diff redraw
+   * from props; a Write view is a built document, so it is rebuilt on a
+   * short trailing debounce instead of every keystroke.
+   */
+  const mirrorTimer = useRef<number | undefined>(undefined);
+  const adoptFromSplit = useCallback(
+    (text: string) => {
+      const r = paneRoute.current;
+      if (!r.activeRepoPath || !r.activePath) return;
+      if (text === sourceNow.current) return;
+      const sp = settings.showFrontmatter
+        ? splitFrontmatter(text)
+        : { matter: null, body: text, raw: "" };
+      original.current = { matter: sp.matter, raw: sp.raw, eol: /\n$/.test(text) };
+      pending.current = null;
+      if (saveTimer.current) clearTimeout(saveTimer.current);
+      setMatter(sp.matter);
+      setContent(sp.body);
+      setDirty(false);
+      if (viewNow.current === "write") {
+        clearTimeout(mirrorTimer.current);
+        mirrorTimer.current = window.setTimeout(
+          () => setDocKey(`${r.activeRepoPath}::${r.activePath}::${Date.now()}`),
+          250,
+        );
+      }
+    },
+    [settings.showFrontmatter],
+  );
+
+  /**
    * Where the reader was, per buffer.
    *
    * Opening a file rebuilds the editor, and a rebuilt editor starts at the
@@ -1973,6 +2023,13 @@ export default function App() {
           .then((r) => r.content, () => "");
         setConflict({ theirs });
       } else {
+        // The other pane's autosave of this same text is not news: take the
+        // stamp and stay put, so nothing rebuilds under the reader.
+        const theirs = await api.readPlan(activeRepoPath, activePath).catch(() => null);
+        if (theirs && theirs.content === sourceNow.current) {
+          stamp.current = theirs.stamp;
+          return;
+        }
         await openFile(activeRepoPath, activePath, false, true);
         notify("Reloaded — this file changed on disk");
       }
@@ -2283,6 +2340,33 @@ export default function App() {
     [],
   );
 
+  /**
+   * Right-click on a tab, in either strip: the pointing way to move a
+   * document across, next to the close it pairs with.
+   */
+  const [tabMenu, setTabMenu] = useState<{
+    x: number;
+    y: number;
+    strip: "main" | "split";
+    repo: string;
+    path: string;
+  } | null>(null);
+  useEffect(() => {
+    if (!tabMenu) return;
+    const close = () => setTabMenu(null);
+    const key = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setTabMenu(null);
+    };
+    window.addEventListener("mousedown", close);
+    window.addEventListener("resize", close);
+    window.addEventListener("keydown", key);
+    return () => {
+      window.removeEventListener("mousedown", close);
+      window.removeEventListener("resize", close);
+      window.removeEventListener("keydown", key);
+    };
+  }, [tabMenu]);
+
   /** Swallow the click that follows a completed drag, in either strip. */
   const swallowTabClick = useCallback((e: React.MouseEvent) => {
     if (!tabDidDrag.current) return;
@@ -2304,7 +2388,7 @@ export default function App() {
     const clear = () => {
       tabPress.current = null;
       tabCarried.current = null;
-      document.body.classList.remove("tree-drag");
+      document.body.classList.remove("tree-drag", "from-main", "from-split");
     };
     const move = (e: PointerEvent) => {
       const start = tabPress.current;
@@ -2312,7 +2396,11 @@ export default function App() {
       if (!tabCarried.current) {
         if (Math.hypot(e.clientX - start.x, e.clientY - start.y) < 5) return;
         tabCarried.current = start;
-        document.body.classList.add("tree-drag");
+        // Which side it came from decides which pane lights up as a target.
+        document.body.classList.add(
+          "tree-drag",
+          start.strip === "split" ? "from-split" : "from-main",
+        );
       }
       const it = tabCarried.current;
       const strip = (document.elementFromPoint(e.clientX, e.clientY) as Element | null)
@@ -3253,30 +3341,31 @@ export default function App() {
         {/* A memory buffer has no file to show the source of and no commit to
             diff against, so it is Write or nothing. */}
         {activePath && !settingsOpen && activeRepoPath !== MEMORY && (
-          /* One switch for whichever pane has focus — the split carries no
-             buttons of its own, so this is the only place a view is set. */
+          /* One switch, one state, both panes — and ⌥-click pins only the
+             focused pane, so one file can sit rich on one side and raw on
+             the other. The highlight follows the focused pane. */
           <span className="segmented small view-switch">
             <button
-              className={(paneFocus === "split" && split ? splitView : view) === "write" ? "on" : ""}
-              onClick={() => goto("write")}
+              className={(paneFocus === "split" && split ? (splitOverride ?? view) : view) === "write" ? "on" : ""}
+              onClick={(e) => goto("write", e.altKey)}
+              title="⌥-click: this pane only"
             >
               Write
             </button>
             <button
-              className={(paneFocus === "split" && split ? splitView : view) === "source" ? "on" : ""}
-              onClick={() => goto("source")}
-              title="The raw markdown, exactly as it is on disk"
+              className={(paneFocus === "split" && split ? (splitOverride ?? view) : view) === "source" ? "on" : ""}
+              onClick={(e) => goto("source", e.altKey)}
+              title="The raw markdown, exactly as it is on disk — ⌥-click: this pane only"
             >
               Source
             </button>
             {/* Only where there is a commit to diff against — a dropped file
-                from outside every repository shows Write and Source alone,
-                and the split pane has no diff at all. */}
-            {activeRepo && !(paneFocus === "split" && split) && (
+                from outside every repository shows Write and Source alone. */}
+            {activeRepo && (
               <button
-                className={view === "diff" ? "on" : ""}
-                onClick={() => goto("diff")}
-                title="Live diff against the last commit (⌘3)"
+                className={(paneFocus === "split" && split ? (splitOverride ?? view) : view) === "diff" ? "on" : ""}
+                onClick={(e) => goto("diff", e.altKey)}
+                title="Live diff against the last commit (⌘3) — ⌥-click: this pane only"
               >
                 Diff
               </button>
@@ -3466,9 +3555,9 @@ export default function App() {
                     const moved = outside.has(`${t.repo}::${t.path}`);
                     return (
                       <span
-                        className={`tab ${on ? "on" : ""}${on && editing ? " editing" : ""} ${mark}${
-                          moved ? " outside" : ""
-                        }`}
+                        className={`tab ${on ? "on" : ""}${
+                          on && editing && paneFocus === "main" ? " editing" : ""
+                        } ${mark}${moved ? " outside" : ""}`}
                         key={`${t.repo}::${t.path}`}
                       >
                         <button
@@ -3485,6 +3574,17 @@ export default function App() {
                             if (e.button === 1) void closeTab(t.repo, t.path);
                           }}
                           onPointerDown={(e) => pressTab("main", t.repo, t.path, e)}
+                          onContextMenu={(e) => {
+                            if (t.repo === MEMORY) return;
+                            e.preventDefault();
+                            setTabMenu({
+                              x: e.clientX,
+                              y: e.clientY,
+                              strip: "main",
+                              repo: t.repo,
+                              path: t.path,
+                            });
+                          }}
                         >
                           {displayName(name, settings.showExtensions)}
                         </button>
@@ -3738,11 +3838,24 @@ export default function App() {
                       relPath={split.path}
                       settings={settings}
                       author={author}
-                      view={splitView}
+                      view={splitOverride ?? view}
+                      epoch={epoch}
+                      canDiff={repos.some((r) => r.path === split.repo)}
                       tabs={splitTabs}
                       onSelectTab={openSplitFile}
                       onCloseTab={closeSplitTab}
+                      editing={editing && paneFocus === "split"}
                       onTabPress={(r, pt, e) => pressTab("split", r, pt, e)}
+                      onTabMenu={(r, pt, e) => {
+                        e.preventDefault();
+                        setTabMenu({
+                          x: e.clientX,
+                          y: e.clientY,
+                          strip: "split",
+                          repo: r,
+                          path: pt,
+                        });
+                      }}
                       onStripClickCapture={swallowTabClick}
                       focused={paneFocus === "split"}
                       onFocus={() => setPaneFocus("split")}
@@ -3750,6 +3863,12 @@ export default function App() {
                       notify={notify}
                       flushRef={splitFlush}
                       onOpenLink={(href) => followLink(split.repo, split.path, href)}
+                      liveText={
+                        split.repo === activeRepoPath && split.path === activePath
+                          ? source
+                          : null
+                      }
+                      onLiveEdit={adoptFromSplit}
                     />
                   </div>
                 </>
@@ -4027,9 +4146,47 @@ export default function App() {
         onSplit={toggleSplit}
         onSplitDir={() => setSplitDir((d) => (d === "row" ? "column" : "row"))}
         onSwapPanes={() => void swapPanes()}
+        onPaneView={(v) => goto(v, true)}
         canSplitSame={!!activePath && !!activeRepoPath && activeRepoPath !== MEMORY}
         onSplitSame={splitSame}
       />
+
+      {tabMenu && (
+        <div
+          className="ctx"
+          style={{ left: tabMenu.x, top: tabMenu.y }}
+          onMouseDown={(e) => e.stopPropagation()}
+        >
+          <p className="ctx-path">{tabMenu.path}</p>
+          <button
+            className="ctx-item"
+            onClick={() => {
+              const m = tabMenu;
+              setTabMenu(null);
+              void (m.strip === "main"
+                ? openInSplit(m.repo, m.path)
+                : moveToMain(m.repo, m.path));
+            }}
+          >
+            {tabMenu.strip === "main"
+              ? split
+                ? "Move to the split"
+                : "Open to the side"
+              : "Move to the main pane"}
+          </button>
+          <button
+            className="ctx-item"
+            onClick={() => {
+              const m = tabMenu;
+              setTabMenu(null);
+              if (m.strip === "main") void closeTab(m.repo, m.path);
+              else closeSplitTab(m.repo, m.path);
+            }}
+          >
+            Close
+          </button>
+        </div>
+      )}
 
       {shortcuts && (
         <ShortcutSheet

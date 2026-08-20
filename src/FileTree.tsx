@@ -326,7 +326,7 @@ export const FileTree = memo(function FileTree(p: Props) {
     // Only a drag this tree started gets to turn the drop zone off — the tab
     // strip shares the `tree-drag` switch, and this handler fires on every
     // pointerup whether or not a tree drag was live.
-    if (carried.current) document.body.classList.remove("tree-drag");
+    if (carried.current) document.body.classList.remove("tree-drag", "from-main");
     carried.current = null;
     pressed.current = null;
     target.current = null;
@@ -380,7 +380,7 @@ export const FileTree = memo(function FileTree(p: Props) {
         setDragging({ repo: start.repo, path: start.path });
         // The page's split drop zone only takes the pointer while a drag is
         // live — a class on <body> is what turns it on.
-        if (start.kind === "file") document.body.classList.add("tree-drag");
+        if (start.kind === "file") document.body.classList.add("tree-drag", "from-main");
         trace("drag start", { path: start.path, kind: start.kind });
       }
       const spot = (document.elementFromPoint(e.clientX, e.clientY) as Element | null)
@@ -616,6 +616,12 @@ export const FileTree = memo(function FileTree(p: Props) {
                 onClick={() => act(() => p.onOpen(menu.repo, menu.path))}
               >
                 Open
+              </button>
+              <button
+                className="ctx-item"
+                onClick={() => act(() => p.onOpenSplit(menu.repo, menu.path))}
+              >
+                Open to the side
               </button>
               <button
                 className="ctx-item"

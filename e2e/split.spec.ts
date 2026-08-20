@@ -195,19 +195,74 @@ test("the same document can be open in both panes", async ({ page }) => {
   await expect(page.locator(".split-pane .editor-host .ProseMirror")).toContainText("para one");
 });
 
-test("the one view switch drives the focused pane", async ({ page }) => {
+test("a pane view override: rich one side, raw the other, mirrored live", async ({ page }) => {
+  await boot(page);
+  await page.locator(".row.file", { hasText: "a" }).first().click();
+  await page.keyboard.press("Meta+Shift+p");
+  await page.locator(".palette-input").fill(">both panes");
+  await page.keyboard.press("Enter");
+  await expect(page.locator(".split-pane")).toBeVisible();
+
+  // Pin the split (focused) to Source; the main pane stays rich.
+  await page.keyboard.press("Meta+Shift+p");
+  await page.locator(".palette-input").fill(">this pane: source");
+  await page.keyboard.press("Enter");
+  await expect(page.locator(".split-pane .source")).toBeVisible();
+  await expect(page.locator(".main-pane .ProseMirror")).toBeVisible();
+
+  // Type raw on the right; the rich page on the left follows shortly.
+  await page.locator(".split-pane .source .cm-content").click();
+  await page.keyboard.type("mirrored-live ");
+  await expect(page.locator(".main-pane .ProseMirror")).toContainText("mirrored-live", {
+    timeout: 3000,
+  });
+
+  // The plain switch is still global: it snaps both panes back together.
+  await page.locator(".view-switch button", { hasText: "Write" }).click();
+  await expect(page.locator(".split-pane .ProseMirror")).toBeVisible();
+});
+
+test("right-click moves a document across", async ({ page }) => {
+  await boot(page);
+  await page.locator(".row.file", { hasText: "b" }).first().click();
+
+  // From the tree: Open to the side.
+  await page.locator(".row.file", { hasText: "a" }).first().click({ button: "right" });
+  await page.locator(".ctx-item", { hasText: "Open to the side" }).click();
+  await expect(page.locator(".split-pane")).toBeVisible();
+  await expect(splitTabOn(page)).toHaveText(/a/);
+
+  // From a main tab: move it across; the main pane empties.
+  await page.locator('[data-strip="main"] .tab-name', { hasText: "b" }).click({ button: "right" });
+  await page.locator(".ctx-item", { hasText: "Move to the split" }).click();
+  await expect(page.locator(".split-pane .tab")).toHaveCount(2);
+  await expect(page.locator(".main-pane .blank")).toBeVisible();
+
+  // From a split tab: bring it back.
+  await page.locator('[data-strip="split"] .tab-name', { hasText: "b" }).click({ button: "right" });
+  await page.locator(".ctx-item", { hasText: "Move to the main pane" }).click();
+  await expect(mainTabs(page)).toHaveCount(1);
+  await expect(page.locator(".split-pane .tab")).toHaveCount(1);
+});
+
+test("the view switch is global: both panes follow it", async ({ page }) => {
   await boot(page);
   await page.locator(".row.file", { hasText: "b" }).first().click();
   await dragToSplit(page, page.locator(".row.file", { hasText: "a" }).first());
   await expect(page.locator(".split-pane")).toBeVisible();
 
-  // Split has focus after the drop: no Diff offered, Source acts on the split.
-  await expect(page.locator(".view-switch button", { hasText: "Diff" })).toHaveCount(0);
+  // Source: both panes at once.
   await page.locator(".view-switch button", { hasText: "Source" }).click();
+  await expect(page.locator(".main-pane .source")).toBeVisible();
   await expect(page.locator(".split-pane .source")).toBeVisible();
 
-  // Focus the main pane: Diff returns, and its view is untouched.
-  await page.locator(".main-pane .editor-host").first().click();
-  await expect(page.locator(".view-switch button", { hasText: "Diff" })).toHaveCount(1);
-  await expect(page.locator(".main-pane .editor-host .ProseMirror")).toBeVisible();
+  // Diff: both panes too.
+  await page.locator(".view-switch button", { hasText: "Diff" }).click();
+  await expect(page.locator(".main-pane .diff-surface, .main-pane .diff-empty")).toHaveCount(1);
+  await expect(page.locator(".split-pane .diff-surface, .split-pane .diff-empty")).toHaveCount(1);
+
+  // And back to Write, together.
+  await page.locator(".view-switch button", { hasText: "Write" }).click();
+  await expect(page.locator(".main-pane .ProseMirror")).toBeVisible();
+  await expect(page.locator(".split-pane .ProseMirror")).toBeVisible();
 });

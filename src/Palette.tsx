@@ -124,6 +124,8 @@ type Props = {
   onSplit: () => void;
   onSplitDir: () => void;
   onSwapPanes: () => void;
+  /** Set the focused pane's view alone, leaving the other where it is. */
+  onPaneView: (v: "write" | "source" | "diff") => void;
   /** Show the open document in both panes at once. */
   canSplitSame: boolean;
   onSplitSame: () => void;
@@ -640,6 +642,18 @@ function buildCommands(p: Props): Command[] {
       terms: "switch order exchange left right flip",
       run: p.onSwapPanes,
     });
+    // The override, spelled out: the switch is global, these pin one pane —
+    // the same file rich on one side and raw on the other.
+    for (const v of ["write", "source", "diff"] as const) {
+      add({
+        id: `pane.v.${v}`,
+        group: "Go",
+        label: `This pane: ${v[0].toUpperCase()}${v.slice(1)}`,
+        hint: "override — the other pane keeps its view",
+        terms: "pane view only override focused split",
+        run: () => p.onPaneView(v),
+      });
+    }
   }
   if (p.canSplitSame) {
     add({

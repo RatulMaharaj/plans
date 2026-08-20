@@ -15,6 +15,7 @@
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "./api";
+import { DiffView } from "./DiffView";
 import { Editor } from "./Editor";
 import { FrontmatterSheet } from "./Frontmatter";
 import { SourceView } from "./SourceView";
@@ -27,17 +28,24 @@ type Props = {
   relPath: string;
   settings: Settings;
   author: string;
-  /** Set from the chrome's one view switch, which acts on the focused pane. */
-  view: "write" | "source";
+  /** Set from the chrome's one view switch — global, both panes at once. */
+  view: "write" | "source" | "diff";
+  /** Whether this buffer has a commit to diff against; false falls back to Source. */
+  canDiff: boolean;
+  /** Bumped when git state moves, so the diff re-reads. */
+  epoch: number;
   /** This pane's own tab set — each pane keeps its own strip. */
   tabs: { repo: string; path: string }[];
   onSelectTab: (repo: string, path: string) => void;
   onCloseTab: (repo: string, path: string) => void;
   /** The shared tab-drag machinery: press to maybe-drag, swallow the click. */
   onTabPress: (repo: string, path: string, e: React.PointerEvent) => void;
+  onTabMenu: (repo: string, path: string, e: React.MouseEvent) => void;
   onStripClickCapture: (e: React.MouseEvent) => void;
   /** Painted on the header so a keystroke cannot land in the wrong document. */
   focused: boolean;
+  /** Keystrokes are going into this pane's document right now. */
+  editing: boolean;
   onFocus: () => void;
   onClose: () => void;
   notify: (msg: string, kind?: "info" | "error") => void;
@@ -45,6 +53,13 @@ type Props = {
   flushRef: React.MutableRefObject<(() => Promise<void>) | null>;
   /** ⌘-click on a link in this pane. */
   onOpenLink?: (href: string) => void;
+  /**
+   * The main pane's text when both panes hold the same file, else null.
+   * Same-file panes mirror instantly: this side adopts the other's edits
+   * with nothing pending, and reports its own through `onLiveEdit`.
+   */
+  liveText: string | null;
+  onLiveEdit: (text: string) => void;
 };
 
 export function SplitPane({
@@ -53,10 +68,14 @@ export function SplitPane({
   settings,
   author,
   view,
+  canDiff,
+  epoch,
   tabs,
   onSelectTab,
   onCloseTab,
+  editing,
   onTabPress,
+  onTabMenu,
   onStripClickCapture,
   focused,
   onFocus,
@@ -64,6 +83,8 @@ export function SplitPane({
   notify,
   flushRef,
   onOpenLink,
+  liveText,
+  onLiveEdit,
 }: Props) {
   const [body, setBody] = useState("");
   const [matter, setMatter] = useState<string | null>(null);
@@ -159,13 +180,46 @@ export function SplitPane({
       if (original.current.eol && pending.current && !pending.current.endsWith("\n")) {
         pending.current += "\n";
       }
+      if (liveText !== null && pending.current !== null) onLiveEdit(pending.current);
       if (saveTimer.current) clearTimeout(saveTimer.current);
       if (settings.autosave === "afterDelay") {
         saveTimer.current = window.setTimeout(() => void flush(), settings.autosaveDelay * 1000);
       }
     },
-    [flush, settings.autosave, settings.autosaveDelay],
+    [flush, settings.autosave, settings.autosaveDelay, liveText, onLiveEdit],
   );
+
+  /*
+   * The other half of same-file mirroring: the main pane typed, this side
+   * follows. Never while this pane is focused — the focused pane owns the
+   * buffer — and the Write surface rebuilds on a trailing debounce, since a
+   * built document cannot take new text per keystroke the way the raw views
+   * take a prop.
+   */
+  const liveTimer = useRef<number | undefined>(undefined);
+  useEffect(() => {
+    if (liveText === null || focused) return;
+    if (liveText === source) return;
+    const sp = settings.showFrontmatter
+      ? splitFrontmatter(liveText)
+      : { matter: null, body: liveText, raw: "" };
+    original.current = { matter: sp.matter, raw: sp.raw, eol: /\n$/.test(liveText) };
+    pending.current = null;
+    if (saveTimer.current) clearTimeout(saveTimer.current);
+    setMatter(sp.matter);
+    setBody(sp.body);
+    setDirty(false);
+    if (view === "write") {
+      clearTimeout(liveTimer.current);
+      liveTimer.current = window.setTimeout(
+        () => setDocKey(`${repo}::${relPath}::${Date.now()}`),
+        250,
+      );
+    }
+    // Adopt exactly when the mirrored text moves — everything else is a ref
+    // or would re-run this on our own edits echoing back.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [liveText]);
 
   // Pane blur is the save cue for "onBlur" — moving to the other document is
   // exactly the moment a reader expects this one to be written.
@@ -197,6 +251,13 @@ export function SplitPane({
         );
         setConflict(theirs);
       } else {
+        // The other pane's autosave of this same text is not news: take the
+        // stamp and stay put, so nothing rebuilds under the reader.
+        const theirs = await api.readPlan(repo, relPath).catch(() => null);
+        if (theirs && theirs.content === source) {
+          stamp.current = theirs.stamp;
+          return;
+        }
         await load();
       }
     }, Math.max(1, settings.watchSeconds) * 1000);
@@ -207,15 +268,16 @@ export function SplitPane({
   // in the source view reach it by rebuilding it on the way back — and only
   // then; an untouched round trip keeps the instance. The view itself is set
   // from the chrome's switch, so the rebuild watches the prop.
+  const shown: "write" | "source" | "diff" = view === "diff" && !canDiff ? "source" : view;
   const sourceTouched = useRef(false);
-  const prevView = useRef(view);
+  const prevView = useRef(shown);
   useEffect(() => {
-    if (prevView.current === "source" && view === "write" && sourceTouched.current) {
+    if (prevView.current !== "write" && shown === "write" && sourceTouched.current) {
       sourceTouched.current = false;
       setDocKey(`${repo}::${relPath}::${Date.now()}`);
     }
-    prevView.current = view;
-  }, [view, repo, relPath]);
+    prevView.current = shown;
+  }, [shown, repo, relPath]);
 
   const status = matter !== null ? matterValue(matter, "status") : null;
   const who =
@@ -238,7 +300,10 @@ export function SplitPane({
             const on = t.repo === repo && t.path === relPath;
             const tabName = t.path.split("/").pop() ?? t.path;
             return (
-              <span className={`tab ${on ? "on" : ""}`} key={`${t.repo}::${t.path}`}>
+              <span
+                className={`tab ${on ? "on" : ""}${on && editing ? " editing" : ""}`}
+                key={`${t.repo}::${t.path}`}
+              >
                 <button
                   className="tab-name"
                   role="tab"
@@ -249,6 +314,7 @@ export function SplitPane({
                     if (e.button === 1) onCloseTab(t.repo, t.path);
                   }}
                   onPointerDown={(e) => onTabPress(t.repo, t.path, e)}
+                  onContextMenu={(e) => onTabMenu(t.repo, t.path, e)}
                 >
                   {displayName(tabName, settings.showExtensions)}
                   {on && dirty ? " •" : ""}
@@ -342,36 +408,58 @@ export function SplitPane({
         </div>
       )}
 
-      {/* Both surfaces stay mounted, the hidden one put aside with CSS —
-          the same trick the main pane uses to keep view switching instant. */}
-      <div className={`surface ${view === "write" ? "" : "aside"}`}>
-        <Editor
-          docKey={docKey}
-          repo={repo}
-          relPath={relPath}
-          initialValue={body}
-          spellcheck={settings.spellcheck}
-          imageFolder={settings.imageFolder}
-          author={author}
-          onChange={(md) => edited(matter, md)}
-          onOpenLink={onOpenLink}
-        />
-      </div>
-      <div className={`surface ${view === "source" ? "" : "aside"}`}>
-        <SourceView
-          value={source}
-          onChange={(text) => {
-            sourceTouched.current = true;
-            const split = settings.showFrontmatter
-              ? splitFrontmatter(text)
-              : { matter: null, body: text, raw: original.current.raw };
-            edited(split.matter, split.body);
-          }}
-          settings={settings}
-          docKey={docKey}
-          active={view === "source"}
-        />
-      </div>
+      {/* Both writing surfaces stay mounted, the hidden one put aside with
+          CSS — the same trick the main pane uses to keep switching instant.
+          Diff, like the main pane's, is built when asked for. */}
+      {shown !== "diff" ? (
+        <>
+          <div className={`surface ${shown === "write" ? "" : "aside"}`}>
+            <Editor
+              docKey={docKey}
+              repo={repo}
+              relPath={relPath}
+              initialValue={body}
+              spellcheck={settings.spellcheck}
+              imageFolder={settings.imageFolder}
+              author={author}
+              onChange={(md) => edited(matter, md)}
+              onOpenLink={onOpenLink}
+            />
+          </div>
+          <div className={`surface ${shown === "source" ? "" : "aside"}`}>
+            <SourceView
+              value={source}
+              onChange={(text) => {
+                sourceTouched.current = true;
+                const split = settings.showFrontmatter
+                  ? splitFrontmatter(text)
+                  : { matter: null, body: text, raw: original.current.raw };
+                edited(split.matter, split.body);
+              }}
+              settings={settings}
+              docKey={docKey}
+              active={shown === "source"}
+            />
+          </div>
+        </>
+      ) : (
+        <div className="editor-host">
+          <DiffView
+            repo={repo}
+            relPath={relPath}
+            buffer={source}
+            onEdit={(text) => {
+              sourceTouched.current = true;
+              const split = settings.showFrontmatter
+                ? splitFrontmatter(text)
+                : { matter: null, body: text, raw: original.current.raw };
+              edited(split.matter, split.body);
+            }}
+            settings={settings}
+            epoch={epoch}
+          />
+        </div>
+      )}
     </div>
   );
 }
