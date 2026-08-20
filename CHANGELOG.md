@@ -1,5 +1,332 @@
 # plans
 
+## 0.5.0
+
+### Minor Changes
+
+- 3c9385b: The app now ships a second skill: a review skill that teaches any agent how to
+  turn a branch or PR into review materials a human can actually digest — a
+  small numbered set of documents split by what the reader does, mermaid where
+  prose loses, code blocks as quotations with `file:line`, and statuses that
+  make the tree a reading checklist.
+
+  Install conventions installs every bundled skill everywhere the agents on
+  this machine look: Claude Code gets a file per skill under `.claude/skills/`,
+  and the agents that read `AGENTS.md` or `GEMINI.md` get a fenced section per
+  skill — the existing plans fence keeps its bare spelling, so nothing already
+  installed stops matching. The palette gains an "Open the … skill" command per
+  installed skill, with the honest caveat that these copies are rewritten on
+  update.
+
+- 3c9385b: Drag a markdown file from Finder onto the window and it opens, editable, and
+  saves back to where it came from. A file that lives inside an open repository
+  opens as that repository's file, diff and all; one from anywhere else opens
+  with its folder as its root — the watcher, autosave and the conflict check
+  all work, because they only ever needed a directory and a name. Its view
+  switch offers Write and Source and no Diff, since there is no commit to
+  compare against. A dropped folder is the add-a-repository gesture by other
+  means; anything that isn't markdown is declined by name.
+
+  This turns Tauri's own drag-drop handling on, which is what makes real
+  filesystem paths — and therefore editing in place — possible at all.
+
+- 3c9385b: Shortcuts now live in one registry instead of twice — once as a hand-written
+  `else if` chain and once as strings in the palette that agreed only because
+  someone kept them agreeing. The unconditional bindings moved into a keymap
+  table; the keydown handler is a lookup over it, and the palette renders its
+  key hints from it, so a hint can no longer lie about a key you have rebound.
+
+  ⌘/ opens the new shortcut sheet: every binding, grouped, drawn from the
+  registry. Click one and press the new keys to rebind it — overrides merge
+  over the defaults in settings the way settings already merge, ⌫ unbinds, and
+  a conflict with another binding is refused by name rather than silently
+  letting one command win. Contextual keys — Escape, ⌘B while writing, ⌘+/− by
+  focus — stay hand-written, and the sheet says so instead of pretending.
+
+- bff9d19: The view switch is one global state: Write, Source and Diff set both panes
+  at once — and ⌥-click (or the palette's "This pane" commands) pins only the
+  focused pane, so the same file can sit rich on one side and raw on the
+  other. When both panes hold one file they mirror instantly: the pane being
+  typed in owns the buffer and the save, the raw views follow per keystroke,
+  the built page follows on a short trailing debounce, and the other pane's
+  autosave is adopted quietly instead of rebuilding the reader's view.
+
+  The pointing routes filled in: right-click a file in the tree for "Open to
+  the side", right-click a tab in either strip to move it across or close it.
+  The drop zone stays away once a split exists (the pane itself is the target
+  — nothing promises a third pane), a drag from the split outlines the main
+  pane as its target the way the split is outlined for drags the other way,
+  and the bright active-tab indicator follows the pane the keystrokes actually
+  go to.
+
+- d6cb936: Two agents can work at the same time, and moving between conversations no
+  longer kills one.
+
+  A session was keyed by repository, so there was one by construction. Changing
+  chat meant changing which conversation that single session was having — which it
+  cannot — so it was ended instead. Setting an agent going on a long job and
+  reading another conversation while it worked was not something you could do.
+
+  A session is now keyed by the conversation it is having. What ends one is
+  deleting the chat, clearing it, or quitting; navigating does not. Every event
+  the agent produces names its conversation, so an answer arriving for a chat you
+  are not looking at lands in that chat's transcript rather than being dropped —
+  which is what used to happen, permanently, including after switching back.
+
+  Everything that was one-per-repository followed:
+
+  - The turn in flight is per conversation, so a long job in one does not disable
+    the composer in another, and Stop belongs to the chat it is in.
+  - Permission requests are asked and answered per conversation. Their ids now
+    carry the chat, because a tool call id is only unique within its own session
+    and two sessions in one repository could mint the same one — answering in one
+    chat could have resolved the other's question.
+  - Context and cost are read per conversation. Two sessions were overwriting each
+    other's reading, so the status bar showed whichever spoke last under a label
+    saying it was the repository's.
+  - The conversation picker puts running chats first, under their own rule, and
+    the rail carries a count of how many agents are working — across every
+    repository, since what that number is about is processes on the machine.
+
+- 3c9385b: The bundled skills work without being installed anywhere. Type `/plans` or
+  `/review` in the agent chat and the skill's text travels with your message —
+  the transcript keeps what you typed, the agent gets the conventions, and no
+  repository grows a file for it. The app also keeps fresh copies in
+  `~/.plans/skills/` on every launch, one folder per skill, for pointing other
+  tools at. Installing into a repository stays what it was: a button you can
+  press, never something that happens to you.
+- 3c9385b: Two documents, side by side. Drag a file — from the tree or from the tab
+  strip — onto the dashed "Open beside" zone along the page's far edge and it
+  opens beside the one you are reading. Once a split is open the zone stays
+  away — the pane itself is the target, outlined under the drag, so nothing
+  ever promises a third pane; a drop there retargets it. The tab row itself splits: each pane carries its
+  own strip and its own header — path, status badge, owner, due — sized to its
+  pane. Tabs move rather than copy: dragging the open document to the side
+  lets the next tab fill its place (or the blank state show), a split tab
+  dropped on the main pane comes back, and tabs reorder live under the pointer
+  within a strip. ⌃Tab cycles the focused pane's own strip.
+
+  The split's header carries a Frontmatter button, like the main one — no
+  close button: the pane closes from the palette ("Close the split") or when
+  its last tab does. "Swap the panes" trades the two tab sets wholesale, and
+  "Open this document in both panes" puts two live views on one file — a save
+  in one is the other's outside edit, taken silently when clean and raised as
+  the conflict bar when both have typed. There is one view switch, in the chrome, and it acts on whichever pane
+  has focus; the split offers Write and Source, and no Diff. ⌘\ does the same from the keyboard, opening the
+  most recent other buffer in a second pane — its own view, its own scroll, its own save machinery against
+  its own stamp, so a save in one pane can never use the other's. ⌘⌥\ turns
+  the split the other way, ⌘⌥1/⌘⌥2 move focus between panes (the bare digits
+  stay the view switch), and ⌘W closes the focused split before it closes
+  buffers. The divider drags, double-click evens it out, and the split — which
+  way it runs, where the divider sits, what it shows — survives a restart.
+
+  Opening a file while the split has focus loads it there; a file already open
+  in the other pane moves focus instead of opening a second copy, because two
+  editors saving one file against two stamps is the conflict machinery firing
+  on the app's own edits. Zen collapses to one pane and restores the split on
+  the way out. Two panes and no more, deliberately.
+
+### Patch Changes
+
+- d6cb936: Fixes a running agent going silent after another session was stopped.
+
+  `agent-down` is emitted twice for one stop, and has to be: the session is told
+  to go and says so at once, so the panel is not left waiting on a process that is
+  already unreachable, and the session's own task says so again when it has
+  actually finished — which is arbitrarily later, because telling a session to
+  stop only queues the message.
+
+  With nothing to tell the two apart, that second farewell was indistinguishable
+  from news about whatever was running by then. Stop a session, start another, and
+  the first one's goodbye cleared the second one's turn — after which the live
+  agent's answer went nowhere, which looks exactly like an agent that has nothing
+  to say. Every session now carries a number, and a message about a session older
+  than the one in hand is a message about something already over.
+
+  Found while specifying `plans/several-agents-at-once.md`: the refactor needs
+  events to say which session they belong to, and asking that question turned up a
+  case where the answer already mattered.
+
+- d6cb936: Naming a new file now leaves the cursor in it, in the empty line under the
+  heading. Creating a file used to leave you looking at it rather than writing in
+  it, so the first thing you did after making one was click into it.
+
+  The cursor is asked for, not placed. Opening a file only requests the state
+  change that leads to the editor swapping its document, so focusing at the point
+  of asking lands in the file you were reading before — which the swap then throws
+  away. The request is left for the editor and honoured once the new document has
+  settled, including on the path where the file is the first one opened and the
+  editor is being built for it rather than swapping.
+
+  Only creating a file does this. Clicking through the tree to read something
+  still leaves the cursor where it was.
+
+- d6cb936: A new plan is created with `status:` frontmatter already in it, using the first
+  word of your configured status vocabulary.
+
+  Until a plan has a status it is invisible to everything that reads one — the
+  tinted dot in the tree, the status filter, and now the ordering — so a file made
+  in the app did not look like a plan to the app until somebody remembered to say
+  so. Writing it at creation means it is a plan from its first save.
+
+  The word comes from settings rather than being baked in, because the vocabulary
+  is a convention the repository keeps rather than one the app owns.
+
+- d6cb936: A file can be dragged from one repository into another. The tree refused it
+  before, on the grounds that it would be a copy rather than a move — which was
+  true, and is the answer rather than the objection: git has no rename spanning
+  two repositories, so the destination gets an addition and the original stays
+  exactly where it was. The cursor says which of the two a drag is while you are
+  doing it.
+
+  The buffer is written out first. The file being dragged may be the one you are
+  typing into, and the copy happens on disk — without that, what arrives in the
+  other repository is quietly a few seconds old.
+
+  This is the half of "copying files between repos, and dropping files in from
+  Finder" that costs nothing. The Finder half is a different change: it needs
+  Tauri's own file-drop handling turned on, which takes away the HTML5 drag
+  events this feature and the tree's drag-to-move are both built on.
+
+- d6cb936: The file tree can be ordered by `status:` rather than by name — "Order files
+  by" in Settings, or from the palette. Within each folder, since a sequence
+  across unrelated folders means nothing.
+
+  This is the cheap answer to wanting a plans folder in some order other than the
+  alphabet, and it was worth trying before adding a field for it: the status is
+  already read from every file during the walk, so it costs a comparison rather
+  than a number to keep in step by hand — and unlike a number, it cannot drift out
+  of step with itself when you insert a plan in the middle.
+
+  The vocabulary is the one already in Settings, so "first" means first in your
+  list. A file with an unrecognised status, or none at all, comes last, which
+  means adopting this can be partial — most repositories hold files that are not
+  plans.
+
+- d6cb936: The palette can now put a zoomed page or sidebar back to its default size.
+
+  Nudging was the only way these values moved, so having zoomed you could only
+  return by counting your way back — to a number that is written down nowhere you
+  can see while the palette is open. The Settings page has had the answer all
+  along: every slider there carries a revert. The palette now offers the same for
+  any nudged value — the page, the tree, line length, line height, code size —
+  showing what it would move from and to.
+
+  "Zoom" also finds the size commands now, which is the word people reach for and
+  the one that used to find nothing at all.
+
+- d6cb936: Fixes a file growing a second, empty frontmatter block in front of its real
+  one — `---`, blank, `---`, then the actual metadata. Only the first block
+  parses as frontmatter, so the plan's status became invisible to the app while
+  the file still looked almost right on disk.
+
+  Emptying the frontmatter sheet's textarea hands back an empty string, and an
+  empty string is not the same thing as no frontmatter: `null` means the file has
+  no block, `""` means the block is there and holds nothing. The join treated
+  only the first as "write nothing", so the second wrote a bare pair of fences.
+  A block holding nothing is now no block at all, checked before the
+  write-it-back-verbatim path so that a file already carrying an empty block is
+  repaired by saving it rather than having it preserved.
+
+- d6cb936: `#` in the palette can now reach every open repository's conversations, not only
+  the one you are in. It is a setting rather than a change: the list following the
+  focused repository is the list being right for most work, so that stays the
+  default, and "every repository" is there for the other habit — one train of
+  thought that outlives which window happens to be focused.
+
+  A foreign chat is labelled with the repository it belongs to, since chat titles
+  come from what was said and two repositories can easily hold one called the same
+  thing. Opening it goes there: a transcript is keyed by its repository, the agent
+  runs in it, and the plans it is about are there, so the window follows.
+
+  Reading the list leaves nothing behind. The index-loading the panel does invents
+  and writes an empty conversation when a repository has none, which is right for
+  the repository being worked in and would otherwise seed a stray "New chat" in
+  every repository you have ever opened.
+
+- d6cb936: "Install skill" wrote `.claude/skills/plans/SKILL.md` — Claude Code's location
+  and nobody else's. The chat starts Codex, Gemini and OpenCode just as readily,
+  and none of them will ever read that file, so for three of the four agents the
+  button was a no-op with a reassuring label.
+
+  The conventions now go wherever the agents on this machine actually look:
+  Codex and OpenCode read `AGENTS.md`, Gemini reads `GEMINI.md`, Claude Code
+  reads its skills directory. One text, a table of addresses — the conventions
+  are the same conventions whoever is reading them. Only for agents this machine
+  has, since a `GEMINI.md` arriving in the git status of someone who has never run
+  Gemini is litter.
+
+  A repository that already has an `AGENTS.md` does not lose what was in it. A
+  file under a tool's own dotted directory exists because the tool does, so the
+  app owns it and replaces it; a file at the root of the repository belongs to the
+  repository, and only the app's own fenced section is rewritten.
+
+  The settings row names the agents rather than a path, which is the part of this
+  the reader can actually act on.
+
+- d6cb936: ⌃Tab steps to the next open buffer and ⌃⇧Tab to the previous one, wrapping at
+  both ends — the binding every tabbed application has. Both are in the palette
+  too, since a binding nobody can find is a binding nobody uses.
+
+  ⌘⌥←/→ did this already and now shares the same code, which fixed something the
+  two had quietly disagreed about: cycling onto a memory buffer — the release
+  notes, say — tried to read a file that was never on disk.
+
+- d6cb936: Mermaid diagrams zoom and pan. ⌘- or ctrl-scroll — which is also what a trackpad
+  pinch arrives as — zooms about the pointer, dragging moves the picture once
+  there is somewhere to move it, and double-clicking or the `1:1` chip in the
+  corner puts it back. A plain scroll still scrolls the document, since the
+  pointer is over a diagram for much of a long plan.
+
+  The zoom is remembered outside the widget rather than on it. ProseMirror keys
+  the diagram's widget by position, so typing a paragraph anywhere above one
+  rebuilds it — anything held on the node would be thrown away by an edit
+  elsewhere in the file.
+
+  The figure now clips at its frame. At 1:1 that changes nothing, because the
+  diagram is scaled to the width; zoomed, being cut off at the frame is the point.
+
+  A diagram can also be maximised, from the ⤢ in its corner — the same picture
+  with the room to read it, since zooming inside a frame the size of a paragraph
+  is the wrong size for the diagrams that most need looking at. Escape or the
+  backdrop closes it. The maximised view is built outside the editor entirely,
+  because the figure clips its overflow and anything inside the editor's DOM is
+  something ProseMirror believes it owns.
+
+  The `1:1` and maximise controls read as buttons in the document, not only in
+  the maximised view. Milkdown's own stylesheet strips the border and background
+  off any button inside the editor, and it does so with a selector that outranks
+  a plain class — so the same control looked like a button in one place and like
+  bare text in the other.
+
+- 3c9385b: Six from the open bug list:
+
+  - Long paths in the git panel no longer push the filename out of view — the
+    name never gives way; the folder path is what truncates, from the front, so
+    the nearest folder survives.
+  - "Refresh branches" in the git commands re-reads the branch list on demand.
+  - Right-click a repository in the tree → "Open in Terminal".
+  - Links between markdown documents work: ⌘-click a relative link and the
+    other file opens in the app; anything with a scheme opens in the browser.
+    A plain click stays an editing click, and the webview never navigates away.
+  - Escape stops the agent mid-answer, matching the Stop button.
+  - Long documents show a thin scrollbar in the paper's own colours, and the
+    scroll position is remembered per buffer — jumping between two documents no
+    longer resets both to the top.
+
+- d6cb936: A file open in another tab that changes on disk now says so, with a dot beside
+  its name in the tab row.
+
+  Only the active file was ever checked for outside edits, so a plan rewritten by
+  an agent or by a `git checkout` sat there unremarked until you happened to click
+  back to it — which is the worst moment to be told, since the change is old by
+  then. A background tab holds no text and re-reads from disk when you open it, so
+  there was never anything to reload; what was missing was only the telling.
+
+  The check runs on the slow tick rather than the watch interval, for the same
+  reason the tree walk is staggered: a `stat` per open tab is cheap but not free,
+  and none of this is urgent.
+
 ## 0.4.1
 
 ### Patch Changes
