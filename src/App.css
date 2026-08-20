@@ -2703,9 +2703,9 @@ body.resizing.resizing-row, body.resizing.resizing-row .chat-edge { cursor: row-
 .page-body { position: relative; }
 .split-drop {
   position: absolute;
-  top: 0;
-  right: 0;
-  bottom: 0;
+  top: 8px;
+  right: 8px;
+  bottom: 8px;
   width: 26%;
   z-index: 6;
   pointer-events: none;
@@ -2713,21 +2713,41 @@ body.resizing.resizing-row, body.resizing.resizing-row .chat-edge { cursor: row-
   align-items: center;
   justify-content: center;
   opacity: 0;
-  border-left: 1px dashed transparent;
+  border: 2px dashed var(--rule-strong);
+  border-radius: 8px;
+  background: var(--raised);
+  transform: translateX(12px);
+  transition:
+    opacity 160ms ease,
+    transform 160ms ease,
+    border-color 120ms ease,
+    background 120ms ease;
 }
 .page-body.dir-col > .split-drop {
   top: auto;
-  left: 0;
+  left: 8px;
   width: auto;
   height: 26%;
-  border-left: none;
-  border-top: 1px dashed transparent;
+  transform: translateY(12px);
 }
-body.tree-drag .split-drop { pointer-events: auto; opacity: 0.5; }
-body.tree-drag .split-drop:hover {
+body.tree-drag .split-drop {
+  pointer-events: auto;
+  opacity: 0.85;
+  transform: none;
+  animation: drop-breathe 1.6s ease-in-out infinite;
+}
+/* Lit from the drag handlers' own hit-testing, never CSS :hover — WKWebView
+   does not reliably re-hover while a mouse button is held. */
+body.tree-drag .split-drop.drop-hot {
   opacity: 1;
-  background: var(--raised);
-  border-color: var(--rule-strong);
+  border-color: var(--ink-2);
+  background: var(--paper);
+  animation: none;
+}
+body.tree-drag .split-drop.drop-hot .split-drop-hint { color: var(--ink); }
+@keyframes drop-breathe {
+  0%, 100% { border-color: var(--rule-strong); }
+  50% { border-color: var(--ink-3); }
 }
 .split-drop-hint {
   font-family: var(--mono);
@@ -2735,6 +2755,7 @@ body.tree-drag .split-drop:hover {
   text-transform: uppercase;
   letter-spacing: 0.08em;
   color: var(--ink-3);
+  transition: color 120ms ease;
 }
 /* A drag over a pane it can land in says so, in the same dashed voice as
    the drop strip — the split for anything coming from the left or the tree,
@@ -2744,9 +2765,14 @@ body.tree-drag.from-main .split-host {
   outline: 2px dashed var(--rule-strong);
   outline-offset: -4px;
 }
-body.tree-drag.from-main .split-host:hover { outline-color: var(--ink-2); }
+body.tree-drag.from-main .split-host.drop-hot { outline-color: var(--ink-2); }
 body.tree-drag.from-split .main-pane {
   outline: 2px dashed var(--rule-strong);
   outline-offset: -4px;
 }
-body.tree-drag.from-split .main-pane:hover { outline-color: var(--ink-2); }
+body.tree-drag.from-split .main-pane.drop-hot { outline-color: var(--ink-2); }
+/* A tab held over the other pane's strip: the strip says it will take it. */
+body.tree-drag .tabs.drop-hot {
+  outline: 2px dashed var(--ink-2);
+  outline-offset: -2px;
+}

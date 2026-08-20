@@ -2376,6 +2376,15 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    /** The lit target, a class from here rather than CSS :hover — WKWebView
+        does not reliably re-hover while a button is held. */
+    let hot: HTMLElement | null = null;
+    const setHot = (el: HTMLElement | null) => {
+      if (hot === el) return;
+      hot?.classList.remove("drop-hot");
+      el?.classList.add("drop-hot");
+      hot = el;
+    };
     /** Insertion index in a strip from the pointer's x, by tab midpoints. */
     const indexIn = (strip: HTMLElement, x: number) => {
       const rects = [...strip.querySelectorAll<HTMLElement>(".tab")].map((el) =>
@@ -2388,6 +2397,7 @@ export default function App() {
     const clear = () => {
       tabPress.current = null;
       tabCarried.current = null;
+      setHot(null);
       document.body.classList.remove("tree-drag", "from-main", "from-split");
     };
     const move = (e: PointerEvent) => {
@@ -2403,8 +2413,18 @@ export default function App() {
         );
       }
       const it = tabCarried.current;
-      const strip = (document.elementFromPoint(e.clientX, e.clientY) as Element | null)
-        ?.closest<HTMLElement>("[data-strip]");
+      const at = document.elementFromPoint(e.clientX, e.clientY) as Element | null;
+      const strip = at?.closest<HTMLElement>("[data-strip]");
+      // Light whatever this tab could land on, as the pointer moves.
+      if (strip && strip.dataset.strip !== it.strip) {
+        setHot(strip);
+      } else if (!strip && it.strip === "main") {
+        setHot(at?.closest<HTMLElement>('[data-drop-pane="split"]') ?? null);
+      } else if (!strip && it.strip === "split") {
+        setHot(at?.closest<HTMLElement>(".main-pane") ?? null);
+      } else {
+        setHot(null);
+      }
       if (!strip || strip.dataset.strip !== it.strip) return;
       // Home strip: reorder live. The set for the other strip changes only
       // on release, because moving a pane's open document mid-drag would

@@ -44,7 +44,9 @@ async function dragToSplit(page: Page, source: ReturnType<Page["locator"]>) {
   // Before a split exists the dashed strip is the target; once one is open
   // the pane itself is, and the strip stays away — no third pane implied.
   if ((await page.locator(".split-pane").count()) === 0) {
-    await expect(page.locator(".split-drop")).toBeVisible();
+    // Lit by the drag's own hit-testing — not :hover, which WKWebView does
+    // not update while a button is held.
+    await expect(page.locator(".split-drop.drop-hot")).toBeVisible();
   } else {
     await expect(page.locator(".split-drop")).toHaveCount(0);
   }

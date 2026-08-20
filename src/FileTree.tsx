@@ -303,6 +303,18 @@ export const FileTree = memo(function FileTree(p: Props) {
   } | null>(null);
   /** Which drop target the pointer is currently over, resolved from the DOM. */
   const target = useRef<{ repo: string; dir: string } | { split: true } | null>(null);
+  /**
+   * The pane-target element currently under the drag, lit with a class from
+   * here rather than CSS :hover — WKWebView does not reliably re-hover while
+   * a button is held, which made the highlight come and go.
+   */
+  const hot = useRef<HTMLElement | null>(null);
+  const setHot = (el: HTMLElement | null) => {
+    if (hot.current === el) return;
+    hot.current?.classList.remove("drop-hot");
+    el?.classList.add("drop-hot");
+    hot.current = el;
+  };
   /** Swallow the click that follows a completed drag, so it doesn't open/toggle. */
   const didDrag = useRef(false);
 
@@ -327,6 +339,7 @@ export const FileTree = memo(function FileTree(p: Props) {
     // strip shares the `tree-drag` switch, and this handler fires on every
     // pointerup whether or not a tree drag was live.
     if (carried.current) document.body.classList.remove("tree-drag", "from-main");
+    setHot(null);
     carried.current = null;
     pressed.current = null;
     target.current = null;
@@ -387,9 +400,11 @@ export const FileTree = memo(function FileTree(p: Props) {
         ?.closest<HTMLElement>("[data-drop-key], [data-drop-pane]");
       if (spot?.dataset.dropPane === "split" && carried.current.kind === "file") {
         target.current = { split: true };
+        setHot(spot);
         setOver(null);
         return;
       }
+      setHot(null);
       const repo = spot?.dataset.dropRepo;
       const dir = spot?.dataset.dropDir;
       if (spot && repo !== undefined && dir !== undefined && allowed(carried.current, repo, dir)) {
