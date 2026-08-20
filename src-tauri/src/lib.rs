@@ -622,7 +622,7 @@ fn write_plan(
 }
 
 #[tauri::command]
-fn create_plan(repo: String, rel_path: String, title: String) -> R<()> {
+fn create_plan(repo: String, rel_path: String, title: String, status: Option<String>) -> R<()> {
     let p = safe_join(&repo, &rel_path)?;
     if p.exists() {
         return Err(format!("{rel_path} already exists"));
@@ -630,7 +630,23 @@ fn create_plan(repo: String, rel_path: String, title: String) -> R<()> {
     if let Some(parent) = p.parent() {
         std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
-    std::fs::write(&p, format!("# {title}\n\n")).map_err(|e| e.to_string())
+    /*
+     * A new plan starts with a status.
+     *
+     * Every plan acquires one eventually, and until it does it is invisible to
+     * everything that reads them — the tree's dot, the status filter, the
+     * ordering. Writing it at creation means the file is a plan from its first
+     * save rather than after someone remembers to say so.
+     *
+     * The word comes from the caller, because the vocabulary is a setting and
+     * not something this layer knows. Nothing is written when it has none,
+     * which keeps this useful for a file that is not a plan at all.
+     */
+    let head = match status.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+        Some(s) => format!("---\nstatus: {s}\n---\n"),
+        None => String::new(),
+    };
+    std::fs::write(&p, format!("{head}# {title}\n\n")).map_err(|e| e.to_string())
 }
 
 /// Make a folder. It will be empty, and git will not record it until something
@@ -684,6 +700,43 @@ fn rename_plan(repo: String, from: String, to: String) -> R<()> {
         std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
     std::fs::rename(&a, &b).map_err(|e| e.to_string())
+}
+
+/**
+ * Copy a file into another repository.
+ *
+ * Every other command in this file takes one `(repo, rel_path)` pair, because
+ * every other operation happens inside one repository. This takes two, and the
+ * two are joined independently: each relative path is still resolved inside the
+ * root it was given, and neither root ever sees the other's path — so widening
+ * to two repositories does not widen what `safe_join` will let through.
+ *
+ * A copy rather than a rename, and not only because the source is wanted where
+ * it is. `std::fs::rename` fails with `EXDEV` across filesystems, so two
+ * repositories on different volumes would break in a way that reads like a
+ * permissions problem; and git has no notion of a rename between repositories
+ * anyway — the destination sees an addition, which is the truth.
+ *
+ * Files only. A folder's contents raise their own questions about what counts
+ * as inside it, and answering them is not needed to move a plan between two
+ * repositories.
+ */
+#[tauri::command]
+fn copy_plan(from_repo: String, from_rel: String, to_repo: String, to_rel: String) -> R<String> {
+    let a = safe_join(&from_repo, &from_rel)?;
+    let b = safe_join(&to_repo, &to_rel)?;
+    if a == b {
+        return Err("that is where it already is".into());
+    }
+    if b.exists() {
+        return Err(format!("{to_rel} already exists"));
+    }
+    if let Some(parent) = b.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    std::fs::copy(&a, &b).map_err(|e| e.to_string())?;
+    // The path it actually got, so the caller can open it without guessing.
+    Ok(to_rel)
 }
 
 #[tauri::command]
@@ -1234,6 +1287,7 @@ pub fn run() {
             create_plan,
             create_folder,
             rename_plan,
+            copy_plan,
             delete_plan,
             folder_census,
             delete_folder,
@@ -1334,6 +1388,26 @@ mod tests {
     #[test]
     fn the_empty_path_is_the_repository_itself() {
         assert_eq!(safe_join("/repo", "").unwrap(), PathBuf::from("/repo"));
+    }
+
+    /*
+     * `copy_plan` is the one command with two repositories, and the thing worth
+     * asserting is that having two did not widen what gets through. Each side is
+     * joined inside its own root and neither root ever sees the other's path, so
+     * a hostile destination is refused exactly as a hostile source is — checked
+     * here against `safe_join` itself, since the rest of this module deliberately
+     * stays off the real filesystem.
+     */
+    #[test]
+    fn a_copy_cannot_write_outside_its_destination() {
+        let from = safe_join("/repo/one", "plan.md");
+        assert!(from.is_ok(), "an ordinary source must still be allowed");
+        for bad in ["../elsewhere/plan.md", "/etc/passwd", "a/../../out.md"] {
+            assert!(
+                safe_join("/repo/two", bad).is_err(),
+                "{bad} should not be allowed out of the destination repository",
+            );
+        }
     }
 
     // --- stamps: how a write knows the file did not move underneath it ------

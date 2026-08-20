@@ -1,5 +1,5 @@
 ---
-status: ready
+status: done
 ---
 # Plan Dependencies
 
@@ -80,7 +80,16 @@ that fits on one screen.
 
 ## Next
 
-- [ ] Decide whether sorting by `status:` alone is enough — try it first, since
-      it costs nothing
-- [ ] If not: `order:` through the existing frontmatter read, and the tree sort
+- [x] Decide whether sorting by `status:` alone is enough — try it first, since
+      it costs nothing. **Tried, and it is.** "Order files by" in settings and
+      in the palette switches the tree between name and status; the vocabulary
+      is the one already in settings, so "first" means first in your list, and
+      a file with an unrecognised status or none at all sorts last. Ordering
+      applies inside each folder, which is the only place a sequence means
+      anything — a repo-wide order across unrelated folders does not.
+- [ ] `order:` is **not** being added. The whole argument for it was that
+      `status:` might not carry enough sequence; it does, it costs no new field,
+      and unlike a hand-maintained integer it cannot drift out of step with
+      itself. Reopen this only if a real folder wants an order that its
+      statuses genuinely cannot express.
 - [ ] Leave `needs:` alone until a plan is genuinely hard to find without it

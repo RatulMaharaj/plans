@@ -33,7 +33,7 @@ pub fn answer(perms: &Pending, request_id: &str, option_id: Option<String>) {
 }
 
 /// Give up on every outstanding question at once.
-pub fn cancel_all(perms: &Pending, _repo: &str) {
+pub fn cancel_all(perms: &Pending, _repo: &str, _chat: &str) {
     let waiting: Vec<_> = perms.lock().unwrap().drain().collect();
     for (_, tx) in waiting {
         let _ = tx.send(None);
@@ -50,14 +50,25 @@ pub fn cancel_all(perms: &Pending, _repo: &str) {
 pub async fn permission(
     app: AppHandle,
     repo: String,
+    chat: String,
     perms: Pending,
     req: RequestPermissionRequest,
     responder: Responder<RequestPermissionResponse>,
 ) -> Result<(), agent_client_protocol::Error> {
     let raw = serde_json::to_value(&req).unwrap_or(json!({}));
+    /*
+     * The chat is in the id, not only the repository.
+     *
+     * A tool call id is the agent's, and unique within its own session — so
+     * two sessions in one repository can mint the same one. Keyed by
+     * repository alone, answering a question in one chat could resolve the
+     * identically-named question in the other: unreliable in exactly the case
+     * of two agents running, which is the case this is for.
+     */
     let request_id = format!(
-        "{}::{}",
+        "{}::{}::{}",
         repo,
+        chat,
         raw["toolCall"]["toolCallId"].as_str().unwrap_or("?")
     );
 
@@ -67,6 +78,7 @@ pub async fn permission(
         "agent-permission",
         json!({
             "repo": repo,
+            "chat": chat,
             "requestId": request_id,
             "title": raw["toolCall"]["title"],
             "options": raw["options"],
@@ -78,7 +90,7 @@ pub async fn permission(
     let chosen = rx.await.ok().flatten();
     let _ = app.emit(
         "agent-permission-done",
-        json!({ "repo": repo, "requestId": request_id, "chosen": chosen }),
+        json!({ "repo": repo, "chat": chat, "requestId": request_id, "chosen": chosen }),
     );
     match chosen {
         Some(id) => responder.respond(RequestPermissionResponse::new(
@@ -105,7 +117,7 @@ mod tests {
         let (tx, rx) = oneshot::channel();
         perms.lock().unwrap().insert("r::t1".into(), tx);
 
-        cancel_all(&perms, "r");
+        cancel_all(&perms, "r", "c");
 
         // Answered, and answered with "no" — not left hanging, and not
         // silently allowed.
@@ -126,7 +138,7 @@ mod tests {
         assert_eq!(rx2.await.unwrap(), Some("allow".into()));
         // The other is untouched, not collaterally cancelled.
         assert_eq!(perms.lock().unwrap().len(), 1);
-        cancel_all(&perms, "r");
+        cancel_all(&perms, "r", "c");
         assert_eq!(rx1.await.unwrap(), None);
     }
 

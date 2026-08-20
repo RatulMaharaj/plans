@@ -1,5 +1,5 @@
 ---
-status: ready
+status: done
 ---
 # Several Agents At Once, And A Shelf For Finished Ones
 
@@ -56,6 +56,53 @@ decided by a timer — the state is a fact about a process, not a policy.
   block silently. Probably: the picker marks the chat as waiting, the same way
   the tree marks a changed file.
 
+## What a spec pass turned up
+
+Specifying this properly found six things the plan does not mention, each of
+which breaks the moment the four `agentStop` calls are removed. They are
+recorded here because they are the actual work, and none of them is visible
+from the plan as written:
+
+- **Narration is routed through a single `turn` ref** (`ChatPanel.tsx`), and
+  the key effect nulls it on every chat switch. Stop killing the session on
+  switch and every message, thought, tool line and turn-end for the chat you
+  left is discarded permanently — including after switching back. Routing has
+  to move onto the chat id before anything else in this plan is safe.
+- **`/clear` becomes a process leak.** It routes to `onNewChat`, whose comment
+  says the session ends with it. Once that is no longer true, four characters
+  start a fresh chat and leave a `node` behind that nothing can reach or stop.
+- **Permission request ids are `repo::toolCallId`.** Two sessions in one repo
+  can mint the same tool call id, so an answer can resolve the wrong chat's
+  request — unreliable exactly when two agents run.
+- **`agent-usage` carries only a repo**, and the state is keyed by repo, so two
+  live sessions overwrite each other's reading and the status bar shows
+  whichever spoke last, mislabelled. That is a bug regardless of which usage
+  the bar is meant to show.
+- **Per-chat `busy` is not just the flag.** The send guard and the single Stop
+  button are both bound to the one turn in flight, so a turn running in one
+  chat still blocks the composer in another.
+- **`agent-down` had no way to say which session it was about.** Fixed already
+  — see Next — because it was a bug before this plan.
+
+## The decisions, and what they were
+
+Recorded because they were the argument, not because they were hard:
+
+- **Deleting a chat stops its agent.** Forgetting a transcript while its process
+  keeps running leaves an agent nobody can reach, read or stop, which is the one
+  thing this app promises not to leave behind. The plan's worry about an agent
+  killed halfway is about *closing*, and closing is not something a chat has.
+- **`/clear` stops the session it clears**, which is only what it already did —
+  it routes to New chat, and New chat used to end things. The stop is explicit
+  now rather than a side effect of how sessions were keyed.
+- **Stop belongs to the chat it is in.** This plan said so already.
+- **Usage is the focused chat's.** Not really a choice: keyed by repository, two
+  sessions overwrote each other, so the bar was showing whichever spoke last
+  under a label that said otherwise. That was a bug either way.
+- **No ceiling, for now.** The plan asked for "a ceiling, or at least a count
+  that is visible". The count is visible. A limit needs a number, and there is
+  no evidence yet for what it is.
+
 ## Open questions
 
 - Is the unit a chat, or a plan? A chat is what exists now, but "run the agent
@@ -76,7 +123,26 @@ decided by a timer — the state is a fact about a process, not a policy.
 
 ## Next
 
-- [ ] Per-session turn state, replacing the `CURRENT_TURN` global
-- [ ] `(repo, chat)` keying through the commands and the events
-- [ ] Per-chat `busy`, and a visible count of what is running
-- [ ] Active/archived grouping in the picker and in `#`
+- [x] A generation number per session, carried on `agent-ready` and on
+      `agent-down`. Not part of the rekeying, but the same question asked
+      earlier: the two `agent-down` emits for one stop were indistinguishable,
+      so a stopped session's farewell cleared a *running* session's turn and
+      its answer went nowhere. Fixed and tested ahead of the rest, because it
+      is a bug today rather than only under two agents
+- [x] Per-session turn state, replacing the `CURRENT_TURN` global
+- [x] `(repo, chat)` keying through the commands and the events
+- [x] Per-chat `busy`, and a visible count of what is running
+- [x] Active/archived grouping in the picker and in `#`
+- [x] The five things the spec pass turned up above: narration routed on the
+      chat rather than on a single turn ref, `/clear` stopping the session it
+      clears, chat-unique permission ids, usage keyed per conversation, and the
+      send guard and Stop button belonging to the chat they are in
+
+Left for when there is evidence it is wanted:
+
+- [ ] A ceiling on how many agents may run at once. The count is visible, which
+      is what this plan asked for; a limit needs a number, and a number without
+      a real machine slowing down is a guess.
+- [ ] A "waiting" mark for a permission request in a chat you are not looking
+      at. The request now waits in its own transcript rather than being lost,
+      so this is a way of noticing sooner rather than a way of not losing it.

@@ -50,6 +50,27 @@ export function loadIndex(repo: string): Index {
   return made;
 }
 
+/**
+ * What a repository's index says, without inventing one.
+ *
+ * `loadIndex` writes the empty index it makes up, and has to — that write is
+ * what stops two callers minting different ids for the same empty state. But
+ * that is the right behaviour only for the repository being worked in. The
+ * palette merely *reads* the others, and a look at a list should not leave a
+ * "New chat" behind in every repository you have ever opened.
+ */
+export function peekIndex(repo: string): Index | null {
+  try {
+    const raw = localStorage.getItem(indexKey(repo));
+    if (!raw) return null;
+    const i = JSON.parse(raw) as Index;
+    if (i.current && Array.isArray(i.list) && i.list.length) return i;
+  } catch {
+    // As above: a malformed index is no index, not a crash.
+  }
+  return null;
+}
+
 /** A conversation nobody has said anything in yet. */
 export function started(prev: Index): Index {
   const id = newId();

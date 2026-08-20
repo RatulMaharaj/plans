@@ -75,6 +75,10 @@ repo's file, and keep Diff.
 
 ## Next
 
+- [x] The half that needs none of this: a file can be dragged from one open
+      repository into another, which is a copy rather than a move. `copy_plan`
+      takes two `(repo, relPath)` pairs and joins each inside its own root, so
+      widening to two repositories widened nothing else
 - [ ] Decide the `dragDropEnabled` trade, and what rebuilding the tree's drag
       would cost
 - [ ] A dropped file as `(dir, name)`, reusing the memory-buffer plumbing

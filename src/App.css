@@ -306,6 +306,9 @@ button, .rail, .bar, .tabs, .ctx {
   margin-left: 6px;
   color: var(--git-mod);
 }
+/* Agents running, which is not a git colour: the one above is load-bearing
+   where it is, and this count means something else entirely. */
+.rail-btn .count.live { color: var(--ink); }
 
 /* ===========================================================================
    Files — the tree
@@ -1756,6 +1759,15 @@ body.resizing.resizing-row, body.resizing.resizing-row .chat-edge { cursor: row-
 .tab.new .tab-name { color: var(--git-new); }
 .tab.mod .tab-name { color: var(--git-mod); }
 .tab.staged .tab-name { color: var(--git-staged); }
+
+/* Changed on disk while you were elsewhere. A dot rather than a colour: the
+   colours above belong to git, and this is a different kind of news — nothing
+   is wrong, the file simply is not the one you last read. */
+.tab.outside .tab-name::after {
+  content: "\2022";
+  margin-left: 6px;
+  color: var(--git-mod);
+}
 
 .tab-close {
   border: 0;

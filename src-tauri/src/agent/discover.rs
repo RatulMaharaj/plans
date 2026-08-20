@@ -87,6 +87,20 @@ pub struct Known {
     pub bin: Option<&'static str>,
     /// The npm package to install, for the agents that come from npm.
     pub package: Option<&'static str>,
+    /// Where this agent looks for a repository's conventions.
+    ///
+    /// Repository-relative, and a list because some agents read more than one
+    /// place. The app has exactly one text to install — the conventions are the
+    /// same conventions whoever is reading them — so all that differs between
+    /// agents is where a copy goes, which is what this table is.
+    ///
+    /// Two kinds of path live here and they are not written the same way. A
+    /// file under a tool's own dotted directory belongs to the app and is
+    /// replaced outright; a file at the root of the repository belongs to the
+    /// *repository*, may already say things the app knows nothing about, and
+    /// only ever has its own section rewritten. The frontend decides which is
+    /// which from the path, so nothing here has to carry a flag.
+    pub conventions: &'static [&'static str],
 }
 
 /// The agents worth offering, in the order they are offered.
@@ -105,6 +119,7 @@ pub const KNOWN: &[Known] = &[
         auth: "Run `claude` in a terminal once and sign in.",
         bin: Some("claude-agent-acp"),
         package: Some("@agentclientprotocol/claude-agent-acp@0.70.0"),
+        conventions: &[".claude/skills/plans/SKILL.md"],
     },
     Known {
         id: "codex",
@@ -115,6 +130,7 @@ pub const KNOWN: &[Known] = &[
         auth: "Run `codex` in a terminal once and sign in.",
         bin: Some("codex-acp"),
         package: Some("@agentclientprotocol/codex-acp"),
+        conventions: &["AGENTS.md"],
     },
     Known {
         id: "gemini",
@@ -125,6 +141,7 @@ pub const KNOWN: &[Known] = &[
         auth: "Run `gemini` in a terminal once to sign in, or set GEMINI_API_KEY.",
         bin: None,
         package: Some("@google/gemini-cli"),
+        conventions: &["GEMINI.md"],
     },
     Known {
         id: "opencode",
@@ -135,6 +152,7 @@ pub const KNOWN: &[Known] = &[
         auth: "Run `opencode auth login` in a terminal.",
         bin: None,
         package: None,
+        conventions: &["AGENTS.md"],
     },
 ];
 
@@ -160,6 +178,8 @@ pub struct AgentFound {
     pub installed: bool,
     /// Whether the app can install it for you.
     pub installable: bool,
+    /// Where this agent reads a repository's conventions.
+    pub conventions: Vec<String>,
 }
 
 pub fn find(id: &str) -> Option<&'static Known> {
@@ -205,6 +225,7 @@ pub fn agent_list() -> Vec<AgentFound> {
                 },
                 installed,
                 installable: k.package.is_some() && !installed,
+                conventions: k.conventions.iter().map(|c| (*c).to_string()).collect(),
             }
         })
         .collect()

@@ -335,6 +335,126 @@ test("a new folder appears, and holds a file", async ({ page }) => {
       page.evaluate(() => Object.keys((window as any).__fake.repos[0].files)),
     )
     .toContain("ideas/first-idea.md");
+
+  /*
+   * And it is a plan from its first save.
+   *
+   * Without a status a file is invisible to everything that reads plans — the
+   * tree's dot, the status filter, the ordering — until someone remembers to
+   * add one. The word is the first of the configured vocabulary.
+   */
+  const made = await page.evaluate(
+    () => (window as any).__fake.repos[0].files["ideas/first-idea.md"] as string,
+  );
+  expect(made.startsWith("---\nstatus: draft\n---\n")).toBe(true);
+});
+
+/**
+ * Naming a file used to leave you looking at it rather than writing in it.
+ *
+ * The assertion is deliberately about typing rather than about focus: what a
+ * reader wants is for the next keystroke to land in the new document, and
+ * `document.activeElement` agreeing without the text arriving would be the
+ * harness agreeing with the code and nothing more.
+ */
+test("a new file is ready to type in", async ({ page }) => {
+  await open(page);
+  await page.locator(".row.repo").first().click({ button: "right" });
+  await page.locator(".ctx-item", { hasText: "New file here" }).click();
+  await page.locator(".name-field").fill("Straight in");
+  await page.keyboard.press("Enter");
+
+  await expect(page.locator(".ProseMirror")).toContainText("Straight in");
+  await page.keyboard.type("first words");
+  await expect(page.locator(".ProseMirror")).toContainText("first words");
+});
+
+/** The other half: opening something to read it must not take the cursor. */
+test("opening a file does not steal the cursor", async ({ page }) => {
+  await open(page);
+  await page.locator(".row.file").first().click();
+  await expect(page.locator(".ProseMirror")).toBeVisible();
+  await page.locator(".row.file").nth(1).click();
+  expect(
+    await page.evaluate(() => !!document.activeElement?.closest(".ProseMirror")),
+  ).toBe(false);
+});
+
+/**
+ * The one file operation that is not a move.
+ *
+ * Within a repository, dragging is a rename and git follows the history. Across
+ * two of them there is no history to follow, so the original has to survive —
+ * which is the assertion that matters here, more than the arrival.
+ */
+test("a file dragged into another repository is copied, not moved", async ({ page }) => {
+  await open(page);
+  const file = page.locator(".row.file", { hasText: "first" }).first();
+  const other = page.locator(".row.repo", { hasText: "two" }).first();
+  await file.dragTo(other);
+
+  await expect
+    .poll(async () =>
+      page.evaluate(() => Object.keys((window as any).__fake.repos[1].files)),
+    )
+    .toContain("first.md");
+  // Still where it was.
+  expect(
+    await page.evaluate(() => Object.keys((window as any).__fake.repos[0].files)),
+  ).toContain("first.md");
+});
+
+/**
+ * The plans folder in some order other than the alphabet.
+ *
+ * `plan-dependencies.md` asks whether `status:` already implies enough sequence
+ * to be worth having, and says to try that before adding an `order:` field
+ * nobody would keep in step by hand. This is the trying.
+ */
+test("files can be ordered by status instead of by name", async ({ page }) => {
+  await open(page, [
+    {
+      path: "/repo/one",
+      name: "one",
+      branch: "main",
+      files: {
+        "aardvark.md": "---\nstatus: done\n---\n# Aardvark\n",
+        "zebra.md": "---\nstatus: draft\n---\n# Zebra\n",
+        "plain.md": "# Plain\n",
+      },
+    },
+  ]);
+
+  const names = () =>
+    page.locator(".row.file .row-name").allTextContents();
+
+  expect(await names()).toEqual(["aardvark.md", "plain.md", "zebra.md"]);
+
+  await page.keyboard.press("Meta+p");
+  await page.locator(".palette-input").fill(">order files by status");
+  await expect(page.locator(".palette-row").first()).toContainText(/order files by status/i);
+  await page.keyboard.press("Enter");
+
+  // draft before done, per the configured vocabulary; the file with no status
+  // at all comes last, so adopting this can be partial.
+  await expect.poll(names).toEqual(["zebra.md", "aardvark.md", "plain.md"]);
+});
+
+/** ⌃Tab, the binding every tabbed application has. */
+test("ctrl-tab cycles through the open buffers", async ({ page }) => {
+  await open(page);
+  await fileRow(page, "first").click();
+  await fileRow(page, "second").click();
+  await expect(page.locator(".page-path")).toHaveText("notes/second.md");
+
+  await page.keyboard.press("Control+Tab");
+  await expect(page.locator(".page-path")).toHaveText("first.md");
+  // And wraps, rather than stopping at the end.
+  await page.keyboard.press("Control+Tab");
+  await expect(page.locator(".page-path")).toHaveText("notes/second.md");
+
+  await page.keyboard.press("Control+Shift+Tab");
+  await expect(page.locator(".page-path")).toHaveText("first.md");
 });
 
 test("a file can be dragged into a folder", async ({ page }) => {
@@ -475,6 +595,56 @@ test("frontmatter survives when it is left in the editor", async ({ page }) => {
   // Not a thematic break and a setext heading, which is what it used to become.
   expect(text, "the closing fence must stay a fence").not.toContain("-----");
   expect(faults, faults.join("\n")).toEqual([]);
+});
+
+/**
+ * Zooming inside the figure is looking closer at something framed to the size
+ * of a paragraph, which is the wrong size for the diagrams that most need
+ * looking at. Maximising is the same picture with room to read it.
+ */
+test("a diagram can be maximised, and escaped", async ({ page }) => {
+  await open(page, [
+    {
+      path: "/repo/one",
+      name: "one",
+      branch: "main",
+      files: { "chart.md": "# Chart\n\n```mermaid\nflowchart LR\n  A --> B\n```\n" },
+    },
+  ]);
+  await fileRow(page, "chart").click();
+  await expect(page.locator(".mermaid-figure svg")).toBeVisible({ timeout: 20000 });
+
+  await page.locator('.mermaid-figure [aria-label="Maximise the diagram"]').click();
+
+  // Its own copy, outside the editor entirely — the figure clips its overflow,
+  // and anything inside the editor's DOM is something ProseMirror owns.
+  const full = page.locator(".mermaid-scrim .mermaid-full svg");
+  await expect(full).toBeVisible({ timeout: 20000 });
+  expect(await page.locator(".mermaid-figure svg").count()).toBe(1);
+
+  /*
+   * The same controls look the same in both places.
+   *
+   * Crepe ships `.milkdown button { border-style: none; background: none }`,
+   * which is a class and an element and so outranks a bare class of ours. The
+   * buttons inside the editor lost their border and their face while the
+   * maximised copy — which lives outside `.milkdown` — kept both, so the same
+   * button read as a button in one place and as bare text in the other.
+   */
+  const face = (sel: string) =>
+    page.evaluate((s) => {
+      const c = getComputedStyle(document.querySelector(s) as HTMLElement);
+      return { bg: c.backgroundColor, border: c.borderTopWidth, style: c.borderTopStyle };
+    }, sel);
+  const outside = await face(".mermaid-full .mermaid-tool");
+  expect(outside.style).toBe("solid");
+
+  await page.keyboard.press("Escape");
+  await expect(page.locator(".mermaid-scrim")).toHaveCount(0);
+  // Escape closed the diagram and nothing else: zen is a different Escape.
+  await expect(page.locator(".mermaid-figure svg")).toBeVisible();
+
+  expect(await face(".mermaid-figure .mermaid-tool")).toEqual(outside);
 });
 
 test("a diagram is redrawn when the paper changes", async ({ page }) => {

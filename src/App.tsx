@@ -16,6 +16,7 @@ import { ChatPanel } from "./ChatPanel";
 import {
   loadIndex as loadChats,
   saveIndex as saveChats,
+  peekIndex as peekChats,
   sizeOf as chatSize,
   started as startedChat,
   without as chatWithout,
@@ -24,7 +25,7 @@ import {
 import { agentCommandLine, HANDOFF_PROMPT } from "./agent";
 import { DiffView } from "./DiffView";
 import { SettingsPage } from "./SettingsPage";
-import { installSkill, skillState, type SkillState } from "./skill";
+import { installConventions, skillState, type SkillState } from "./skill";
 import { Palette } from "./Palette";
 import { Dropdown } from "./Dropdown";
 import { FileTree, displayName, MARK_WORD, type Mark } from "./FileTree";
@@ -239,6 +240,20 @@ export default function App() {
    * copy of the file — there is only ever one buffer, and it is the file.
    */
   const [tabs, setTabs] = useState<Tab[]>(() => stored<Tab[]>(KEY.tabs, []));
+
+  /**
+   * What each open buffer looked like on disk when we last read it.
+   *
+   * Keyed `repo::path`, and deliberately separate from `stamp` — that one is
+   * about the buffer being edited, this one is about the tabs you are *not*
+   * looking at. A file open in another tab that an agent or a `git checkout`
+   * rewrites used to change with nothing said: only the active file was ever
+   * stat'd, so the news arrived whenever you happened to click back.
+   */
+  const tabStamps = useRef<Map<string, string>>(new Map());
+
+  /** Open buffers whose file has changed on disk since we read it. */
+  const [outside, setOutside] = useState<Set<string>>(new Set());
   /** The mode belongs to the buffer, so it is a derivation of the tab, not
    *  state of its own — which is also what makes it survive a restart. */
   const view: View =
@@ -993,26 +1008,94 @@ export default function App() {
   );
 
   /**
-   * Start again. The agent's session ends with the chat rather than outliving
-   * it: a new conversation the agent still remembers the old one from would be
-   * a new conversation in name only.
+   * Start again.
+   *
+   * Nothing is ended. A new conversation is a new key, so whatever was running
+   * carries on in the chat it belongs to — which is the point: setting an agent
+   * going on a long job and starting a second while it works is the ordinary
+   * thing this used to make impossible.
    */
   const newChat = useCallback(() => {
-    if (activeRepoPath) void api.agentStop(activeRepoPath).catch(() => {});
     putChats(startedChat(chats));
     set({ showMux: true });
-  }, [activeRepoPath, chats, putChats, set]);
+  }, [chats, putChats, set]);
 
   const openChat = useCallback(
     (id: string) => {
       if (id === chats.current) return;
-      // Leaving a conversation ends its session too: the agent holds one
-      // context, and it belongs to whichever chat is on screen.
-      if (activeRepoPath) void api.agentStop(activeRepoPath).catch(() => {});
+      // Only a change of which transcript is on screen. The conversation you
+      // are leaving keeps its session, and keeps answering into its own
+      // transcript while you read another.
       putChats({ ...chats, current: id });
       set({ showMux: true });
     },
-    [activeRepoPath, chats, putChats, set],
+    [chats, putChats, set],
+  );
+
+  /**
+   * Every open repository's conversations, for the palette's "all" scope.
+   *
+   * Read from storage rather than held in state. Only one repository's chats
+   * are ever being written, so re-reading a handful of keys is cheaper than
+   * keeping every index in step with the one that moves — and it goes through
+   * `peekIndex`, never `loadIndex`, because reading a list must not seed a
+   * "New chat" in a repository nobody has spoken to.
+   *
+   * The active repository comes from `chats` instead, which is the one copy
+   * that can be ahead of what is written. It is appended separately when it is
+   * not among the repos at all, which is the case while a memory buffer is
+   * open — otherwise turning the setting on would *lose* the conversation you
+   * are actually in.
+   */
+  const allChats = useMemo(() => {
+    const out = repos.flatMap((r) => {
+      const i = r.path === activeRepoPath ? chats : peekChats(r.path);
+      return (i?.list ?? []).map((c) => ({
+        repoPath: r.path,
+        repoName: r.name,
+        chat: c,
+        local: r.path === activeRepoPath,
+        current: c.id === i?.current,
+      }));
+    });
+    if (activeRepoPath && !repos.some((r) => r.path === activeRepoPath)) {
+      out.push(
+        ...chats.list.map((c) => ({
+          repoPath: activeRepoPath,
+          repoName: "",
+          chat: c,
+          local: true,
+          current: c.id === chats.current,
+        })),
+      );
+    }
+    return out;
+  }, [repos, activeRepoPath, chats]);
+
+  /**
+   * Open a conversation belonging to another repository.
+   *
+   * A chat is not something you can look at from outside its repository: the
+   * transcript is keyed by repo, the agent is started in it, and the plans it
+   * talks about are there. So going to one is going to the repository, and the
+   * window follows.
+   *
+   * The target's index is written *before* the switch, because reloading the
+   * index is exactly what switching does — write it after and the effect that
+   * follows the active repo would put that repo's previous chat back.
+   */
+  const openChatIn = useCallback(
+    (repoPath: string, id: string) => {
+      if (repoPath === activeRepoPath) return openChat(id);
+      const i = peekChats(repoPath);
+      // Its index vanished between the palette reading it and this click.
+      // Better to do nothing than to switch and mint a new conversation.
+      if (!i) return;
+      saveChats(repoPath, { ...i, current: id });
+      setActiveRepoPath(repoPath);
+      set({ showMux: true });
+    },
+    [activeRepoPath, openChat, set],
   );
 
   /**
@@ -1028,7 +1111,15 @@ export default function App() {
       const held = chatSize(activeRepoPath, id);
       const name = chats.list.find((c) => c.id === id)?.title ?? "this chat";
       if (held > 0 && !(await confirmed(`Delete “${name}”?`, { ok: "Delete" }))) return;
-      if (id === chats.current) void api.agentStop(activeRepoPath).catch(() => {});
+      /*
+       * Its session goes with it, whether or not it was the one on screen.
+       *
+       * This is now the only navigation that ends anything, and it has to:
+       * forgetting a transcript while its process keeps running leaves an
+       * agent nobody can reach, read or stop — which is the one thing this app
+       * promises not to leave behind.
+       */
+      void api.agentStop(activeRepoPath, id).catch(() => {});
       putChats(chatWithout(activeRepoPath, chats, id));
     },
     [activeRepoPath, chats, putChats],
@@ -1077,23 +1168,87 @@ export default function App() {
     [activeRepoPath],
   );
 
+  /**
+   * Which conversations have a live agent behind them.
+   *
+   * Not a policy and not a timer: a chat is active because a process exists and
+   * archived because it does not, which is a fact only the session can report.
+   * So it is recorded as the events arrive rather than inferred from what was
+   * last clicked — and it is held here rather than in the panel, because the
+   * panel can be closed while its agents carry on working.
+   *
+   * Nothing is restored on launch. A persisted "active" would be a claim about
+   * a process that is not running: quitting leaves none behind.
+   */
+  const [running, setRunning] = useState<Record<string, number>>({});
+  const runningCount = Object.keys(running).length;
+
   useEffect(() => {
-    const off = listen<{ repo: string; used: number; size: number; cost?: number }>(
+    const up = listen<{ repo: string; chat: string; gen: number }>("agent-ready", (e) => {
+      const { repo, chat, gen } = e.payload;
+      setRunning((prev) => ({ ...prev, [`${repo}::${chat}`]: gen }));
+    });
+    const gone = listen<{ repo: string; chat: string; gen: number }>("agent-down", (e) => {
+      const { repo, chat, gen } = e.payload;
+      setRunning((prev) => {
+        const k = `${repo}::${chat}`;
+        // A farewell from a session already replaced by a newer one.
+        if (!(k in prev) || (gen && gen < prev[k])) return prev;
+        const next = { ...prev };
+        delete next[k];
+        return next;
+      });
+    });
+    return () => {
+      void up.then((f) => f());
+      void gone.then((f) => f());
+    };
+  }, []);
+
+  useEffect(() => {
+    /*
+     * Keyed by conversation, not by repository.
+     *
+     * Two sessions in one repository were writing over each other's reading,
+     * so the bar showed whichever had spoken last under a label that said it
+     * was the repository's. It shows the focused chat's, which is the one
+     * whose context window the number is actually about.
+     */
+    const off = listen<{ repo: string; chat: string; used: number; size: number; cost?: number }>(
       "agent-usage",
       (e) => {
-        const { repo, used, size, cost } = e.payload;
-        setUsage((prev) => ({ ...prev, [repo]: { used, size, cost } }));
+        const { repo, chat, used, size, cost } = e.payload;
+        setUsage((prev) => ({ ...prev, [`${repo}::${chat}`]: { used, size, cost } }));
       },
     );
     return () => void off.then((f) => f());
   }, []);
   const [skills, setSkills] = useState<Record<string, SkillState>>({});
 
+  /**
+   * Where the agents on this machine read a repository's conventions.
+   *
+   * Held in a ref as well as in state. `readInstalls` needs the answer in the
+   * same pass that fetches it, and making it depend on the `agents` state
+   * instead would be a loop: the fetch replaces the array, the new array
+   * changes the callback, and the effect that calls it fires again forever.
+   */
+  const agentPaths = useRef<string[]>([]);
+
   const readInstalls = useCallback(async () => {
     api.cliStatus().then(setCli, () => setCli(null));
-    api.agentList().then(setAgents, () => setAgents([]));
+    const found = await api.agentList().catch(() => [] as AgentFound[]);
+    setAgents(found);
+    /*
+     * Only the agents this machine actually has. Writing `GEMINI.md` into a
+     * repository for someone who has never run Gemini is litter — a file
+     * nothing will read, arriving in their git status with no explanation.
+     */
+    agentPaths.current = [
+      ...new Set(found.filter((a) => a.ready).flatMap((a) => a.conventions)),
+    ];
     for (const r of repos) {
-      void skillState(r.path).then((st) =>
+      void skillState(r.path, agentPaths.current).then((st) =>
         setSkills((prev) => (prev[r.path] === st ? prev : { ...prev, [r.path]: st })),
       );
     }
@@ -1372,6 +1527,24 @@ export default function App() {
     [activeRepo, activePath, content, flush, settings.autosave, settings.autosaveDelay],
   );
 
+  /**
+   * The order the tree puts files in, when it is ordered by status at all.
+   *
+   * Lowercased here rather than at the comparison, so the tree does one cheap
+   * `indexOf` per file instead of a case fold per file per render. Empty when
+   * the setting is off, which is also what tells the tree to order by name.
+   */
+  const statusOrder = useMemo(
+    () =>
+      settings.treeSort === "status"
+        ? settings.statuses
+            .split(",")
+            .map((x) => x.trim().toLowerCase())
+            .filter(Boolean)
+        : [],
+    [settings.treeSort, settings.statuses],
+  );
+
   /** The palette's status choices, from settings — a convention, not a schema. */
   const statusChoices = useMemo(
     () =>
@@ -1436,6 +1609,15 @@ export default function App() {
       try {
         const { content: text, stamp: at } = await api.readPlan(repoPath, relPath);
         stamp.current = at;
+        // Reading it is the answer to "has this changed since I read it".
+        tabStamps.current.set(`${repoPath}::${relPath}`, at);
+        setOutside((prev) => {
+          const key = `${repoPath}::${relPath}`;
+          if (!prev.has(key)) return prev;
+          const next = new Set(prev);
+          next.delete(key);
+          return next;
+        });
         setConflict(null);
         // With the block turned off the YAML simply stays in the prose, where
         // the editor can still reach it — hidden and uneditable would be worse.
@@ -1547,6 +1729,76 @@ export default function App() {
   openFileRef.current = openFile;
 
   /**
+   * Watch the buffers you are *not* looking at.
+   *
+   * The stamp poll above only ever stat'd `activePath`, so a plan open in
+   * another tab could be rewritten underneath the app — by an agent, or by a
+   * `git checkout` — and nothing would say so. You found out by clicking the
+   * tab, which is the worst moment to be told: the change is old by then, and
+   * if the buffer had unsaved work it raised a conflict about an edit that
+   * happened minutes ago.
+   *
+   * A background tab holds no text — switching to one re-reads from disk — so
+   * there is nothing to reload and nothing to lose. What was missing was only
+   * the *telling*, which is why this marks the tab rather than acting on it.
+   *
+   * Deliberately on the slow tick. The tree walk is staggered the same way
+   * (`SLOW`) because polling every open file at the watch interval is how the
+   * app got slow the last time; a `stat` per tab every few seconds is cheap,
+   * but it is not free and nothing here is urgent.
+   */
+  useEffect(() => {
+    if (settings.watchSeconds <= 0) return;
+    let n = 0;
+    const t = setInterval(async () => {
+      if (++n % SLOW !== 0) return;
+      const watching = tabs.filter(
+        (b) =>
+          b.repo !== MEMORY &&
+          !(b.repo === activeRepoPath && b.path === activePath),
+      );
+      // Tabs that have gone keep no stamp; otherwise the map grows forever.
+      const live = new Set(tabs.map((b) => `${b.repo}::${b.path}`));
+      for (const key of [...tabStamps.current.keys()]) {
+        if (!live.has(key)) tabStamps.current.delete(key);
+      }
+      if (!watching.length) return;
+      const seen = await Promise.all(
+        watching.map(async (b) => {
+          const at = await api.statPlan(b.repo, b.path).catch(() => null);
+          return { key: `${b.repo}::${b.path}`, at };
+        }),
+      );
+      setOutside((prev) => {
+        const next = new Set(prev);
+        let moved = false;
+        for (const { key, at } of seen) {
+          /*
+           * `absent` is a stamp like any other to a string comparison, and
+           * treating it as one is what once made a renamed file unwritable.
+           * A file that is gone is not a file that changed, and a tab for it
+           * is a separate question this poll does not answer.
+           */
+          if (!at || at === "absent") continue;
+          const was = tabStamps.current.get(key);
+          if (was === undefined) {
+            // First sight of this tab: adopt what is there rather than
+            // announcing a change we have no baseline for.
+            tabStamps.current.set(key, at);
+            continue;
+          }
+          if (was === at || next.has(key)) continue;
+          next.add(key);
+          moved = true;
+        }
+        return moved ? next : prev;
+      });
+    }, Math.max(1, settings.watchSeconds) * 1000);
+    return () => clearInterval(t);
+  }, [tabs, activeRepoPath, activePath, settings.watchSeconds]);
+
+
+  /**
    * Open text the app is holding as a buffer, as though it were a file.
    *
    * No disk, no stamp, no tab restored on the next launch: it is a document
@@ -1606,6 +1858,28 @@ export default function App() {
     [openMemory],
   );
   openNotesRef.current = openNotes;
+
+  /**
+   * Step to the next buffer, or the previous one, wrapping at both ends.
+   *
+   * Shared by ⌃Tab and ⌘⌥←/→ rather than written twice: they are the same
+   * intent with two spellings, and the pair drifted apart the moment one of
+   * them learned something the other did not. A memory buffer is reopened from
+   * what the app is holding — it has no file to read, and sending it through
+   * `openFile` would fail to find one.
+   */
+  const cycleTab = useCallback(
+    (step: number) => {
+      if (tabs.length < 2) return;
+      const i = tabs.findIndex((t) => t.repo === activeRepoPath && t.path === activePath);
+      const next = tabs[(i + step + tabs.length) % tabs.length];
+      if (!next) return;
+      void (next.repo === MEMORY
+        ? openMemory(next.path, memoryDocs.current.get(next.path) ?? "")
+        : openFile(next.repo, next.path));
+    },
+    [tabs, activeRepoPath, activePath, openFile, openMemory],
+  );
 
   /** Close a buffer and step to whichever tab was next to it. */
   const closeTab = useCallback(
@@ -1753,15 +2027,31 @@ export default function App() {
     async (repoPath: string, relPath: string, title: string) => {
       setNaming(null);
       try {
-        await api.createPlan(repoPath, relPath, title);
+        // The first word of the configured vocabulary, which is what the
+        // frontmatter scaffold already treats as "not started yet".
+        await api.createPlan(repoPath, relPath, title, statusChoices[0] ?? "draft");
         await refreshFiles();
+        /*
+         * Ask for the cursor, rather than placing it.
+         *
+         * `openFile` resolving means the state change was requested, not that
+         * React has re-rendered and the editor has swapped its document — so a
+         * `focus()` after this line lands in the file you were reading before,
+         * which the swap then replaces. The editor honours the request once the
+         * new document has settled.
+         *
+         * Only here, never in `openFile`: clicking through the tree to read
+         * something and having the cursor land in it is how you type into a
+         * document you meant to skim.
+         */
+        htmlBridge.focusNext = true;
         await openFile(repoPath, relPath);
         void refreshStatus();
       } catch (e) {
         notify(String(e), "error");
       }
     },
-    [refreshFiles, refreshStatus, openFile, notify],
+    [refreshFiles, refreshStatus, openFile, notify, statusChoices],
   );
 
   /**
@@ -1945,6 +2235,36 @@ export default function App() {
       });
     },
     [fileAction, activeRepoPath, activePath, openFile],
+  );
+
+  /**
+   * Copy a file into another repository.
+   *
+   * The one file operation that is not a move. Within a repository, dragging a
+   * plan somewhere else is a rename and git follows the history; between two
+   * repositories there is no history to follow, so the destination gets an
+   * addition and the original stays exactly where it was — which is also what
+   * you want when the point is to take a plan's shape somewhere new.
+   *
+   * Flushed first, deliberately. The file being copied may be the buffer being
+   * typed into, and the copy happens on disk: without this, what arrives in the
+   * other repository is a few seconds old and nothing says so.
+   */
+  const copyTo = useCallback(
+    async (fromRepo: string, from: string, toRepo: string, dir: string) => {
+      await flush();
+      const name = from.split("/").pop() ?? from;
+      const to = dir ? `${dir}/${name}` : name;
+      fileAction(toRepo, "Copied", async () => {
+        await api.copyPlan(fromRepo, from, toRepo, to);
+        // Before opening it: the tree is what the open path is checked against.
+        await refreshFiles();
+        // Nothing about the tabs changes. Unlike a move, every open buffer is
+        // still pointing at a file that is still there.
+        await openFile(toRepo, to);
+      });
+    },
+    [flush, fileAction, refreshFiles, openFile],
   );
 
   /**
@@ -2188,12 +2508,15 @@ export default function App() {
         if (activeRepoPath && activePath) void closeTab(activeRepoPath, activePath);
       } else if (mod && e.altKey && (e.key === "ArrowLeft" || e.key === "ArrowRight")) {
         e.preventDefault();
-        if (tabs.length > 1) {
-          const i = tabs.findIndex((t) => t.repo === activeRepoPath && t.path === activePath);
-          const step = e.key === "ArrowRight" ? 1 : -1;
-          const next = tabs[(i + step + tabs.length) % tabs.length];
-          if (next) void openFile(next.repo, next.path);
-        }
+        cycleTab(e.key === "ArrowRight" ? 1 : -1);
+      } else if (e.ctrlKey && !e.metaKey && !e.altKey && e.key === "Tab") {
+        /*
+         * ⌃Tab, the binding every tabbed application has. Kept off ⌃T, which
+         * is transpose-characters in every macOS text field including this
+         * app's own, and off the ⌘ bindings, which are already spoken for.
+         */
+        e.preventDefault();
+        cycleTab(e.shiftKey ? -1 : 1);
       } else if (mod && !e.shiftKey && ["1", "2", "3"].includes(e.key)) {
         e.preventDefault();
         goto(e.key === "1" ? "write" : e.key === "2" ? "source" : "diff");
@@ -2442,10 +2765,19 @@ export default function App() {
           <button
             className={`rail-btn ${muxOpen ? "on" : ""}`}
             onClick={() => showPanel("showMux")}
-            title="Agent chat (⌘J)"
+            title={
+              runningCount
+                ? `Agent chat (⌘J) — ${runningCount} running`
+                : "Agent chat (⌘J)"
+            }
             aria-pressed={muxOpen}
           >
             Chat
+            {/* Across every repository, not only the open one. What this
+                number is about is `node` processes on the machine, and a badge
+                that hid the ones running in a repo you switched away from
+                would be hiding exactly what it exists to report. */}
+            {runningCount > 0 && <span className="count live">{runningCount}</span>}
           </button>
         )}
         <button
@@ -2497,6 +2829,7 @@ export default function App() {
               onForgetRepo={forgetRepo}
               filter={filter}
               showExtensions={settings.showExtensions}
+              statusOrder={statusOrder}
               onStage={stageOne}
               onUnstage={unstageOne}
               onDiscard={discardOne}
@@ -2507,6 +2840,7 @@ export default function App() {
               onNewFile={newFileIn}
               onNewFolder={newFolderIn}
               onMove={moveTo}
+              onCopy={(from, path, toRepo, dir) => void copyTo(from, path, toRepo, dir)}
               emptyDirs={emptyDirs}
               onRename={renameFile}
               onMoveTo={(repo, path) => setMoving({ repo, path })}
@@ -2537,17 +2871,19 @@ export default function App() {
               onAddRepo={addRepo}
               onForgetRepo={forgetRepo}
               onInstallSkill={(path) =>
-                void installSkill(path).then(
-                  (r) =>
-                    notify(
-                      r === "current"
-                        ? "Agent skill already up to date"
-                        : r === "installed"
-                          ? "Agent skill installed"
-                          : "Agent skill updated — review it in the git panel",
-                    ),
-                  (e) => notify(String(e), "error"),
-                ).finally(() => void readInstalls())
+                void installConventions(path, agentPaths.current)
+                  .then(
+                    (r) =>
+                      notify(
+                        r === "current"
+                          ? "Conventions already up to date"
+                          : r === "installed"
+                            ? "Conventions installed"
+                            : "Conventions updated — review them in the git panel",
+                      ),
+                    (e: unknown) => notify(String(e), "error"),
+                  )
+                  .finally(() => void readInstalls())
               }
               skills={skills}
               onInstallCli={installCli}
@@ -2576,16 +2912,21 @@ export default function App() {
                     const on = t.repo === activeRepoPath && t.path === activePath;
                     const mark = liveMarks.get(`${t.repo}::${t.path}`) ?? "clean";
                     const name = t.path.split("/").pop() ?? t.path;
+                    // Changed on disk since we read it. Says so rather than
+                    // acting: opening the tab re-reads the file anyway.
+                    const moved = outside.has(`${t.repo}::${t.path}`);
                     return (
                       <span
-                        className={`tab ${on ? "on" : ""}${on && editing ? " editing" : ""} ${mark}`}
+                        className={`tab ${on ? "on" : ""}${on && editing ? " editing" : ""} ${mark}${
+                          moved ? " outside" : ""
+                        }`}
                         key={`${t.repo}::${t.path}`}
                       >
                         <button
                           className="tab-name"
                           role="tab"
                           aria-selected={on}
-                          title={t.path}
+                          title={moved ? `${t.path} — changed on disk` : t.path}
                           onClick={() =>
                             void (t.repo === MEMORY
                               ? openMemory(t.path, memoryDocs.current.get(t.path) ?? "")
@@ -2823,6 +3164,7 @@ export default function App() {
 
         {muxOpen && (
           <ChatPanel
+            running={running}
             repo={activeRepoPath!}
             relPath={activePath}
             seed={chatSeed}
@@ -2861,16 +3203,16 @@ export default function App() {
             <span>{activeRepo?.name ?? "No repository"}</span>
           )}
           <span className="bar-spacer" />
-          {activeRepoPath && usage[activeRepoPath] && (
+          {activeRepoPath && usage[`${activeRepoPath}::${chats.current}`] && (
             <span title="The agent's context window, and what this session has cost">
               <b>
                 {Math.round(
-                  (usage[activeRepoPath].used / Math.max(1, usage[activeRepoPath].size)) * 100,
+                  (usage[`${activeRepoPath}::${chats.current}`].used / Math.max(1, usage[`${activeRepoPath}::${chats.current}`].size)) * 100,
                 )}
                 %
               </b>{" "}
               context
-              {usage[activeRepoPath].cost ? ` · $${usage[activeRepoPath].cost!.toFixed(2)}` : ""}
+              {usage[`${activeRepoPath}::${chats.current}`].cost ? ` · $${usage[`${activeRepoPath}::${chats.current}`].cost!.toFixed(2)}` : ""}
             </span>
           )}
           {busy && <span className="saving">{busy}…</span>}
@@ -3039,10 +3381,14 @@ export default function App() {
         onOpenChat={openChat}
         onDeleteChat={(id) => void deleteChat(id)}
         onRenameChat={renameChat}
+        allChats={allChats}
+        onOpenChatIn={openChatIn}
+        running={running}
         agents={agents}
         onUseAgent={(id) => set({ chatCommand: id })}
         onCloseAll={() => void closeAllTabs()}
         openCount={tabs.length}
+        onCycleTab={cycleTab}
         onMatter={() => {
           if (matter === null) onMatterChange("");
           setMatterOpen(true);

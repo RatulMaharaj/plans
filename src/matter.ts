@@ -54,6 +54,20 @@ export function joinFrontmatter(
   original?: { matter: string | null; raw: string },
 ): string {
   if (matter === null) return body;
+  /*
+   * A block holding nothing is not a block.
+   *
+   * `null` means "this file has no frontmatter" but `""` means "the block is
+   * there and empty", and the two arrived here as if only the first mattered:
+   * an empty string fell through to the rebuild below and wrote a bare pair of
+   * fences. Emptying the sheet's textarea produces exactly that string, so a
+   * file could end up opening `---`, blank, `---` — and then its *real* block,
+   * which no longer parses as frontmatter because it is no longer first.
+   *
+   * Checked before the verbatim branch on purpose: a file that already has an
+   * empty block is repaired by saving it, rather than having it preserved.
+   */
+  if (!matter.trim()) return body;
   if (original && original.matter === matter && original.raw) {
     return original.raw + body;
   }

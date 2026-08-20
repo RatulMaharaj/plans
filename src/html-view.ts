@@ -296,7 +296,20 @@ export const htmlBridge: {
    * never inline, where it would split a sentence in the source.
    */
   comment: ((value: string) => void) | null;
-} = { request: null, apply: null, insert: null, comment: null };
+  /** Set by Editor: put the cursor at the end of the document and focus it. */
+  focusEnd: (() => void) | null;
+  /**
+   * Set by App: focus the document the editor puts up next, once.
+   *
+   * A flag rather than a call, because App has nothing to call yet. Opening a
+   * file only *requests* the state change that leads to the editor swapping its
+   * document — so focusing at the point of asking lands the cursor in the file
+   * you were reading before, which the swap then throws away. The request is
+   * left here and honoured on the other side, once the new document has
+   * settled. One-shot: the file opened after a created one must not inherit it.
+   */
+  focusNext: boolean;
+} = { request: null, apply: null, insert: null, comment: null, focusEnd: null, focusNext: false };
 
 /** Whether a fragment is one complete comment, fences and all. */
 export function isComment(value: string): boolean {

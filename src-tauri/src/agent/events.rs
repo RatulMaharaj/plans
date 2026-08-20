@@ -27,16 +27,18 @@ fn text_of(v: &Value) -> String {
 
 /// Map one update. `None` for anything we have no place to put yet — an
 /// unknown update is not an error, it is a feature we have not built.
-pub fn map(repo: &str, turn: u64, u: &Value) -> Option<Emit> {
+pub fn map(repo: &str, chat: &str, turn: u64, u: &Value) -> Option<Emit> {
     let kind = u["sessionUpdate"].as_str()?;
     match kind {
         "agent_message_chunk" => Some(Emit {
             name: "agent-message",
-            payload: json!({ "repo": repo, "turn": turn, "text": text_of(u) }),
+            payload: json!({ "repo": repo,
+                    "chat": chat, "turn": turn, "text": text_of(u) }),
         }),
         "agent_thought_chunk" => Some(Emit {
             name: "agent-thought",
-            payload: json!({ "repo": repo, "turn": turn, "text": text_of(u) }),
+            payload: json!({ "repo": repo,
+                    "chat": chat, "turn": turn, "text": text_of(u) }),
         }),
         /*
          * A tool call and its updates share `toolCallId`, and the panel
@@ -51,6 +53,7 @@ pub fn map(repo: &str, turn: u64, u: &Value) -> Option<Emit> {
                 name: "agent-tool",
                 payload: json!({
                     "repo": repo,
+                    "chat": chat,
                     "turn": turn,
                     "callId": id,
                     "title": u["title"].as_str(),
@@ -67,15 +70,18 @@ pub fn map(repo: &str, turn: u64, u: &Value) -> Option<Emit> {
         }
         "plan" => Some(Emit {
             name: "agent-plan",
-            payload: json!({ "repo": repo, "entries": u["entries"] }),
+            payload: json!({ "repo": repo,
+                    "chat": chat, "entries": u["entries"] }),
         }),
         "available_commands_update" => Some(Emit {
             name: "agent-commands",
-            payload: json!({ "repo": repo, "commands": u["availableCommands"] }),
+            payload: json!({ "repo": repo,
+                    "chat": chat, "commands": u["availableCommands"] }),
         }),
         "config_option_update" => Some(Emit {
             name: "agent-config",
-            payload: json!({ "repo": repo, "options": u["configOptions"] }),
+            payload: json!({ "repo": repo,
+                    "chat": chat, "options": u["configOptions"] }),
         }),
         // Context spent and what it cost, which the agent volunteers and no
         // other surface in the app can tell you.
@@ -83,6 +89,7 @@ pub fn map(repo: &str, turn: u64, u: &Value) -> Option<Emit> {
             name: "agent-usage",
             payload: json!({
                 "repo": repo,
+                    "chat": chat,
                 "used": u["used"],
                 "size": u["size"],
                 "cost": u["cost"]["amount"],
@@ -105,7 +112,7 @@ mod tests {
             "content": { "type": "text", "text": "Hello" },
             "messageId": "msg_1"
         });
-        let e = map("/r", 7, &u).unwrap();
+        let e = map("/r", "c", 7, &u).unwrap();
         assert_eq!(e.name, "agent-message");
         assert_eq!(e.payload["text"], "Hello");
         assert_eq!(e.payload["turn"], 7);
@@ -118,7 +125,7 @@ mod tests {
             "sessionUpdate": "agent_thought_chunk",
             "content": { "type": "text", "text": "thinking" }
         });
-        assert_eq!(map("/r", 1, &u).unwrap().name, "agent-thought");
+        assert_eq!(map("/r", "c", 1, &u).unwrap().name, "agent-thought");
     }
 
     #[test]
@@ -136,8 +143,8 @@ mod tests {
             "status": "completed",
             "locations": [{ "path": "/a/b/note.md", "line": 1 }]
         });
-        let a = map("/r", 1, &start).unwrap();
-        let b = map("/r", 1, &done).unwrap();
+        let a = map("/r", "c", 1, &start).unwrap();
+        let b = map("/r", "c", 1, &done).unwrap();
         assert_eq!(a.name, b.name);
         assert_eq!(a.payload["callId"], b.payload["callId"]);
         // The agent writes the title; we no longer guess it from tool inputs.
@@ -153,7 +160,7 @@ mod tests {
             "availableCommands": [{ "name": "web", "description": "Search" }]
         });
         assert_eq!(
-            map("/r", 1, &cmds).unwrap().payload["commands"][0]["name"],
+            map("/r", "c", 1, &cmds).unwrap().payload["commands"][0]["name"],
             "web"
         );
 
@@ -165,7 +172,7 @@ mod tests {
                 "options": [{ "value": "fable", "name": "Fable" }]
             }]
         });
-        let e = map("/r", 1, &cfg).unwrap();
+        let e = map("/r", "c", 1, &cfg).unwrap();
         assert_eq!(e.name, "agent-config");
         assert_eq!(e.payload["options"][0]["currentValue"], "fable");
     }
@@ -177,7 +184,7 @@ mod tests {
             "used": 27564, "size": 1000000,
             "cost": { "amount": 0.2811, "currency": "USD" }
         });
-        let e = map("/r", 1, &u).unwrap();
+        let e = map("/r", "c", 1, &u).unwrap();
         assert_eq!(e.payload["used"], 27564);
         assert_eq!(e.payload["cost"], 0.2811);
     }
@@ -187,7 +194,7 @@ mod tests {
         // Agents send more than we draw, and will send more still. Silence is
         // the correct response to a feature we have not built.
         let u = json!({ "sessionUpdate": "session_info_update", "title": "x" });
-        assert!(map("/r", 1, &u).is_none());
-        assert!(map("/r", 1, &json!({ "nothing": true })).is_none());
+        assert!(map("/r", "c", 1, &u).is_none());
+        assert!(map("/r", "c", 1, &json!({ "nothing": true })).is_none());
     }
 }

@@ -45,7 +45,7 @@ type Node = Dir | File;
  * built only from files cannot show them, and a folder that vanishes the moment
  * you make it is worse than not being able to make one.
  */
-function build(files: PlanFile[], empties: string[] = []): Node[] {
+function build(files: PlanFile[], empties: string[] = [], order: string[] = []): Node[] {
   const root: Dir = { kind: "dir", name: "", path: "", children: [] };
 
   const folder = (path: string): Dir => {
@@ -79,11 +79,37 @@ function build(files: PlanFile[], empties: string[] = []): Node[] {
     }
     cur.children.push({ kind: "file", name: parts[parts.length - 1], path: f.relPath, file: f });
   }
-  // Folders before files, each alphabetical — the order a tree is read in.
+  /**
+   * Where a file's status puts it, when the tree is ordered by status.
+   *
+   * The vocabulary comes from settings rather than from here — the app reads
+   * conventions, it doesn't own one — so "first" means "first in your list".
+   * A status nobody declared, and a file with none at all, sort after every
+   * status that was: adopting this can then be partial, which it has to be,
+   * since most repositories have files that are not plans.
+   */
+  const rank = (f: File) => {
+    const at = order.indexOf((f.file.status ?? "").trim().toLowerCase());
+    return at === -1 ? order.length : at;
+  };
+
+  /*
+   * Folders before files, and within them by name — the order a tree is read
+   * in. By status first when asked for, which is the cheap answer to wanting a
+   * plans folder in some order other than the alphabet: the status is already
+   * read on every file during the walk, so this costs a comparison and no new
+   * field. Name is still the tie-break, so the order is stable and two plans
+   * with the same status read as they did before.
+   */
   const sort = (d: Dir) => {
-    d.children.sort((a, b) =>
-      a.kind === b.kind ? a.name.localeCompare(b.name) : a.kind === "dir" ? -1 : 1,
-    );
+    d.children.sort((a, b) => {
+      if (a.kind !== b.kind) return a.kind === "dir" ? -1 : 1;
+      if (a.kind === "file" && b.kind === "file" && order.length) {
+        const by = rank(a) - rank(b);
+        if (by !== 0) return by;
+      }
+      return a.name.localeCompare(b.name);
+    });
     for (const c of d.children) if (c.kind === "dir") sort(c);
   };
   sort(root);
@@ -156,6 +182,14 @@ type Props = {
   onForgetRepo: (repoPath: string) => void;
   filter: string;
   showExtensions: boolean;
+  /**
+   * The status vocabulary to order files by, or empty to order by name.
+   *
+   * A list rather than a flag, because "first" can only mean "first in your
+   * list" — the statuses are a convention the repository keeps, not a
+   * vocabulary the app owns.
+   */
+  statusOrder: string[];
   /** Right-click actions. All of these act on one file, in its own repo. */
   onStage: (repoPath: string, relPath: string) => void;
   onUnstage: (repoPath: string, relPath: string) => void;
@@ -178,6 +212,8 @@ type Props = {
   onNewFolder: (repoPath: string, dir: string) => void;
   /** Dragged into a folder: dir is "" for the repository root. */
   onMove: (repoPath: string, relPath: string, dir: string) => void;
+  /** Dragged into another repository, which is a copy rather than a move. */
+  onCopy: (fromRepo: string, relPath: string, toRepo: string, dir: string) => void;
   /** Folders that exist on disk but hold no markdown yet, per repository. */
   emptyDirs: Record<string, string[]>;
   /** Open or close a whole subtree at once. */
@@ -268,7 +304,7 @@ export const FileTree = memo(function FileTree(p: Props) {
     carried.current = { repo, path, kind };
     setDragging({ repo, path });
     depth.current = 0;
-    e.dataTransfer.effectAllowed = "move";
+    e.dataTransfer.effectAllowed = "copyMove";
     e.dataTransfer.setData(MIME, [repo, path, kind].join("\n"));
     trace("drag start", { path, kind });
     // Something usable by other applications, too.
@@ -285,17 +321,25 @@ export const FileTree = memo(function FileTree(p: Props) {
   /**
    * Whether this folder can take what is being dragged.
    *
-   * Not across repositories — that is a copy, not a move, and git would see a
-   * deletion and an addition rather than a rename. Not into where it already
-   * is. And not into itself or anything inside it, which would ask the
-   * filesystem to put a folder inside a folder that is about to move.
+   * Across repositories is a copy rather than a move — git has no rename that
+   * spans two of them, so the destination sees an addition and the original
+   * stays put. None of the same-repository guards below apply to that case: a
+   * different root cannot be the dragged folder's own ancestor, and "it is
+   * already there" means nothing when it is somewhere else entirely. Folders
+   * are refused, since copying one raises questions about its contents that
+   * moving a plan between repositories does not need answered.
+   *
+   * Within a repository: not into where it already is, and not into itself or
+   * anything inside it, which would ask the filesystem to put a folder inside a
+   * folder that is about to move.
    */
   const allowed = (
     it: { repo: string; path: string; kind: "file" | "dir" } | null,
     repoPath: string,
     dir: string,
   ) => {
-    if (!it || it.repo !== repoPath) return false;
+    if (!it) return false;
+    if (it.repo !== repoPath) return it.kind === "file";
     const from = it.path.includes("/") ? it.path.slice(0, it.path.lastIndexOf("/")) : "";
     if (from === dir) return false;
     if (it.kind === "dir" && (dir === it.path || dir.startsWith(`${it.path}/`))) return false;
@@ -316,7 +360,10 @@ export const FileTree = memo(function FileTree(p: Props) {
       // shows a "no drop" cursor and never fires a drop at all.
       e.preventDefault();
       e.stopPropagation();
-      e.dataTransfer.dropEffect = "move";
+      // The cursor is the only thing telling the reader which of the two this
+      // is — that the original will survive a drag into another repository.
+      e.dataTransfer.dropEffect =
+        carried.current && carried.current.repo !== repoPath ? "copy" : "move";
       if (over !== key) setOver(key);
     },
     onDragLeave: () => {
@@ -340,7 +387,9 @@ export const FileTree = memo(function FileTree(p: Props) {
           : null);
       endDrag();
       trace("drop", { onto: dir || "<root>", carrying: it?.path ?? null });
-      if (allowed(it, repoPath, dir) && it) p.onMove(it.repo, it.path, dir);
+      if (!allowed(it, repoPath, dir) || !it) return;
+      if (it.repo === repoPath) p.onMove(it.repo, it.path, dir);
+      else p.onCopy(it.repo, it.path, repoPath, dir);
     },
   });
 
@@ -379,10 +428,10 @@ export const FileTree = memo(function FileTree(p: Props) {
       const kept = q ? files.filter((f) => f.relPath.toLowerCase().includes(q)) : files;
       // A filter is asking about files, so empty folders step aside for it.
       const empties = q ? [] : (p.emptyDirs[r.path] ?? []);
-      out[r.path] = { nodes: squash(build(kept, empties)), kept };
+      out[r.path] = { nodes: squash(build(kept, empties, p.statusOrder)), kept };
     }
     return out;
-  }, [p.repos, p.filesByRepo, p.filter, p.emptyDirs]);
+  }, [p.repos, p.filesByRepo, p.filter, p.emptyDirs, p.statusOrder]);
 
   /** How much of each repo differs from its last commit. */
   const changedByRepo = useMemo(() => {

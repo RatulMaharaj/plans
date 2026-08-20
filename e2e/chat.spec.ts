@@ -731,16 +731,51 @@ test("installing the CLI changes the button to say so", async ({ page }) => {
   await expect(row.locator("button.act")).toHaveCount(0);
 });
 
-test("a repository that already has the skill is not offered it again", async ({ page }) => {
+test("a repository that already has the conventions is not offered them again", async ({
+  page,
+}) => {
   await open(page);
   await page.keyboard.press("Meta+,");
 
   const row = page.locator(".repo-row", { hasText: "one" });
-  await expect(row.locator("button.act", { hasText: "Install skill" })).toBeVisible();
-  await row.locator("button.act", { hasText: "Install skill" }).click();
+  await expect(row.locator("button.act", { hasText: "Install conventions" })).toBeVisible();
+  await row.locator("button.act", { hasText: "Install conventions" }).click();
 
   // Written, and the button stops asking.
-  await expect(row.locator(".act.done")).toHaveText("Skill installed");
+  await expect(row.locator(".act.done")).toHaveText("Conventions installed");
+});
+
+/**
+ * The whole point of the change: the button used to write Claude Code's path
+ * and only Claude Code's, so for every other agent it was a no-op with a
+ * reassuring label. Codex is present in this test, and `AGENTS.md` is what it
+ * reads — with everything already in that file left alone, because unlike the
+ * skill file it belongs to the repository rather than to us.
+ */
+test("the conventions go where each installed agent looks", async ({ page }) => {
+  await open(page, { codex: true });
+  await page.evaluate(() => {
+    (window as any).__fake.repos[0].files["AGENTS.md"] =
+      "# House rules\n\nOurs, not yours.\n";
+  });
+  await page.keyboard.press("Meta+,");
+
+  const row = page.locator(".repo-row", { hasText: "one" });
+  await row.locator("button.act", { hasText: "conventions" }).click();
+
+  await expect
+    .poll(async () =>
+      page.evaluate(() => Object.keys((window as any).__fake.repos[0].files)),
+    )
+    .toContain(".claude/skills/plans/SKILL.md");
+
+  const agents = await page.evaluate(
+    () => (window as any).__fake.repos[0].files["AGENTS.md"] as string,
+  );
+  // Appended in its own fenced section; nothing of theirs lost.
+  expect(agents).toContain("Ours, not yours.");
+  expect(agents).toContain("<!-- plans:begin -->");
+  expect(agents).toContain("<!-- plans:end -->");
 });
 
 test("a plan is handed to the agent from its right-click menu", async ({ page }) => {
@@ -1207,7 +1242,10 @@ test("choosing a model asks the agent, and shows the agent's answer", async ({ p
   await page.locator(".dd-item", { hasText: "Haiku" }).click();
 
   const [set] = await argsOf(page, "agent_set_config");
-  expect(set).toEqual({ repo: "/repo/one", id: "model", value: "haiku" });
+  // The chat as well as the repo: an option belongs to one session, and a
+  // repository can now have several.
+  expect(set).toMatchObject({ repo: "/repo/one", id: "model", value: "haiku" });
+  expect(typeof (set as { chat?: string }).chat).toBe("string");
 
   // Redrawn from what the agent replied, not from the click: a choice can
   // change what else is on offer, and only the agent knows that.
@@ -1620,10 +1658,16 @@ test("New starts a fresh conversation and keeps the old one", async ({ page }) =
 
   await page.locator(".mux-key", { hasText: "New" }).click();
 
-  // Blank, and the agent's session ends with it — a new conversation the
-  // agent still remembers the last one from is new in name only.
+  /*
+   * Blank — and nothing is ended.
+   *
+   * A new conversation is a new key, so whatever was running carries on in the
+   * chat it belongs to. This used to stop the session, because there was one
+   * per repository and a new chat had to take it over; that is exactly what
+   * made "set an agent going and start another while it works" impossible.
+   */
   await expect(page.locator(".chat-msg.user")).toHaveCount(0);
-  await expect.poll(() => calls(page, "agent_stop")).toBe(1);
+  await expect.poll(() => calls(page, "agent_stop")).toBe(0);
 
   // The old one is still there, named after what it was about.
   await page.locator('[aria-label="Conversation"]').click();
@@ -1661,6 +1705,123 @@ test("/clear clears the chat, which is what it looks like it does", async ({ pag
   expect(await calls(page, "agent_prompt")).toBe(1);
   await expect(page.locator(".chat-msg.user")).toHaveCount(0);
   await expect.poll(() => calls(page, "agent_stop")).toBe(1);
+});
+
+/** The id of whichever conversation is on screen. */
+async function currentChat(page: Page, repo = "/repo/one") {
+  return page.evaluate(
+    (r) => JSON.parse(localStorage.getItem(`plans.chats.v4::${r}`) ?? "{}").current as string,
+    repo,
+  );
+}
+
+/**
+ * The workflow the old design made impossible.
+ *
+ * A session was keyed by repository, so there was one by construction: moving
+ * to another conversation meant killing the one that was running, because the
+ * single session could not be having two conversations. Setting an agent going
+ * on a long job and reading another chat while it worked was not a thing you
+ * could do.
+ */
+test("two conversations can be mid-answer at the same time", async ({ page }) => {
+  await open(page);
+  await openPlan(page);
+  await page.keyboard.press("Meta+j");
+
+  await say(page, "the long job");
+  const first = await currentChat(page);
+  await expect.poll(() => calls(page, "agent_prompt")).toBe(1);
+
+  // Off to a second conversation while the first is still working.
+  await page.locator(".mux-key", { hasText: "New" }).click();
+  await say(page, "something else");
+  await expect.poll(() => calls(page, "agent_prompt")).toBe(2);
+
+  // The first one answers while you are looking at the second.
+  await page.evaluate((chat) => {
+    const f = (window as any).__fake;
+    f.emit("agent-message", { repo: "/repo/one", chat, turn: 1, text: "the long answer" });
+    f.emit("agent-turn", { repo: "/repo/one", chat, turn: 1, stop: "EndTurn", ok: true });
+  }, first);
+
+  // It did not leak into the conversation on screen...
+  await expect(page.locator(".chat-log")).not.toContainText("the long answer");
+
+  // ...and it is waiting in its own, rather than having been thrown away.
+  await page.locator('[aria-label="Conversation"]').click();
+  await page.locator(".dd-item", { hasText: "the long job" }).click();
+  await expect(page.locator(".chat-log")).toContainText("the long answer");
+});
+
+test("moving between conversations ends nothing", async ({ page }) => {
+  await open(page);
+  await openPlan(page);
+  await page.keyboard.press("Meta+j");
+  await say(page, "the first");
+  await finish(page, 1);
+  await page.locator(".mux-key", { hasText: "New" }).click();
+  await say(page, "the second");
+  await finish(page, 2);
+
+  await page.locator('[aria-label="Conversation"]').click();
+  await page.locator(".dd-item", { hasText: "the first" }).click();
+  await expect(page.locator(".chat-log")).toContainText("the first");
+
+  // Nothing about reading another conversation is a reason to end one.
+  expect(await calls(page, "agent_stop")).toBe(0);
+});
+
+/**
+ * Deleting is now the only navigation that ends a session, and it has to:
+ * forgetting a transcript while its process keeps running leaves an agent
+ * nobody can reach, read or stop.
+ *
+ * The assertion is on *which* conversation is stopped. With one session per
+ * repository there was only ever one candidate, so naming it was free; now the
+ * wrong id would quietly kill somebody else's work.
+ */
+test("deleting a conversation stops that conversation's agent", async ({ page }) => {
+  await open(page);
+  await openPlan(page);
+  await page.keyboard.press("Meta+j");
+  await say(page, "the one to keep");
+  const kept = await currentChat(page);
+  await finish(page, 1);
+
+  await page.locator(".mux-key", { hasText: "New" }).click();
+  await say(page, "the one to delete");
+  const doomed = await currentChat(page);
+  await finish(page, 2);
+  expect(doomed).not.toBe(kept);
+
+  await page.locator(".mux-key", { hasText: "Delete" }).click();
+
+  const stops = await argsOf(page, "agent_stop");
+  expect(stops).toContainEqual({ repo: "/repo/one", chat: doomed });
+  // And nothing touched the one still holding a conversation.
+  expect(stops).not.toContainEqual({ repo: "/repo/one", chat: kept });
+});
+
+/** A running agent should be visible without opening its chat. */
+test("the rail counts the agents that are running", async ({ page }) => {
+  await open(page);
+  await openPlan(page);
+  await page.keyboard.press("Meta+j");
+  const chat = await currentChat(page);
+
+  const badge = page.locator(".rail-btn", { hasText: "Chat" }).locator(".count");
+  await expect(badge).toHaveCount(0);
+
+  await page.evaluate((c) => {
+    (window as any).__fake.emit("agent-ready", { repo: "/repo/one", chat: c, gen: 1 });
+  }, chat);
+  await expect(badge).toHaveText("1");
+
+  await page.evaluate((c) => {
+    (window as any).__fake.emit("agent-down", { repo: "/repo/one", chat: c, gen: 1, message: "" });
+  }, chat);
+  await expect(badge).toHaveCount(0);
 });
 
 test("chats are per repository, and survive a restart", async ({ page }) => {
@@ -1944,6 +2105,45 @@ test("a clean stop says nothing at all", async ({ page }) => {
     (window as any).__fake.emit("agent-down", { repo: "/repo/one", message: "" });
   });
   await expect(page.locator(".chat-log")).not.toContainText("sign in");
+});
+
+/**
+ * The farewell that arrived too late.
+ *
+ * `agent-down` is emitted twice for one stop: once the moment the session is
+ * told to go, and once when its task has actually finished — which is
+ * arbitrarily later, because telling a session to stop only queues the
+ * message. Switch chats and start talking in the time between, and the first
+ * session's farewell landed on the second session's turn, clearing it. From
+ * then on the running agent's answer went nowhere, which looks exactly like an
+ * agent with nothing to say.
+ */
+test("a stopped session's farewell does not silence the one that replaced it", async ({
+  page,
+}) => {
+  await open(page);
+  await openPlan(page);
+  await page.keyboard.press("Meta+j");
+
+  // A session comes up, and is stopped.
+  await page.evaluate(() => {
+    (window as any).__fake.emit("agent-ready", { repo: "/repo/one", gen: 1 });
+  });
+  await say(page, "hello");
+
+  // Its replacement comes up and is mid-answer.
+  await page.evaluate(() => {
+    (window as any).__fake.emit("agent-ready", { repo: "/repo/one", gen: 2 });
+  });
+
+  // Now the first session's task finally finishes and says so.
+  await page.evaluate(() => {
+    (window as any).__fake.emit("agent-down", { repo: "/repo/one", gen: 1, message: "" });
+  });
+
+  // The turn in flight is still in flight, so its answer still lands.
+  await finish(page, 1);
+  await expect(page.locator(".chat-log")).toContainText("…");
 });
 
 test("a long chat name stays on one line", async ({ page }) => {

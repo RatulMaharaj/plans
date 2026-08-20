@@ -66,8 +66,24 @@ export function installFakeBackend(repos: FakeRepo[], update?: FakeUpdate) {
     chats: {} as Record<number, boolean>,
     /** Event listeners the app has registered, by event name and id. */
     listeners: {} as Record<string, { id: number; fn: (e: unknown) => void }[]>,
-    /** Push an event at the app, as the Rust side would. */
+    /**
+     * Push an event at the app, as the Rust side would.
+     *
+     * Every `agent-*` payload names the conversation it belongs to, because a
+     * session is per chat. A test that does not care which says nothing and
+     * gets the one on screen — spelling it out in all thirty-odd emits would
+     * bury what each test is actually about.
+     */
     emit(event: string, payload: unknown) {
+      const p = payload as Record<string, unknown> | null;
+      if (event.startsWith("agent-") && p && p.chat === undefined && typeof p.repo === "string") {
+        try {
+          const raw = localStorage.getItem(`plans.chats.v4::${p.repo}`);
+          if (raw) p.chat = JSON.parse(raw).current;
+        } catch {
+          // No index yet; the listener's own guard will drop it.
+        }
+      }
       for (const l of state.listeners[event] ?? []) l.fn({ event, id: 0, payload });
     },
   };
@@ -124,11 +140,13 @@ export function installFakeBackend(repos: FakeRepo[], update?: FakeUpdate) {
       r.files[relPath] = content;
       return hash(content);
     },
-    create_plan: ({ repo: p, relPath, title }) => {
+    create_plan: ({ repo: p, relPath, title, status }) => {
       const r = repo(p);
       if (!r) throw new Error("no such repository");
       if (r.files[relPath] !== undefined) throw new Error(`${relPath} already exists`);
-      r.files[relPath] = `# ${title}\n\n`;
+      // A new plan starts with a status, as the real command does.
+      const head = status ? `---\nstatus: ${status}\n---\n` : "";
+      r.files[relPath] = `${head}# ${title}\n\n`;
       return null;
     },
     delete_plan: ({ repo: p, relPath }) => {
@@ -197,6 +215,18 @@ export function installFakeBackend(repos: FakeRepo[], update?: FakeUpdate) {
         delete r.files[f];
       }
       return null;
+    },
+    /** The one command with two repositories: a copy, never a move. */
+    copy_plan: ({ fromRepo, fromRel, toRepo, toRel }) => {
+      const a = repo(String(fromRepo));
+      const b = repo(String(toRepo));
+      if (!a || !b) throw new Error("no such repository");
+      if (a === b && fromRel === toRel) throw new Error("that is where it already is");
+      if (b.files[String(toRel)] !== undefined) throw new Error(`${toRel} already exists`);
+      const text = a.files[String(fromRel)];
+      if (text === undefined) throw new Error(`${fromRel} does not exist`);
+      b.files[String(toRel)] = text;
+      return toRel;
     },
     search_plans: ({ repo: p, query, limit }) => {
       const r = repo(p);
@@ -358,6 +388,7 @@ export function installFakeBackend(repos: FakeRepo[], update?: FakeUpdate) {
           : ["npx", "-y", "@agentclientprotocol/claude-agent-acp@0.70.0"],
         installed: state.agentInstalled,
         installable: !state.agentInstalled,
+        conventions: [".claude/skills/plans/SKILL.md"],
       },
       {
         id: "codex",
@@ -368,6 +399,7 @@ export function installFakeBackend(repos: FakeRepo[], update?: FakeUpdate) {
         argv: ["npx", "-y", "@agentclientprotocol/codex-acp"],
         installed: false,
         installable: true,
+        conventions: ["AGENTS.md"],
       },
     ],
     install_cli: () => {

@@ -1,5 +1,5 @@
 ---
-status: ready
+status: done
 ---
 # Install The Conventions Where Each Agent Looks
 

@@ -65,6 +65,20 @@ export function SettingsPage({
   onReleaseNotes,
 }: Props) {
   const [q, setQ] = useState("");
+
+  /**
+   * Which agents the conventions are being installed for.
+   *
+   * The row used to name a path, which was Claude Code's and nobody else's —
+   * and said nothing about the three agents that would never read it. The
+   * agents on this machine are the honest answer to what pressing the button
+   * does.
+   */
+  const here = agents.filter((a) => a.ready && a.conventions.length);
+  const conventionsFor = here.length
+    ? `For ${here.map((a) => a.label).join(", ")} — written where each of them looks`
+    : "No agent found on this machine; the conventions go where Claude Code looks";
+
   return (
     <div className="settings">
       <Query.Provider value={q}>
@@ -409,6 +423,26 @@ export function SettingsPage({
             ]}
             onChange={(v) => onChange({ chatPlace: v as "bottom" | "side" })}
           />
+          <Choice
+            label="Order files by"
+            hint="By status uses the vocabulary above, in the order it is written there. A file with an unrecognised status, or none, comes last. Name is the order a tree is read in."
+            value={s.treeSort}
+            options={[
+              { value: "name", label: "Name" },
+              { value: "status", label: "Status" },
+            ]}
+            onChange={(v) => onChange({ treeSort: v as "name" | "status" })}
+          />
+          <Choice
+            label="Palette chats"
+            hint="What # in the command palette lists. Across every repository, a chat is labelled with the one it belongs to, and opening it takes you there."
+            value={s.chatScope}
+            options={[
+              { value: "repo", label: "This repository" },
+              { value: "all", label: "Every repository" },
+            ]}
+            onChange={(v) => onChange({ chatScope: v as "repo" | "all" })}
+          />
           {s.chatPlace === "side" ? (
             <Slider
               label="Chat width"
@@ -545,16 +579,19 @@ export function SettingsPage({
                     : "no plans folder found"}
                 </span>
               </span>
-              {/* One button, three things to say: the skill is not there, it
-                  is out of date, or it is exactly the bundled one — in which
-                  case there is nothing to press and it says so instead. */}
+              {/* One button, three things to say: the conventions are not
+                  there, they are out of date, or they are exactly the bundled
+                  ones — in which case there is nothing to press and it says so
+                  instead. The tooltip names the agents being installed for,
+                  rather than a path, because the path is the app's business and
+                  which agent will read it is the reader's. */}
               {skills[r.path] === "current" ? (
-                <span className="act done" title="This repository has the bundled skill">
-                  Skill installed
+                <span className="act done" title={conventionsFor}>
+                  Conventions installed
                 </span>
               ) : (
-                <button className="act" onClick={() => onInstallSkill(r.path)}>
-                  {skills[r.path] === "stale" ? "Update skill" : "Install skill"}
+                <button className="act" onClick={() => onInstallSkill(r.path)} title={conventionsFor}>
+                  {skills[r.path] === "stale" ? "Update conventions" : "Install conventions"}
                 </button>
               )}
               <button className="act" onClick={() => onForgetRepo(r.path)}>

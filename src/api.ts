@@ -72,6 +72,13 @@ export type AgentFound = {
   installable: boolean;
   /** What to do when it starts but will not answer — signing in, usually. */
   auth: string;
+  /**
+   * Where this agent reads a repository's conventions, repository-relative.
+   *
+   * A list, because some read more than one place, and the same text goes to
+   * every one of them — what differs between agents is only the address.
+   */
+  conventions: string[];
 };
 
 /** One picker the agent advertises: models, reasoning effort, mode, anything. */
@@ -190,14 +197,34 @@ export const api = {
   writePlan: (repo: string, relPath: string, content: string, expectStamp?: string) =>
     invoke<string>("write_plan", { repo, relPath, content, expectStamp }),
 
-  createPlan: (repo: string, relPath: string, title: string) =>
-    invoke<void>("create_plan", { repo, relPath, title }),
+  /**
+   * Write a new plan. `status` is the word its frontmatter starts with — the
+   * vocabulary is a setting, so the caller supplies it; omit it for a file
+   * that is not a plan.
+   */
+  createPlan: (repo: string, relPath: string, title: string, status?: string | null) =>
+    invoke<void>("create_plan", { repo, relPath, title, status: status ?? null }),
 
   createFolder: (repo: string, relPath: string) =>
     invoke<void>("create_folder", { repo, relPath }),
 
   renamePlan: (repo: string, from: string, to: string) =>
     invoke<void>("rename_plan", { repo, from, to }),
+
+  /**
+   * Copy a file into another repository, returning the path it got.
+   *
+   * The only command that takes two repositories. A copy rather than a move:
+   * git has no rename that spans two repositories, so the destination sees an
+   * addition and the original stays exactly where it was.
+   */
+  copyPlan: (fromRepo: string, fromRelPath: string, toRepo: string, toRelPath: string) =>
+    invoke<string>("copy_plan", {
+      fromRepo,
+      fromRel: fromRelPath,
+      toRepo,
+      toRel: toRelPath,
+    }),
 
   deletePlan: (repo: string, relPath: string) =>
     invoke<void>("delete_plan", { repo, relPath }),
@@ -286,18 +313,36 @@ export const api = {
 
   /** The agent binary's version, or null when it is not installed. */
   /** Say something. Starts the session if this is the first thing said. */
-  agentPrompt: (repo: string, agent: string, text: string, resume?: string | null) =>
-    invoke<ChatId>("agent_prompt", { repo, agent, text, resume: resume ?? null }),
+  /*
+   * Every one of these names the conversation as well as the repository.
+   *
+   * A session is a conversation, so a conversation is what one is keyed by.
+   * Keyed by repository alone there was one session by construction, which is
+   * why two agents could not run and why moving between chats had to end the
+   * one that was running.
+   */
+  agentPrompt: (
+    repo: string,
+    chat: string,
+    agent: string,
+    text: string,
+    resume?: string | null,
+  ) => invoke<ChatId>("agent_prompt", { repo, chat, agent, text, resume: resume ?? null }),
 
-  agentCancel: (repo: string, turn: ChatId) => invoke<null>("agent_cancel", { repo, turn }),
+  agentCancel: (repo: string, chat: string, turn: ChatId) =>
+    invoke<null>("agent_cancel", { repo, chat, turn }),
 
   /** Change one of the agent's own options — a model, an effort, a mode. */
-  agentSetConfig: (repo: string, id: string, value: string) =>
-    invoke<null>("agent_set_config", { repo, id, value }),
+  agentSetConfig: (repo: string, chat: string, id: string, value: string) =>
+    invoke<null>("agent_set_config", { repo, chat, id, value }),
 
   /** Answer a permission request. `null` means "cancelled". */
-  agentPermission: (repo: string, requestId: string, option: string | null) =>
-    invoke<null>("agent_permission", { repo, requestId, option }),
+  agentPermission: (repo: string, chat: string, requestId: string, option: string | null) =>
+    invoke<null>("agent_permission", { repo, chat, requestId, option }),
 
-  agentStop: (repo: string) => invoke<null>("agent_stop", { repo }),
+  /**
+   * End one conversation's session. What ends a session is deleting the chat,
+   * clearing it, or quitting — not moving between chats.
+   */
+  agentStop: (repo: string, chat: string) => invoke<null>("agent_stop", { repo, chat }),
 };

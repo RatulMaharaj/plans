@@ -261,11 +261,107 @@
   border: 1px solid var(--rule);
   border-radius: 3px;
   background: var(--paper);
-  /* No overflow clipping: the SVG is scaled to fit in fit(), so a diagram is
-     never cropped, and a wide one shrinks rather than being cut off. */
+  /* The frame clips, and only the frame. At 1:1 nothing is cropped — fit()
+     scales the SVG to the width — so this costs nothing until the diagram is
+     zoomed, at which point being cut off at the frame is the whole point: a
+     magnified picture spilling over the prose around it would be unreadable. */
+  overflow: hidden;
+  /* The reset chip sits in the corner of the frame. */
+  position: relative;
 }
 .editor-host .milkdown .ProseMirror .mermaid-figure svg {
   max-width: 100%;
+  height: auto;
+  display: block;
+}
+/* The stage is what zoom and pan move; the figure around it stays put. */
+.editor-host .milkdown .ProseMirror .mermaid-figure .mermaid-stage {
+  width: 100%;
+  transform-origin: center center;
+}
+/* Promoted only while it is actually moving — a compositor layer per diagram
+   in a long document is a cost paid for nothing. */
+.editor-host .milkdown .ProseMirror .mermaid-figure.zoomed .mermaid-stage {
+  will-change: transform;
+}
+.editor-host .milkdown .ProseMirror .mermaid-figure.zoomed { cursor: grab; }
+.editor-host .milkdown .ProseMirror .mermaid-figure.zoomed:active { cursor: grabbing; }
+/* What can be done to the picture, and the only sign that anything can. Kept
+   out of the way until the pointer is in the figure, and always there once
+   zoomed — at which point the way back has to be findable. */
+.mermaid-tools {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  display: flex;
+  gap: 4px;
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+.mermaid-figure:hover .mermaid-tools,
+.mermaid-figure.zoomed .mermaid-tools,
+.mermaid-full .mermaid-tools {
+  opacity: 1;
+}
+/*
+ * Scoped twice on purpose.
+ *
+ * Crepe ships `.milkdown button { border-style: none; background: none }`,
+ * which is a class *and* an element and so outranks a bare `.mermaid-tool`.
+ * Inside the editor that stripped the border and the face off these, while the
+ * maximised copy — which lives outside `.milkdown` — kept them, so the same
+ * button looked like a button in one place and like bare text in the other.
+ */
+.mermaid-tool,
+.editor-host .milkdown .mermaid-tool {
+  padding: 2px 5px;
+  border: 1px solid var(--rule);
+  border-radius: 3px;
+  background: var(--raised);
+  font-family: var(--mono);
+  font-size: 9px;
+  line-height: 1.4;
+  letter-spacing: 0.12em;
+  color: var(--ink-3);
+  cursor: pointer;
+}
+.mermaid-tool:hover,
+.editor-host .milkdown .mermaid-tool:hover { color: var(--ink); }
+
+/* Maximised: the same picture with room to read it. Outside the editor's DOM
+   entirely, so neither the figure's clipping nor ProseMirror applies. */
+.mermaid-scrim {
+  position: fixed;
+  inset: 0;
+  /* Above the sheets, below the context menu. The palette shares 60, and a
+     diagram is the thing you opened most recently. */
+  z-index: 65;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: color-mix(in srgb, var(--paper) 82%, transparent);
+  backdrop-filter: blur(2px);
+}
+.mermaid-full {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  border: 1px solid var(--rule);
+  border-radius: 4px;
+  background: var(--paper);
+}
+.mermaid-full .mermaid-stage { width: 100%; }
+.mermaid-full.zoomed { cursor: grab; }
+.mermaid-full.zoomed:active { cursor: grabbing; }
+.mermaid-full.zoomed .mermaid-stage { will-change: transform; }
+.mermaid-full svg {
+  max-width: 100%;
+  max-height: 100%;
   height: auto;
   display: block;
 }

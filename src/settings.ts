@@ -94,6 +94,28 @@ export type Settings = {
    * you cannot see is a prompt you cannot argue with.
    */
   handoffPrompt: string;
+  /**
+   * Whether `#` in the palette reaches the conversations of the repository you
+   * are in, or of every repository open.
+   *
+   * Per-repo by default, because a chat is usually about the plans next to it
+   * and a list that changes as you move between repositories is that list being
+   * right. "All" is for the other habit — one train of thought that outlives
+   * which window happens to be focused. A setting rather than a guess, because
+   * both are correct and which one you want is a fact about you.
+   */
+  chatScope: "repo" | "all";
+  /**
+   * What orders the files in the tree.
+   *
+   * By name is the order a tree is read in, and the one to fall back to. By
+   * status is the cheap answer to wanting a plans folder sequenced some other
+   * way: the status is already read on every file during the walk, so it costs
+   * a comparison rather than a new field to maintain by hand — and unlike a
+   * number typed into every file, it cannot drift out of step with itself.
+   * Files with an unrecognised status, or none, come last either way.
+   */
+  treeSort: "name" | "status";
 
   // Panels
   /** The file tree down the left. */
@@ -160,6 +182,8 @@ export const DEFAULTS: Settings = {
   agentCommand: "claude {prompt}",
   chatCommand: "claude",
   handoffPrompt: HANDOFF_PROMPT,
+  chatScope: "repo" as const,
+  treeSort: "name" as const,
   imageFolder: "assets",
   sourceLineNumbers: true,
   sourceWrap: true,

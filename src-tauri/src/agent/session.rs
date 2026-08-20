@@ -39,6 +39,14 @@ pub enum Op {
 pub async fn run(
     app: AppHandle,
     repo: String,
+    // Which conversation this session is having. Fixed for its whole life, so
+    // it is not on `Op` — putting it on every message would only restate the
+    // key the session was found under.
+    chat: String,
+    // Which session this is. Carried onto the events that can outlive it, so
+    // the panel can tell news about this session from news about its
+    // successor — see `NEXT_GEN` in the parent module.
+    gen: u64,
     argv: Vec<String>,
     // A session id from a previous run, if there is one to pick up.
     resume: Option<String>,
@@ -61,23 +69,37 @@ pub async fn run(
     }
     let agent = AcpAgent::new(cfg);
 
-    let (r2, a2) = (repo.clone(), app.clone());
-    let (r3, a3, p3) = (repo.clone(), app.clone(), perms.clone());
+    /*
+     * The turn this session's narration belongs to.
+     *
+     * ACP's updates carry a session, not a turn — the session is the
+     * long-lived thing and the protocol has no reason to care which prompt is
+     * in flight. The panel does care, because it routes late events to the
+     * right place, so updates are stamped with the turn most recently sent.
+     *
+     * Per session, and that is the whole point: this was a process-wide global
+     * until two sessions could run at once, at which point whichever spoke
+     * last stamped the other one's narration with its own turn.
+     */
+    let turn_now = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
+
+    let (r2, a2, c2, t2) = (repo.clone(), app.clone(), chat.clone(), turn_now.clone());
+    let (r3, a3, c3, p3) = (repo.clone(), app.clone(), chat.clone(), perms.clone());
     // The connection closure takes ownership; these are what is left to report
     // with once it has finished, whichever way it finished.
-    let (after_app, after_repo, after_perms) = (app.clone(), repo.clone(), perms.clone());
+    let (after_app, after_repo, after_chat, after_perms) =
+        (app.clone(), repo.clone(), chat.clone(), perms.clone());
 
     let result =
         agent_client_protocol::Client
             .builder()
             .on_receive_notification(
                 move |n: SessionNotification, _cx| {
-                    let (app, repo) = (a2.clone(), r2.clone());
+                    let (app, repo, chat, turn) = (a2.clone(), r2.clone(), c2.clone(), t2.clone());
                     async move {
                         let raw = serde_json::to_value(&n.update).unwrap_or(json!({}));
-                        let t =
-                            crate::agent::CURRENT_TURN.load(std::sync::atomic::Ordering::Relaxed);
-                        if let Some(e) = events::map(&repo, t, &raw) {
+                        let t = turn.load(std::sync::atomic::Ordering::Relaxed);
+                        if let Some(e) = events::map(&repo, &chat, t, &raw) {
                             let _ = app.emit(e.name, e.payload);
                         }
                         Ok(())
@@ -87,9 +109,11 @@ pub async fn run(
             )
             .on_receive_request(
                 move |req, responder, _c| {
-                    let (app, repo, pending) = (a3.clone(), r3.clone(), p3.clone());
+                    let (app, repo, chat, pending) =
+                        (a3.clone(), r3.clone(), c3.clone(), p3.clone());
                     async move {
-                        crate::agent::client::permission(app, repo, pending, req, responder).await
+                        crate::agent::client::permission(app, repo, chat, pending, req, responder)
+                            .await
                     }
                 },
                 agent_client_protocol::on_receive_request!(),
@@ -123,7 +147,7 @@ pub async fn run(
                             .map(|v| v["configOptions"].clone())
                             .unwrap_or(json!(null));
                         sid = Some(SessionId::from(id));
-                        let _ = app.emit("agent-resumed", json!({ "repo": repo }));
+                        let _ = app.emit("agent-resumed", json!({ "repo": repo, "chat": chat }));
                     }
                 }
                 if sid.is_none() {
@@ -142,22 +166,27 @@ pub async fn run(
                 // the whole of what resuming needs to remember.
                 let _ = app.emit(
                     "agent-session",
-                    json!({ "repo": repo, "sessionId": sid.to_string() }),
+                    json!({ "repo": repo, "chat": chat, "sessionId": sid.to_string() }),
                 );
 
                 // What the agent can do is news the moment it is known: the
                 // pickers and the slash list are drawn from this, before anyone
                 // has said anything.
                 if !options.is_null() {
-                    let _ = app.emit("agent-config", json!({ "repo": repo, "options": options }));
+                    let _ = app.emit(
+                        "agent-config",
+                        json!({ "repo": repo, "chat": chat, "options": options }),
+                    );
                 }
-                let _ = app.emit("agent-ready", json!({ "repo": repo }));
+                let _ = app.emit(
+                    "agent-ready",
+                    json!({ "repo": repo, "chat": chat, "gen": gen }),
+                );
 
                 while let Some(op) = ops.recv().await {
                     match op {
                         Op::Prompt { turn, text } => {
-                            crate::agent::CURRENT_TURN
-                                .store(turn, std::sync::atomic::Ordering::Relaxed);
+                            turn_now.store(turn, std::sync::atomic::Ordering::Relaxed);
                             let out = c
                                 .send_request(PromptRequest::new(
                                     sid.clone(),
@@ -171,7 +200,7 @@ pub async fn run(
                             };
                             let _ = app.emit(
                             "agent-turn",
-                            json!({ "repo": repo, "turn": turn, "stop": stop, "ok": out.is_ok() }),
+                            json!({ "repo": repo, "chat": chat, "turn": turn, "stop": stop, "ok": out.is_ok() }),
                         );
                         }
                         Op::Cancel { turn } => {
@@ -181,10 +210,10 @@ pub async fn run(
                              * quiet it waits forever and the session is wedged
                              * with no way back short of killing the process.
                              */
-                            crate::agent::client::cancel_all(&perms, &repo);
+                            crate::agent::client::cancel_all(&perms, &repo, &chat);
                             let _ = app.emit(
                             "agent-turn",
-                            json!({ "repo": repo, "turn": turn, "stop": "cancelled", "ok": false }),
+                            json!({ "repo": repo, "chat": chat, "turn": turn, "stop": "cancelled", "ok": false }),
                         );
                         }
                         Op::SetConfig { id, value } => {
@@ -206,7 +235,7 @@ pub async fn run(
                                 if let Ok(v) = serde_json::to_value(&r) {
                                     let _ = app.emit(
                                         "agent-config",
-                                        json!({ "repo": repo, "options": v["configOptions"] }),
+                                        json!({ "repo": repo, "chat": chat, "options": v["configOptions"] }),
                                     );
                                 }
                             }
@@ -218,14 +247,21 @@ pub async fn run(
             })
             .await;
 
-    crate::agent::client::cancel_all(&after_perms, &after_repo);
+    crate::agent::client::cancel_all(&after_perms, &after_repo, &after_chat);
     match result {
-        Err(e) => down(&after_app, &after_repo, &format!("{e}")),
-        Ok(()) => down(&after_app, &after_repo, ""),
+        Err(e) => down(&after_app, &after_repo, &after_chat, gen, &format!("{e}")),
+        Ok(()) => down(&after_app, &after_repo, &after_chat, gen, ""),
     }
 }
 
 /// The session is over, however it ended.
-fn down(app: &AppHandle, repo: &str, message: &str) {
-    let _ = app.emit("agent-down", json!({ "repo": repo, "message": message }));
+///
+/// Stamped with the generation because this can arrive long after `stop` has
+/// already said the same thing, and by then another session may be running —
+/// an unstamped farewell is indistinguishable from news about that one.
+fn down(app: &AppHandle, repo: &str, chat: &str, gen: u64, message: &str) {
+    let _ = app.emit(
+        "agent-down",
+        json!({ "repo": repo, "chat": chat, "gen": gen, "message": message }),
+    );
 }

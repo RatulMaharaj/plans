@@ -31,6 +31,24 @@ const cache = new Map<string, string>();
 let seq = 0;
 let themed = "";
 
+/**
+ * How far each diagram has been zoomed and panned.
+ *
+ * This cannot live on the DOM node. ProseMirror discards a widget the moment
+ * its key changes, and the key carries the diagram's position — so typing a
+ * paragraph *above* a diagram rebuilds it, and anything held on the old node
+ * goes with it. Deliberately not keyed by paper: changing the theme redraws
+ * the picture, but it is still the same picture and the reader is still
+ * looking at the same part of it.
+ *
+ * Keyed by source, which has two consequences worth saying out loud: editing a
+ * diagram resets its zoom, which is fair since the picture changed underneath
+ * it, and two identical diagrams in one document share an entry. Both are
+ * cheaper to accept than to carry an identity through a widget that is rebuilt
+ * as often as this one is.
+ */
+const framed = new Map<string, { k: number; x: number; y: number }>();
+
 /** Mermaid takes concrete colours, so the tokens are resolved at render time. */
 function applyTheme() {
   const s = getComputedStyle(document.documentElement);
@@ -73,8 +91,8 @@ function isMermaid(node: PMNode): boolean {
  * for the viewport it happened to render in. Left alone the diagram is cropped
  * — so the intrinsic size is dropped and the viewBox is left to scale it.
  */
-function fit(host: HTMLElement) {
-  const svg = host.querySelector("svg");
+function fit(stage: HTMLElement) {
+  const svg = stage.querySelector("svg");
   if (!svg) return;
   svg.removeAttribute("width");
   svg.removeAttribute("height");
@@ -87,25 +105,27 @@ function fit(host: HTMLElement) {
 }
 
 /** Draw into an existing element; failures show the message, not a blank box. */
-async function draw(host: HTMLElement, source: string) {
+async function draw(host: HTMLElement, stage: HTMLElement, source: string) {
   const at = `${paper()}:${source}`;
   const hit = cache.get(at);
   if (hit) {
-    host.innerHTML = hit;
+    stage.innerHTML = hit;
     host.classList.remove("bad");
-    fit(host);
+    fit(stage);
     return;
   }
   applyTheme();
   try {
     const { svg } = await mermaid.render(`plans-mermaid-${seq++}`, source);
     cache.set(at, svg);
-    host.innerHTML = svg;
+    stage.innerHTML = svg;
     host.classList.remove("bad");
-    fit(host);
+    fit(stage);
   } catch (e) {
     host.classList.add("bad");
-    host.textContent = String(e instanceof Error ? e.message : e).split("\n")[0];
+    // Into the stage, not the host: writing to the host would take the stage
+    // and the reset chip with it, leaving the next redraw nothing to draw in.
+    stage.textContent = String(e instanceof Error ? e.message : e).split("\n")[0];
   }
 }
 
@@ -123,6 +143,211 @@ function paper(): string {
   return document.documentElement.dataset.theme ?? "day";
 }
 
+/** How far a diagram has been zoomed, and where it has been dragged to. */
+type Frame = { k: number; x: number; y: number };
+
+/**
+ * Wire zoom, pan and reset onto a frame and the stage inside it.
+ *
+ * Shared by the figure in the document and by the maximised view, which want
+ * exactly the same gestures over a different amount of room — and which would
+ * otherwise be eighty lines of pointer arithmetic written twice and corrected
+ * once.
+ */
+function steer(
+  frame: HTMLElement,
+  stage: HTMLElement,
+  seed: Frame,
+  save: (at: Frame | null) => void,
+): { home: () => void } {
+  let { k, x, y } = seed;
+
+  /**
+   * Write the current transform, having first made sure it is one the reader
+   * can come back from.
+   *
+   * The clamp is skipped while the boxes measure zero — which is the case on
+   * the very first call, since a widget is built before it is in the document.
+   * Without that guard the clamp would collapse to ±0 and write the zeroes
+   * back out, destroying the remembered position at the exact moment it was
+   * being restored.
+   */
+  const apply = () => {
+    const w = stage.offsetWidth;
+    const h = stage.offsetHeight;
+    if (w && h) {
+      const room = (n: number) => ((k - 1) * n) / 2;
+      x = Math.max(-room(w), Math.min(room(w), x));
+      y = Math.max(-room(h), Math.min(room(h), y));
+    }
+    stage.style.transform = `translate(${x}px, ${y}px) scale(${k})`;
+    frame.classList.toggle("zoomed", k > 1);
+    save(k === 1 && x === 0 && y === 0 ? null : { k, x, y });
+  };
+
+  // Paint what was remembered now, so a rebuilt widget never flashes at 1:1,
+  // then clamp it once there is a real box to clamp against.
+  stage.style.transform = `translate(${x}px, ${y}px) scale(${k})`;
+  frame.classList.toggle("zoomed", k > 1);
+  requestAnimationFrame(apply);
+
+  /*
+   * ⌘/ctrl-wheel, which is also what a trackpad pinch arrives as. A plain
+   * wheel is left alone deliberately: the pointer is over a diagram for much
+   * of a long plan, and a scroll that zoomed instead would make the document
+   * unreadable.
+   */
+  frame.addEventListener(
+    "wheel",
+    (e) => {
+      if (!e.ctrlKey && !e.metaKey) return;
+      e.preventDefault();
+      e.stopPropagation();
+      // A notched mouse wheel reports lines, not pixels; unnormalised, every
+      // notch would be an imperceptible fraction of a step.
+      const d = e.deltaMode === 1 ? e.deltaY * 16 : e.deltaY;
+      // Exponential, so zooming in and back out lands where it started.
+      const next = Math.max(1, Math.min(8, k * Math.exp(-d / 240)));
+      // Keep whatever is under the pointer under the pointer.
+      const r = frame.getBoundingClientRect();
+      const cx = e.clientX - r.left - r.width / 2;
+      const cy = e.clientY - r.top - r.height / 2;
+      x = cx - ((cx - x) * next) / k;
+      y = cy - ((cy - y) * next) / k;
+      k = next;
+      apply();
+    },
+    { passive: false },
+  );
+
+  /*
+   * Drag to pan, but only once there is somewhere to pan to. At 1:1 the whole
+   * picture is on screen and a drag means what it means anywhere else.
+   *
+   * Pointer capture rather than listeners on the document: it keeps a drag
+   * alive past the edge of the frame without leaving anything registered
+   * outside it.
+   */
+  let from: { px: number; py: number; x: number; y: number } | null = null;
+  frame.addEventListener("pointerdown", (e) => {
+    // Never start a pan under a button that is sitting on top of the picture.
+    if (k <= 1 || e.button !== 0 || (e.target as HTMLElement).closest("button")) return;
+    e.preventDefault();
+    e.stopPropagation();
+    frame.setPointerCapture(e.pointerId);
+    from = { px: e.clientX, py: e.clientY, x, y };
+  });
+  frame.addEventListener("pointermove", (e) => {
+    if (!from) return;
+    x = from.x + (e.clientX - from.px);
+    y = from.y + (e.clientY - from.py);
+    apply();
+  });
+  const release = (e: PointerEvent) => {
+    if (!from) return;
+    from = null;
+    if (frame.hasPointerCapture(e.pointerId)) frame.releasePointerCapture(e.pointerId);
+  };
+  frame.addEventListener("pointerup", release);
+  frame.addEventListener("pointercancel", release);
+
+  const home = () => {
+    k = 1;
+    x = 0;
+    y = 0;
+    apply();
+  };
+  frame.addEventListener("dblclick", (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    home();
+  });
+
+  return { home };
+}
+
+/**
+ * The diagram, as big as the window will allow.
+ *
+ * Zoom inside the figure is looking closer at something in a frame the size of
+ * a paragraph, which is the wrong size for the diagrams that most need looking
+ * at. This is the same picture with the room to read it.
+ *
+ * Built into `document.body` rather than into the figure, for two reasons that
+ * both matter: the figure clips its overflow, and anything inside the editor's
+ * DOM is something ProseMirror believes it owns. Its own copy of the SVG, drawn
+ * from the same cache, so nothing is moved out of the document and put back.
+ */
+function maximise(source: string) {
+  const scrim = document.createElement("div");
+  scrim.className = "mermaid-scrim";
+
+  const frame = document.createElement("div");
+  frame.className = "mermaid-full";
+  scrim.append(frame);
+
+  const stage = document.createElement("div");
+  stage.className = "mermaid-stage";
+  frame.append(stage);
+
+  const tools = document.createElement("div");
+  tools.className = "mermaid-tools";
+  frame.append(tools);
+
+  const reset = document.createElement("button");
+  reset.className = "mermaid-tool";
+  reset.type = "button";
+  reset.textContent = "1:1";
+  reset.title = "Reset the diagram";
+  tools.append(reset);
+
+  const close = document.createElement("button");
+  close.className = "mermaid-tool";
+  close.type = "button";
+  close.textContent = "✕";
+  close.title = "Close (esc)";
+  close.setAttribute("aria-label", "Close");
+  tools.append(close);
+
+  // Always opens at a fit, never at whatever the small copy was showing:
+  // maximising is a request to see the whole thing.
+  const at = steer(frame, stage, { k: 1, x: 0, y: 0 }, () => {});
+  reset.addEventListener("click", (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    at.home();
+  });
+
+  const shut = () => {
+    document.removeEventListener("keydown", onKey, true);
+    scrim.remove();
+  };
+  /*
+   * Captured, and stopped.
+   *
+   * Escape means several things in this app — leave zen, unfocus the editor,
+   * close a sheet — and while this is open it means only this. Taking it in
+   * the capture phase is what keeps the keystroke from also doing one of the
+   * others on its way past.
+   */
+  const onKey = (e: KeyboardEvent) => {
+    if (e.key !== "Escape") return;
+    e.preventDefault();
+    e.stopPropagation();
+    shut();
+  };
+  document.addEventListener("keydown", onKey, true);
+  close.addEventListener("click", shut);
+  // The backdrop closes; the picture itself does not, or a pan that ends
+  // outside the diagram would dismiss it.
+  scrim.addEventListener("pointerdown", (e) => {
+    if (e.target === scrim) shut();
+  });
+
+  void draw(frame, stage, source);
+  document.body.append(scrim);
+}
+
 function build(doc: PMNode): DecorationSet {
   const out: Decoration[] = [];
   doc.descendants((node, pos) => {
@@ -136,7 +361,48 @@ function build(doc: PMNode): DecorationSet {
           const host = document.createElement("div");
           host.className = "mermaid-figure";
           host.setAttribute("contenteditable", "false");
-          void draw(host, source);
+          // The stage is what moves. Keeping the transform off the figure means
+          // the frame stays put and crops, which is what makes a zoom read as
+          // looking closer at something rather than the page growing a bulge.
+          const stage = document.createElement("div");
+          stage.className = "mermaid-stage";
+          host.append(stage);
+
+          const tools = document.createElement("div");
+          tools.className = "mermaid-tools";
+          host.append(tools);
+
+          const big = document.createElement("button");
+          big.className = "mermaid-tool";
+          big.type = "button";
+          big.textContent = "⤢";
+          big.title = "Maximise the diagram";
+          big.setAttribute("aria-label", "Maximise the diagram");
+          tools.append(big);
+
+          const reset = document.createElement("button");
+          reset.className = "mermaid-tool";
+          reset.type = "button";
+          reset.textContent = "1:1";
+          reset.title = "Reset the diagram";
+          tools.append(reset);
+
+          const at = steer(host, stage, framed.get(source) ?? { k: 1, x: 0, y: 0 }, (now) => {
+            if (now) framed.set(source, now);
+            else framed.delete(source);
+          });
+          reset.addEventListener("click", (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            at.home();
+          });
+          big.addEventListener("click", (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            maximise(source);
+          });
+
+          void draw(host, stage, source);
           return host;
         },
         /**
@@ -147,8 +413,19 @@ function build(doc: PMNode): DecorationSet {
          * the rest. But it also meant a theme change rebuilt the decoration set
          * and then reused every widget in it, so the diagrams kept the colours
          * they were drawn with until the file was closed and opened again.
+         *
+         * The position is in the key too, so an edit anywhere above a diagram
+         * rebuilds it. That is why the zoom is remembered in `framed` rather
+         * than held on the node: the node does not live long enough.
          */
-        { side: 1, key: `mermaid:${pos}:${paper()}:${source}` },
+        {
+          side: 1,
+          key: `mermaid:${pos}:${paper()}:${source}`,
+          // A pan is a drag, and a drag inside the document is a selection
+          // unless the widget says otherwise.
+          stopEvent: () => true,
+          ignoreSelection: true,
+        },
       ),
     );
   });

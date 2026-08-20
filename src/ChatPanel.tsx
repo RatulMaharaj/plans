@@ -91,6 +91,8 @@ type Props = {
   onRenameChat: (id: string) => void;
   /** A chat names itself after the first thing said in it. */
   onTitle: (id: string, title: string) => void;
+  /** Which conversations have a live agent, by `repo::chat`. */
+  running: Record<string, number>;
   /** What to tell someone whose agent will not start. */
   authHint: string;
 };
@@ -164,6 +166,7 @@ export function ChatPanel({
   onDeleteChat,
   onRenameChat,
   onTitle,
+  running,
   authHint,
 }: Props) {
   const key = repo && chats.current ? chatKey(repo, chats.current) : null;
@@ -171,9 +174,46 @@ export function ChatPanel({
   const [input, setInput] = useState("");
   /** Which slash suggestion is highlighted, or -1 for "the list is closed". */
   const [pick, setPick] = useState(-1);
-  /** The turn in flight, if any, and which conversation it belongs to. */
-  const turn = useRef<{ id: ChatId; key: string; at: number } | null>(null);
-  const [busy, setBusy] = useState(false);
+  /**
+   * The turn in flight in each conversation, by thread key.
+   *
+   * A map rather than a single value, and that is the whole of what lets two
+   * agents run: there was one turn ref, nulled whenever the panel changed
+   * chats, so a conversation you navigated away from had nowhere to put its
+   * answer. Its narration was not merely hidden — it was dropped, permanently,
+   * including after coming back.
+   */
+  const turns = useRef(new Map<string, { id: ChatId; at: number }>());
+  /**
+   * The newest session this repository has had.
+   *
+   * `agent-down` arrives twice for one stop — once the moment the session is
+   * told to go, and once when its task has actually finished, which is
+   * arbitrarily later. By then a *different* session may be running, and an
+   * unstamped farewell is indistinguishable from news about that one: it
+   * cleared the live turn, after which the running agent's answer went
+   * nowhere. Anything older than this is news about something already over.
+   *
+   * By chat, since a repository now has one of these per conversation.
+   */
+  const gen = useRef(new Map<string, number>());
+  /**
+   * Which conversations have a turn in flight.
+   *
+   * Per chat, so a long job running in one does not disable the composer in
+   * another. `busy` below is only this panel's view of the chat on screen.
+   */
+  const [working, setWorking] = useState<ReadonlySet<string>>(new Set());
+  const busy = !!key && working.has(key);
+  const mark = useCallback((k: string, on: boolean) => {
+    setWorking((prev) => {
+      if (prev.has(k) === on) return prev;
+      const next = new Set(prev);
+      if (on) next.add(k);
+      else next.delete(k);
+      return next;
+    });
+  }, []);
   const logRef = useRef<HTMLDivElement>(null);
   const boxRef = useRef<HTMLTextAreaElement>(null);
 
@@ -214,9 +254,13 @@ export function ChatPanel({
     const t = threads.current.get(key) ?? load(key);
     threads.current.set(key, t);
     setThread(t);
-    // A turn belonging to the chat we just left is no longer this panel's.
-    turn.current = null;
-    setBusy(false);
+    /*
+     * Nothing is reset here any more.
+     *
+     * A turn belonging to the chat you just left is still that chat's, and is
+     * still arriving — it now has a place to arrive at. Clearing state on a
+     * switch is exactly what made a backgrounded conversation lose its answer.
+     */
   }, [key]);
 
   /** Add to a transcript: a new bubble, or more of the one being written. */
@@ -284,16 +328,40 @@ export function ChatPanel({
   useEffect(() => {
     const mine = (repoOf: string) => repoOf === repo;
 
-    const message = listen<{ repo: string; turn: number; text: string }>("agent-message", (e) => {
-      if (e.payload.turn !== turn.current?.id) return;
-      say(turn.current.key, "assistant", e.payload.text, true);
-    });
-    const thought = listen<{ repo: string; turn: number; text: string }>("agent-thought", (e) => {
-      if (e.payload.turn !== turn.current?.id) return;
-      say(turn.current.key, "thought", e.payload.text, true);
-    });
+    /*
+     * Which transcript an event belongs to, from the event itself.
+     *
+     * Narration used to be matched against the one turn the panel had in hand,
+     * which meant it could only ever reach the conversation on screen. Every
+     * payload now names its chat, so a turn running in a chat you are not
+     * looking at writes into that chat — `commit` persists threads whether or
+     * not they are the one being rendered, which is what makes that work.
+     */
+    const to = (payload: { repo: string; chat?: string; turn?: number }) => {
+      if (!mine(payload.repo) || !payload.chat) return null;
+      const k = chatKey(payload.repo, payload.chat);
+      // A turn id from a session this chat has moved on from.
+      if (payload.turn !== undefined && turns.current.get(k)?.id !== payload.turn) return null;
+      return k;
+    };
+
+    const message = listen<{ repo: string; chat: string; turn: number; text: string }>(
+      "agent-message",
+      (e) => {
+        const k = to(e.payload);
+        if (k) say(k, "assistant", e.payload.text, true);
+      },
+    );
+    const thought = listen<{ repo: string; chat: string; turn: number; text: string }>(
+      "agent-thought",
+      (e) => {
+        const k = to(e.payload);
+        if (k) say(k, "thought", e.payload.text, true);
+      },
+    );
     const tool = listen<{
       repo: string;
+      chat: string;
       turn: number;
       callId: string;
       title: string | null;
@@ -301,9 +369,10 @@ export function ChatPanel({
       status: string | null;
       locations: string[] | null;
     }>("agent-tool", (e) => {
-      if (e.payload.turn !== turn.current?.id) return;
+      const k = to(e.payload);
+      if (!k) return;
       const { callId, title, kind, status, locations } = e.payload;
-      upsertTool(turn.current.key, {
+      upsertTool(k, {
         callId,
         ...(title ? { title } : {}),
         ...(kind ? { kind } : {}),
@@ -311,69 +380,108 @@ export function ChatPanel({
         ...(locations ? { locations } : {}),
       });
     });
-    const ended = listen<{ repo: string; turn: number; stop: string; ok: boolean }>(
-      "agent-turn",
-      (e) => {
-        if (e.payload.turn !== turn.current?.id) return;
-        const k = turn.current.key;
-        track("chat_turn_finished", {
-          ok: e.payload.ok,
-          seconds: Math.round((Date.now() - turn.current.at) / 1000),
-        });
-        turn.current = null;
-        setBusy(false);
-        if (!e.payload.ok) say(k, "note", `stopped — ${e.payload.stop}`, false);
-      },
-    );
+    const ended = listen<{
+      repo: string;
+      chat: string;
+      turn: number;
+      stop: string;
+      ok: boolean;
+    }>("agent-turn", (e) => {
+      const k = to(e.payload);
+      if (!k) return;
+      const at = turns.current.get(k)?.at ?? Date.now();
+      track("chat_turn_finished", {
+        ok: e.payload.ok,
+        seconds: Math.round((Date.now() - at) / 1000),
+      });
+      turns.current.delete(k);
+      mark(k, false);
+      if (!e.payload.ok) say(k, "note", `stopped — ${e.payload.stop}`, false);
+    });
 
     // Session-scoped: no turn to match, so the repo is the filter.
-    const config = listen<{ repo: string; options: ConfigOption[] }>("agent-config", (e) => {
-      if (!mine(e.payload.repo) || !key) return;
-      commit(key, (t) => ({ ...t, options: e.payload.options ?? [] }));
-    });
-    const commands = listen<{ repo: string; commands: AgentCommand[] }>("agent-commands", (e) => {
-      if (!mine(e.payload.repo) || !key) return;
-      commit(key, (t) => ({ ...t, commands: e.payload.commands ?? [] }));
-    });
+    /*
+     * Session-scoped events — what the agent *is*, rather than what it is
+     * saying. They carry no turn, and they too belong to a conversation rather
+     * than to whichever one happens to be on screen: with two sessions live,
+     * writing these into the visible transcript would put one agent's model
+     * list and permission requests into the other's.
+     */
+    const config = listen<{ repo: string; chat: string; options: ConfigOption[] }>(
+      "agent-config",
+      (e) => {
+        const k = to(e.payload);
+        if (k) commit(k, (t) => ({ ...t, options: e.payload.options ?? [] }));
+      },
+    );
+    const commands = listen<{ repo: string; chat: string; commands: AgentCommand[] }>(
+      "agent-commands",
+      (e) => {
+        const k = to(e.payload);
+        if (k) commit(k, (t) => ({ ...t, commands: e.payload.commands ?? [] }));
+      },
+    );
     const asked = listen<{
       repo: string;
+      chat: string;
       requestId: string;
       title: string;
       options: { optionId: string; name: string; kind?: string }[];
     }>("agent-permission", (e) => {
-      if (!mine(e.payload.repo) || !key) return;
+      const k = to(e.payload);
+      if (!k) return;
       const { requestId, title, options } = e.payload;
-      commit(key, (t) => ({
+      // Into its own transcript, so a question asked by a chat you are not
+      // looking at is waiting there when you arrive rather than lost.
+      commit(k, (t) => ({
         ...t,
         messages: [...t.messages, { role: "permission", requestId, title, options }],
       }));
     });
-    const answeredElsewhere = listen<{ repo: string; requestId: string; chosen: string | null }>(
-      "agent-permission-done",
+    const answeredElsewhere = listen<{
+      repo: string;
+      chat: string;
+      requestId: string;
+      chosen: string | null;
+    }>("agent-permission-done", (e) => {
+      const k = to(e.payload);
+      if (!k) return;
+      commit(k, (t) => ({
+        ...t,
+        messages: t.messages.map((m) =>
+          m.role === "permission" && m.requestId === e.payload.requestId
+            ? { ...m, answered: e.payload.chosen }
+            : m,
+        ),
+      }));
+    });
+    const opened = listen<{ repo: string; chat: string; sessionId: string }>(
+      "agent-session",
       (e) => {
-        if (!mine(e.payload.repo) || !key) return;
-        commit(key, (t) => ({
-          ...t,
-          messages: t.messages.map((m) =>
-            m.role === "permission" && m.requestId === e.payload.requestId
-              ? { ...m, answered: e.payload.chosen }
-              : m,
-          ),
-        }));
+        const k = to(e.payload);
+        if (k) commit(k, (t) => ({ ...t, session: e.payload.sessionId }));
       },
     );
-    const opened = listen<{ repo: string; sessionId: string }>("agent-session", (e) => {
-      if (!mine(e.payload.repo) || !key) return;
-      commit(key, (t) => ({ ...t, session: e.payload.sessionId }));
+    const plan = listen<{ repo: string; chat: string; entries: Thread["todo"] }>(
+      "agent-plan",
+      (e) => {
+        const k = to(e.payload);
+        if (k) commit(k, (t) => ({ ...t, todo: e.payload.entries ?? [] }));
+      },
+    );
+    const ready = listen<{ repo: string; chat: string; gen: number }>("agent-ready", (e) => {
+      const k = to(e.payload);
+      if (k) gen.current.set(k, e.payload.gen);
     });
-    const plan = listen<{ repo: string; entries: Thread["todo"] }>("agent-plan", (e) => {
-      if (!mine(e.payload.repo) || !key) return;
-      commit(key, (t) => ({ ...t, todo: e.payload.entries ?? [] }));
-    });
-    const down = listen<{ repo: string; message: string }>("agent-down", (e) => {
-      if (!mine(e.payload.repo) || !key) return;
-      turn.current = null;
-      setBusy(false);
+    const down = listen<{ repo: string; chat: string; gen: number; message: string }>(
+      "agent-down",
+      (e) => {
+      const k = to(e.payload);
+      if (!k) return;
+      // A farewell from a session that has already been replaced.
+      if (e.payload.gen && e.payload.gen < (gen.current.get(k) ?? 0)) return;
+      turns.current.delete(k);
+      mark(k, false);
       if (!e.payload.message) return;
       /*
        * The message the agent leaves is true and rarely actionable, so a
@@ -385,19 +493,20 @@ export function ChatPanel({
        * node could not be found sends them to fix the wrong thing.
        */
       const why = e.payload.message;
-      say(key, "note", `the agent stopped — ${why}`, false);
+      say(k, "note", `the agent stopped — ${why}`, false);
       const missing = /127|No such file|not found|ENOENT/i.test(why);
       if (missing) {
         say(
-          key,
+          k,
           "note",
           "That is the agent failing to start, not a sign-in problem — it could not find what it needs on the PATH. Installing it from Settings → Agents runs it directly instead of through npx.",
           false,
         );
       } else if (authHint) {
-        say(key, "note", authHint, false);
+        say(k, "note", authHint, false);
       }
-    });
+      },
+    );
 
     return () => {
       for (const u of [
@@ -411,6 +520,7 @@ export function ChatPanel({
         answeredElsewhere,
         opened,
         plan,
+        ready,
         down,
       ])
         void u.then((f) => f());
@@ -419,7 +529,9 @@ export function ChatPanel({
 
   const send = useCallback(
     async (text: string, seeded = false) => {
-      if (!key || !text.trim() || turn.current || inflight.current) return;
+      // Per chat: a long job running in another conversation is not a reason
+      // to refuse this one.
+      if (!key || !text.trim() || turns.current.has(key) || inflight.current) return;
       /*
        * `/clear` means what it says, here.
        *
@@ -427,8 +539,13 @@ export function ChatPanel({
        * transcript untouched, which looks exactly like nothing happening. It
        * is the same intent as New chat, so it is the same action — and the
        * agent's session ends with it rather than being asked to forget.
+       *
+       * The stop is explicit now. New chat no longer ends anything, so without
+       * it `/clear` would start a fresh conversation and leave the process it
+       * was clearing running with nothing pointing at it.
        */
       if (text.trim() === "/clear") {
+        void api.agentStop(repo, chats.current).catch(() => {});
         onNewChat();
         return;
       }
@@ -449,7 +566,7 @@ export function ChatPanel({
         plan: relPath ?? cur.plan ?? null,
         messages: [...cur.messages, { role: "user", text }],
       }));
-      setBusy(true);
+      mark(key, true);
       // The length and whether a button wrote it — never the message itself.
       track("chat_message_sent", { seeded, chars: text.length });
       try {
@@ -462,7 +579,13 @@ export function ChatPanel({
          * the new agent starts without it, and the note says so.
          */
         const same = !t.agent || t.agent === cmd;
-        const id = await api.agentPrompt(repo, cmd, where + text, same ? t.session : null);
+        const id = await api.agentPrompt(
+          repo,
+          chats.current,
+          cmd,
+          where + text,
+          same ? t.session : null,
+        );
         if (!same) {
           commit(key, (cur) => ({
             ...cur,
@@ -474,9 +597,9 @@ export function ChatPanel({
           }));
         }
         commit(key, (cur) => ({ ...cur, agent: cmd }));
-        turn.current = { id, key, at: Date.now() };
+        turns.current.set(key, { id, at: Date.now() });
       } catch (e) {
-        setBusy(false);
+        mark(key, false);
         // In the transcript as well as the toast: a turn that produced nothing
         // must not look like a turn that is still thinking, and a toast is
         // gone by the time you look back at the conversation.
@@ -486,7 +609,7 @@ export function ChatPanel({
         inflight.current = false;
       }
     },
-    [key, relPath, repo, cmd, commit, notify, say, onNewChat],
+    [key, relPath, repo, cmd, chats.current, commit, notify, say, onNewChat, mark],
   );
 
   // "Hand off" and friends arrive as a seeded message, sent as if typed.
@@ -500,13 +623,15 @@ export function ChatPanel({
     void send(seed, true);
   }, [seed, key, send, onSeedUsed]);
 
+  /** Stop belongs to the conversation it is in, not to whatever ran last. */
   const stop = () => {
-    if (turn.current) void api.agentCancel(repo, turn.current.id).catch(() => {});
+    const at = key && turns.current.get(key);
+    if (at) void api.agentCancel(repo, chats.current, at.id).catch(() => {});
   };
 
   /** Answer a permission request from the transcript. */
   const decide = (requestId: string, optionId: string | null) => {
-    void api.agentPermission(repo, requestId, optionId).catch(() => {});
+    void api.agentPermission(repo, chats.current, requestId, optionId).catch(() => {});
   };
 
   /*
@@ -570,7 +695,29 @@ export function ChatPanel({
             ariaLabel="Conversation"
             value={chats.current}
             onChange={onOpenChat}
-            choices={chats.list.map((c: ChatRef) => ({ value: c.id, label: c.title }))}
+            /*
+             * Running first, finished under a rule.
+             *
+             * A chat is active because a process exists behind it and archived
+             * because none does — a fact rather than a policy, so it needs no
+             * timer and no flag anyone has to remember to set. The Dropdown
+             * already has both affordances this wants: a note on the right, and
+             * one row set apart, which is all a divider has to be.
+             */
+            choices={(() => {
+              const live = chats.list.filter((c: ChatRef) => running[`${repo}::${c.id}`]);
+              const rest = chats.list.filter((c: ChatRef) => !running[`${repo}::${c.id}`]);
+              return [
+                ...live.map((c: ChatRef) => ({ value: c.id, label: c.title, note: "running" })),
+                ...rest.map((c: ChatRef, i: number) => ({
+                  value: c.id,
+                  label: c.title,
+                  // Only the first, and only when there is something above it
+                  // to be set apart from.
+                  apart: i === 0 && live.length > 0,
+                })),
+              ];
+            })()}
           />
         ) : (
           <span className="chat-title">{chats.list[0]?.title ?? "New chat"}</span>
@@ -752,7 +899,7 @@ export function ChatPanel({
           * said, they are setting what happens next.
           */}
         <div className="chat-foot">
-          <AgentOptions repo={repo} options={thread.options} busy={busy} />
+          <AgentOptions repo={repo} chat={chats.current} options={thread.options} busy={busy} />
         </div>
       </div>
     </section>

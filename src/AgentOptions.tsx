@@ -51,10 +51,13 @@ function ranked(options: ConfigOption[]) {
 
 export function AgentOptions({
   repo,
+  chat,
   options,
   busy,
 }: {
   repo: string;
+  /** The conversation these options belong to — a session is per chat. */
+  chat: string;
   options: ConfigOption[] | undefined;
   /** A turn in flight: changing a model mid-answer is not a thing to allow. */
   busy: boolean;
@@ -72,7 +75,7 @@ export function AgentOptions({
           ariaLabel={o.name}
           value={o.currentValue}
           disabled={busy}
-          onChange={(v) => void api.agentSetConfig(repo, o.id, v).catch(() => {})}
+          onChange={(v) => void api.agentSetConfig(repo, chat, o.id, v).catch(() => {})}
           choices={(o.category === "thought_level" ? [...o.options].sort(byEffort) : o.options).map(
             (c) => ({ value: c.value, label: c.name, note: c.description }),
           )}

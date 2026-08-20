@@ -9,8 +9,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { AgentFound, PlanFile, RepoInfo } from "./api";
 import { displayName } from "./FileTree";
 import { FONTS, MONO_FONTS } from "./fonts";
-import { RANGES, type Settings } from "./settings";
-import type { Index as ChatIndex } from "./chats";
+import { DEFAULTS, RANGES, type Settings } from "./settings";
+import type { ChatRef, Index as ChatIndex } from "./chats";
 import { THEMES } from "./theme";
 
 export type Command = {
@@ -79,12 +79,25 @@ type Props = {
   onOpenChat: (id: string) => void;
   onDeleteChat: (id: string) => void;
   onRenameChat: (id: string) => void;
+  /** Every open repository's chats, for the "all" scope. */
+  allChats: {
+    repoPath: string;
+    repoName: string;
+    chat: ChatRef;
+    local: boolean;
+    current: boolean;
+  }[];
+  onOpenChatIn: (repoPath: string, id: string) => void;
+  /** Which conversations have a live agent, by `repo::chat`. */
+  running: Record<string, number>;
   /** Which agents this machine has, and switching to one. */
   agents: AgentFound[];
   onUseAgent: (id: string) => void;
   /** Close every open buffer, and how many there are to close. */
   onCloseAll: () => void;
   openCount: number;
+  /** Step to the next open buffer, or the previous one. */
+  onCycleTab: (step: number) => void;
   onCopyAgentCommand: () => void;
   onMatter: () => void;
   /** From settings: what `status:` may be set to from here. */
@@ -335,6 +348,25 @@ function buildCommands(p: Props): Command[] {
       run: p.onCloseAll,
     });
   }
+  // A binding nobody can find is a binding nobody uses.
+  if (p.openCount > 1) {
+    add({
+      id: "tab.next",
+      group: "Go",
+      label: "Next buffer",
+      hint: "⌃⇥",
+      terms: "tab cycle switch forward cmd alt right cycle through open",
+      run: () => p.onCycleTab(1),
+    });
+    add({
+      id: "tab.prev",
+      group: "Go",
+      label: "Previous buffer",
+      hint: "⌃⇧⇥",
+      terms: "tab cycle switch back cmd alt left cycle through open",
+      run: () => p.onCycleTab(-1),
+    });
+  }
   add({
     id: "v.settings",
     group: "Go",
@@ -399,6 +431,7 @@ function buildCommands(p: Props): Command[] {
     group: string,
     label: string,
     unit = "",
+    terms?: string,
   ) => {
     const r = RANGES[key];
     const cur = s[key];
@@ -408,6 +441,7 @@ function buildCommands(p: Props): Command[] {
       group,
       label: `${label}: increase`,
       value: show(cur),
+      terms,
       run: () => set({ [key]: Math.min(r.max, cur + r.step) } as Partial<Settings>),
     });
     add({
@@ -415,15 +449,43 @@ function buildCommands(p: Props): Command[] {
       group,
       label: `${label}: decrease`,
       value: show(cur),
+      terms,
       run: () => set({ [key]: Math.max(r.min, cur - r.step) } as Partial<Settings>),
     });
+    /*
+     * And a way back.
+     *
+     * Nudging is the only way these values move, so having zoomed the page you
+     * could only return to the default by counting your way back to it — and
+     * the number you are counting back to is not written anywhere you can see
+     * while the palette is open. The Settings page has had the answer all
+     * along: every slider there carries a revert to `DEFAULTS`.
+     *
+     * Always offered, alongside the two nudges it belongs with. It was briefly
+     * hidden while the value was already at its default, on the grounds that a
+     * command doing nothing is clutter — which got the trade backwards. A
+     * reader looking for "reset" wants to know the app *has* one, and a list
+     * whose contents depend on state you cannot see is a list you cannot learn.
+     * The value says where it would go, so a no-op reads as one.
+     */
+    const home = DEFAULTS[key];
+    add({
+      id: `${key}.reset`,
+      group,
+      label: `${label}: reset`,
+      value: cur === home ? show(home) : `${show(cur)} → ${show(home)}`,
+      terms: `default original ${terms ?? ""}`,
+      run: () => set({ [key]: home } as Partial<Settings>),
+    });
   };
-  nudge("size", "Typeface", "Size", "px");
+  // The two ⌘+/⌘− drives answer to "zoom"; the rest are not what anyone means
+  // by the word, and putting it on them would only make the search worse.
+  nudge("size", "Typeface", "Size", "px", "zoom bigger smaller scale editor page document");
   nudge("measure", "Typeface", "Line length", "ch");
   nudge("leading", "Typeface", "Line height");
   nudge("codeSize", "Typeface", "Code size", "px");
   nudge("watchSeconds", "Panels", "Outside-edit check", "s");
-  nudge("treeSize", "Files", "Tree text size", "px");
+  nudge("treeSize", "Files", "Tree text size", "px", "zoom bigger smaller scale sidebar tree files");
 
   // --- everything that is simply on or off ----------------------------------
   const toggle = (
@@ -500,6 +562,28 @@ function buildCommands(p: Props): Command[] {
     value: s.chatPlace === "side" ? "beside" : "below",
     terms: "sidebar terminal bottom column row",
     run: () => set({ chatPlace: s.chatPlace === "side" ? "bottom" : "side" }),
+  });
+
+  // Ordering by status is the cheap answer to sequencing a plans folder: the
+  // status is read on every file already, so it needs no field maintained by
+  // hand and cannot drift out of step with itself the way a number would.
+  add({
+    id: "treeSort",
+    group: "Files",
+    label: `Order files by ${s.treeSort === "status" ? "name" : "status"}`,
+    value: s.treeSort,
+    terms: "sort tree sequence order status alphabetical",
+    run: () => set({ treeSort: s.treeSort === "status" ? "name" : "status" }),
+  });
+
+  // Also not a toggle: what it switches between is two lists, not on and off.
+  add({
+    id: "chatScope",
+    group: "Agent",
+    label: `Search chats ${s.chatScope === "all" ? "in this repository" : "across every repository"}`,
+    value: s.chatScope === "all" ? "all repos" : "this repo",
+    terms: "palette hash conversation scope everywhere across",
+    run: () => set({ chatScope: s.chatScope === "all" ? "repo" : "all" }),
   });
 
   add({
@@ -596,15 +680,49 @@ export function Palette(props: Props) {
        * already are. Here you are reading a list, and a list with a hole in it
        * is harder to read than one without.
        */
+      if (props.settings.chatScope === "all") {
+        /*
+         * Every repository's, when that is what you asked for. The repository
+         * is named on each foreign row because the titles come from what was
+         * said, and two repositories can easily hold a chat called the same
+         * thing. Capped like the file and command lists: the per-repo list
+         * never needed one because it could not get long, and this one can.
+         *
+         * Ids are only unique within a repository, so the row key carries both.
+         */
+        return props.allChats
+          .map((e) => ({ e, s: score(e.chat.title, term), live: !!props.running[`${e.repoPath}::${e.chat.id}`] }))
+          .filter((x) => x.s !== null)
+          // Running first: an agent that is working is the thing you came
+          // looking for, whichever repository it is working in.
+          .sort((a, b) => Number(b.live) - Number(a.live) || (b.s as number) - (a.s as number))
+          .slice(0, 60)
+          .map(({ e, live }) => ({
+            kind: "cmd" as const,
+            key: `chat.${e.repoPath}::${e.chat.id}`,
+            label: e.chat.title,
+            // The repository still has to be named on a foreign row, or the
+            // row is not legible at all — so "running" joins it rather than
+            // replacing it.
+            sub: [
+              live ? "running" : null,
+              e.local ? (e.current ? "current" : "chat") : e.repoName,
+            ]
+              .filter(Boolean)
+              .join(" · "),
+            run: () => props.onOpenChatIn(e.repoPath, e.chat.id),
+          }));
+      }
+      const here = props.activeRepoPath ?? "";
       return props.chats.list
-        .map((c) => ({ c, s: score(c.title, term) }))
+        .map((c) => ({ c, s: score(c.title, term), live: !!props.running[`${here}::${c.id}`] }))
         .filter((x) => x.s !== null)
-        .sort((a, b) => (b.s as number) - (a.s as number))
-        .map(({ c }) => ({
+        .sort((a, b) => Number(b.live) - Number(a.live) || (b.s as number) - (a.s as number))
+        .map(({ c, live }) => ({
           kind: "cmd" as const,
           key: `chat.${c.id}`,
           label: c.title,
-          sub: c.id === props.chats.current ? "current" : "chat",
+          sub: live ? "running" : c.id === props.chats.current ? "current" : "archived",
           run: () => props.onOpenChat(c.id),
         }));
     }
@@ -648,7 +766,23 @@ export function Palette(props: Props) {
             : e.file.relPath,
         run: () => props.onOpenFile(e.repoPath, e.file.relPath),
       }));
-  }, [isCmd, isText, isChat, hits, term, commands, props.files, props.onOpenFile, props.chats, props.onOpenChat]);
+  }, [
+    isCmd,
+    isText,
+    isChat,
+    hits,
+    term,
+    commands,
+    props.files,
+    props.onOpenFile,
+    props.chats,
+    props.onOpenChat,
+    props.allChats,
+    props.onOpenChatIn,
+    props.settings.chatScope,
+    props.running,
+    props.activeRepoPath,
+  ]);
 
   useEffect(() => setSel(0), [q]);
 
@@ -724,7 +858,15 @@ export function Palette(props: Props) {
         </div>
         <div className="palette-foot">
           <span>
-            {isCmd ? "Commands" : isText ? "Inside files" : isChat ? "Chats" : "Files"}
+            {isCmd
+              ? "Commands"
+              : isText
+                ? "Inside files"
+                : isChat
+                  ? props.settings.chatScope === "all"
+                    ? "Chats · all repositories"
+                    : "Chats"
+                  : "Files"}
           </span>
           <span>↑↓ move · ⏎ run · esc close</span>
         </div>

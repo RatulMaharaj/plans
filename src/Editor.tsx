@@ -3,7 +3,7 @@ import { Crepe, CrepeFeature } from "@milkdown/crepe";
 import { remarkPluginsCtx, remarkStringifyOptionsCtx } from "@milkdown/core";
 import remarkFrontmatter from "remark-frontmatter";
 import { $prose, replaceAll } from "@milkdown/utils";
-import { Plugin, PluginKey } from "@milkdown/kit/prose/state";
+import { Plugin, PluginKey, TextSelection } from "@milkdown/kit/prose/state";
 import { languages } from "@codemirror/language-data";
 import { LanguageDescription } from "@codemirror/language";
 import { yaml } from "@codemirror/lang-yaml";
@@ -293,6 +293,32 @@ export function Editor({
     };
 
     /**
+     * Put the cursor at the end of the document and take focus.
+     *
+     * Unlike its neighbours above this deliberately does not set `touched`.
+     * Moving the cursor is not editing, and saying otherwise would re-open the
+     * bug where merely opening a file marked it dirty and autosave wrote the
+     * serialiser's rewrite back to disk.
+     *
+     * `TextSelection.near` rather than a selection at the size itself: the end
+     * of the document is a position *between* blocks, where a cursor cannot
+     * sit. Searching backwards from it finds the nearest place one can — for a
+     * newly created file, the empty paragraph under the heading.
+     */
+    htmlBridge.focusEnd = () => {
+      try {
+        crepe.editor.action((ctx) => {
+          const view = ctx.get(editorViewCtx);
+          const at = view.state.doc.resolve(view.state.doc.content.size);
+          view.dispatch(view.state.tr.setSelection(TextSelection.near(at, -1)).scrollIntoView());
+          view.focus();
+        });
+      } catch (e) {
+        trace("focus failed", { error: String(e) });
+      }
+    };
+
+    /**
      * Loading a document is not editing it. Parsing markdown into ProseMirror
      * and serialising it back is not the identity — bullets, emphasis and
      * escaping all normalise — so nothing is reported until create() has
@@ -388,7 +414,21 @@ export function Editor({
             const text = queued.current;
             queued.current = null;
             trace("taking queued document", { chars: text.length });
+            // swap() honours a pending focus request in its own frame; leaving
+            // it to do so is what keeps this one-shot from firing twice.
             swap(text);
+            return;
+          }
+          /*
+           * The editor does not exist until the first file is opened — the
+           * blank state renders instead of it — so a file created from an empty
+           * window is built here, at construction, and never reaches swap().
+           * Without this the request would sit set for the rest of the session
+           * and steal the cursor from whatever was opened next.
+           */
+          if (htmlBridge.focusNext) {
+            htmlBridge.focusNext = false;
+            htmlBridge.focusEnd?.();
           }
         });
       })
@@ -410,6 +450,13 @@ export function Editor({
       htmlBridge.apply = null;
       htmlBridge.insert = null;
       htmlBridge.comment = null;
+      /*
+       * The reason the bridge is a bridge. A focus request outliving the editor
+       * it was meant for would otherwise fire at a destroyed view; nulled here,
+       * the pending call is simply a no-op. `focusNext` is left alone — it
+       * belongs to App, and clearing it on a remount would drop a live request.
+       */
+      htmlBridge.focusEnd = null;
       /**
        * Do not touch the host here. destroy() resolves later, and React reuses
        * the same element for the next editor — clearing it then wipes the DOM
@@ -473,6 +520,16 @@ export function Editor({
             trace("swap left the editor empty — rebuilding", { chars: text.length });
             setRebuild((n) => n + 1);
           }
+        }
+        /*
+         * Honoured here and nowhere earlier: this frame exists precisely to let
+         * the replacement transactions settle, and focusing before they have is
+         * focusing a document still being built. Optional, because the rebuild
+         * branch above may have just torn the editor down.
+         */
+        if (htmlBridge.focusNext) {
+          htmlBridge.focusNext = false;
+          htmlBridge.focusEnd?.();
         }
       });
     }

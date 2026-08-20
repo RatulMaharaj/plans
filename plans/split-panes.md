@@ -161,6 +161,10 @@ another is exactly the moment a reader expects the first one to be written.
 
 ## Next
 
+- [x] Ctrl+Tab through the open buffers — the one part of this plan that needed
+      none of the refactor. `cycleTab` is now shared by ⌃Tab and ⌘⌥←/→ rather
+      than written twice, and it reopens a memory buffer from what the app holds
+      instead of trying to read a file that was never on disk
 - [ ] Measure a second Milkdown instance against the perf budgets — this gates the rest
 - [ ] Extract the `Pane` type and move the per-document state into it, one pane only
 - [ ] Prove no behaviour changed: full e2e suite green on the single-pane refactor
