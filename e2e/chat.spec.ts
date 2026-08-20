@@ -1290,6 +1290,28 @@ test("slash commands complete from what the agent advertised", async ({ page }) 
   expect(await calls(page, "agent_prompt")).toBe(0);
 });
 
+test("the app's skill commands ride along, installed or not", async ({ page }) => {
+  await open(page);
+  await openPlan(page);
+  await page.keyboard.press("Meta+j");
+
+  const box = page.locator(".chat-input textarea");
+  // Offered with no agent advertisement at all — they are the app's own.
+  await box.fill("/rev");
+  await expect(page.locator(".chat-slash-item")).toHaveCount(1);
+  await expect(page.locator(".chat-slash-item")).toContainText("review");
+
+  await box.fill("/review look at my-branch");
+  await box.press("Enter");
+  await expect.poll(() => calls(page, "agent_prompt")).toBe(1);
+  const [sent] = await argsOf(page, "agent_prompt");
+  // What travels is the skill's text with the message under it; the
+  // transcript keeps what was typed.
+  expect(String((sent as any).text)).toContain("Writing a review a human can read");
+  expect(String((sent as any).text)).toContain("look at my-branch");
+  await expect(page.locator(".chat-msg.user").last()).toContainText("/review look at my-branch");
+});
+
 test("a slash you meant literally still sends", async ({ page }) => {
   await open(page);
   await openPlan(page);

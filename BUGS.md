@@ -12,13 +12,6 @@ Remember to add changesets for any patched bugs - fixed bugs belong in the chang
 ## Open
 
 - [ ] Command palette not showing chats across all repos - I like the bahivour of it changing dynamically based on focused repo, but we maybe need a toggle to make it do that or not - also maybe chats should persist across repos maybe that’s the magic of this? — the toggle is in; whether a *chat* should follow you between repositories rather than merely be findable is still open
-- [ ] Dropping files from Finder into the window. Copying between open repositories now works by dragging, but a file from outside is a different problem: it needs Tauri’s own file-drop handling (`dragDropEnabled`), which takes away the HTML5 drag events the tree’s drag-to-move is built on. Planned in [`plans/drop-a-file-in.md`](plans/drop-a-file-in.md), and that trade is the decision it is waiting on.
-- [ ] In the git tab, when pathnames are very long, the filename isn’t visible. Maybe we need a multiline setup with truncating.
-- [ ] I need a way to refresh the list of branches
-- [ ] I need to be able open a repo in my terminal easily. Right click open in
-- [ ] Links between other markdown documents locally don’t seem to work
-- [ ] No stop button in agent chat / or ability to hit esc to stop what it’s doing.
-- [ ] We need to show a scrollbar for very long markdown documents, this needs to match our design / styling.  Scroll state needs to be preserved. Jumping between two docs shouldn’t reset the scroll position.
 
 ## Watch for
 
@@ -38,6 +31,54 @@ Not bugs yet — places the same class of mistake would land next.
   green test proves the harness agrees with the code, not that the app works.
 
 ## Fixed
+
+### Dropping a file from Finder did nothing
+
+The trade `drop-a-file-in.md` was waiting on is decided: `dragDropEnabled` is
+on, so dropped files arrive with real paths and open editable, saving back to
+where they came from. The tree's drag-to-move — built on the HTML5 drag events
+that setting takes away — was rebuilt on pointer events: a press, a movement
+threshold, `elementFromPoint` to find the folder under the pointer, a drop on
+release. Pointer events sit below the native drag machinery, so nothing can
+swallow them. Worth a manual check in the built app; Playwright sees neither.
+
+### Long paths hid the filename in the git panel
+
+`.change-dir` had `flex-shrink: 0`, so a deep folder path pushed the one part
+of the row that mattered — the filename — out of view. Inverted: the name
+never shrinks, the folder path truncates from the front so the nearest folder
+survives. Found by reading the CSS after the report; the symptom named the
+wrong element.
+
+### No way back to a fresh branch list
+
+Branches are fetched on demand (they cost seconds on a big repository) and
+cached until the epoch moves. "Refresh branches" in the git commands now
+re-reads the list when the cache is the thing you are fighting.
+
+### Links between documents did nothing
+
+No handler existed: a click in the editor was only ever an editing click.
+⌘-click now follows a link — a relative path resolves against the open file's
+folder and opens in the app; a scheme goes to the system browser — and plain
+clicks are prevented from ever navigating the webview away from the app.
+
+### Escape did not stop the agent
+
+The Stop button existed; the keyboard gesture every terminal agent teaches
+did not. Escape in the composer now cancels the running turn when one is
+running, and leaves the box when none is. ("Open in Terminal" on a
+repository's right-click menu landed in the same pass.)
+
+### Scroll position was shared, then lost
+
+Every open rebuilt the editor at the top, so jumping between two documents
+reset both. The position is remembered per `repo::path` and restored after
+the rebuild — retried for a few frames, because setting `scrollTop` on a
+Milkdown host that has not finished building clamps to zero. The document
+also shows a thin scrollbar again (the app hides them globally); a long plan
+with no bar gave no sense of place.
+
 
 ### A file grew an empty frontmatter block in front of its real one
 

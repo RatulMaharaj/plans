@@ -69,3 +69,4 @@ reason.
 - [ ] `showAllFiles` in settings, the palette, and Settings → Files
 - [ ] Force Source for non-markdown, and hide Write rather than disabling it
 - [ ] A test that a `.ts` file cannot reach the writing surface
+

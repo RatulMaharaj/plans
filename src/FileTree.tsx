@@ -205,6 +205,10 @@ type Props = {
   onDeleteDir: (repoPath: string, relPath: string) => void;
   /** Show the file or folder in Finder. relPath "" is the repository itself. */
   onReveal: (repoPath: string, relPath: string) => void;
+  /** Open a terminal in the repository. */
+  onTerminal: (repoPath: string) => void;
+  /** A file dragged onto the editor's far edge opens in the split pane. */
+  onOpenSplit: (repoPath: string, relPath: string) => void;
   /** dir is repo-relative, "" for the repo root. */
   onNewFile: (repoPath: string, dir: string) => void;
   onRename: (repoPath: string, relPath: string) => void;
@@ -289,31 +293,43 @@ export const FileTree = memo(function FileTree(p: Props) {
   const carried = useRef<{ repo: string; path: string; kind: "file" | "dir" } | null>(null);
   const [dragging, setDragging] = useState<{ repo: string; path: string } | null>(null);
   const [over, setOver] = useState<string | null>(null);
-  /** dragleave fires when the pointer crosses a child, so leaves are counted. */
-  const depth = useRef(0);
+  /** Where the pointer went down, before it has moved far enough to be a drag. */
+  const pressed = useRef<{
+    repo: string;
+    path: string;
+    kind: "file" | "dir";
+    x: number;
+    y: number;
+  } | null>(null);
+  /** Which drop target the pointer is currently over, resolved from the DOM. */
+  const target = useRef<{ repo: string; dir: string } | { split: true } | null>(null);
+  /** Swallow the click that follows a completed drag, so it doesn't open/toggle. */
+  const didDrag = useRef(false);
 
-  const MIME = "application/x-plans-move";
-
-  const startDrag = (
-    e: React.DragEvent,
-    repo: string,
-    path: string,
-    kind: "file" | "dir",
-  ) => {
-    e.stopPropagation();
-    carried.current = { repo, path, kind };
-    setDragging({ repo, path });
-    depth.current = 0;
-    e.dataTransfer.effectAllowed = "copyMove";
-    e.dataTransfer.setData(MIME, [repo, path, kind].join("\n"));
-    trace("drag start", { path, kind });
-    // Something usable by other applications, too.
-    e.dataTransfer.setData("text/plain", path);
-  };
+  /*
+   * Dragging on pointer events, not HTML5 drag-and-drop.
+   *
+   * `dragDropEnabled` is on so files from Finder arrive with real paths —
+   * and with it on, Tauri's window takes drag events for native file drops
+   * before the page can see them (the bug log has the scar). Pointer events
+   * are below all of that: a press, a threshold, `elementFromPoint` to find
+   * the folder under the pointer, and a drop on release.
+   */
+  const dragHandle = (repo: string, path: string, kind: "file" | "dir") => ({
+    onPointerDown: (e: React.PointerEvent) => {
+      if (e.button !== 0) return;
+      pressed.current = { repo, path, kind, x: e.clientX, y: e.clientY };
+    },
+  });
 
   const endDrag = () => {
+    // Only a drag this tree started gets to turn the drop zone off — the tab
+    // strip shares the `tree-drag` switch, and this handler fires on every
+    // pointerup whether or not a tree drag was live.
+    if (carried.current) document.body.classList.remove("tree-drag");
     carried.current = null;
-    depth.current = 0;
+    pressed.current = null;
+    target.current = null;
     setDragging(null);
     setOver(null);
   };
@@ -346,52 +362,75 @@ export const FileTree = memo(function FileTree(p: Props) {
     return true;
   };
 
-  const dropHandlers = (repoPath: string, dir: string, key: string) => ({
-    onDragEnter: (e: React.DragEvent) => {
-      if (!allowed(carried.current, repoPath, dir)) return;
-      e.preventDefault();
-      e.stopPropagation();
-      depth.current += 1;
-      setOver(key);
-    },
-    onDragOver: (e: React.DragEvent) => {
-      if (!allowed(carried.current, repoPath, dir)) return;
-      // Both the preventDefault and the dropEffect: without either, WebKit
-      // shows a "no drop" cursor and never fires a drop at all.
-      e.preventDefault();
-      e.stopPropagation();
-      // The cursor is the only thing telling the reader which of the two this
-      // is — that the original will survive a drag into another repository.
-      e.dataTransfer.dropEffect =
-        carried.current && carried.current.repo !== repoPath ? "copy" : "move";
-      if (over !== key) setOver(key);
-    },
-    onDragLeave: () => {
-      depth.current -= 1;
-      if (depth.current <= 0) {
-        depth.current = 0;
-        setOver((cur) => (cur === key ? null : cur));
-      }
-    },
-    onDrop: (e: React.DragEvent) => {
-      e.preventDefault();
-      e.stopPropagation();
-      const raw = e.dataTransfer.getData(MIME);
-      const it =
-        carried.current ??
-        (raw
-          ? (() => {
-              const [repo, path, kind] = raw.split("\n");
-              return { repo, path, kind: kind as "file" | "dir" };
-            })()
-          : null);
-      endDrag();
-      trace("drop", { onto: dir || "<root>", carrying: it?.path ?? null });
-      if (!allowed(it, repoPath, dir) || !it) return;
-      if (it.repo === repoPath) p.onMove(it.repo, it.path, dir);
-      else p.onCopy(it.repo, it.path, repoPath, dir);
-    },
+  /** The attributes a folder (or repo root) carries so a drag can find it. */
+  const dropSpot = (repoPath: string, dir: string, key: string) => ({
+    "data-drop-key": key,
+    "data-drop-repo": repoPath,
+    "data-drop-dir": dir,
   });
+
+  useEffect(() => {
+    const move = (e: PointerEvent) => {
+      const start = pressed.current;
+      if (!start) return;
+      if (!carried.current) {
+        // A click is not a drag until it has travelled.
+        if (Math.hypot(e.clientX - start.x, e.clientY - start.y) < 5) return;
+        carried.current = { repo: start.repo, path: start.path, kind: start.kind };
+        setDragging({ repo: start.repo, path: start.path });
+        // The page's split drop zone only takes the pointer while a drag is
+        // live — a class on <body> is what turns it on.
+        if (start.kind === "file") document.body.classList.add("tree-drag");
+        trace("drag start", { path: start.path, kind: start.kind });
+      }
+      const spot = (document.elementFromPoint(e.clientX, e.clientY) as Element | null)
+        ?.closest<HTMLElement>("[data-drop-key], [data-drop-pane]");
+      if (spot?.dataset.dropPane === "split" && carried.current.kind === "file") {
+        target.current = { split: true };
+        setOver(null);
+        return;
+      }
+      const repo = spot?.dataset.dropRepo;
+      const dir = spot?.dataset.dropDir;
+      if (spot && repo !== undefined && dir !== undefined && allowed(carried.current, repo, dir)) {
+        target.current = { repo, dir };
+        setOver(spot.dataset.dropKey ?? null);
+      } else {
+        target.current = null;
+        setOver(null);
+      }
+    };
+    const up = () => {
+      const it = carried.current;
+      const t = target.current;
+      if (it && t) {
+        didDrag.current = true;
+        if ("split" in t) {
+          trace("drop", { onto: "<split>", carrying: it.path });
+          p.onOpenSplit(it.repo, it.path);
+        } else {
+          trace("drop", { onto: t.dir || "<root>", carrying: it.path });
+          if (it.repo === t.repo) p.onMove(it.repo, it.path, t.dir);
+          else p.onCopy(it.repo, it.path, t.repo, t.dir);
+        }
+      } else if (it) {
+        didDrag.current = true;
+      }
+      endDrag();
+    };
+    const key = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && carried.current) endDrag();
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+    window.addEventListener("keydown", key);
+    return () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+      window.removeEventListener("keydown", key);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [p.onMove, p.onCopy, p.onOpenSplit]);
 
 
   // Any click, scroll, or escape puts the menu away.
@@ -470,10 +509,8 @@ export const FileTree = memo(function FileTree(p: Props) {
               dragging?.repo === repo.path && dragging.path === node.path ? "lifted" : ""
             }`}
             style={pad}
-            draggable
-            onDragStart={(e) => startDrag(e, repo.path, node.path, "dir")}
-            onDragEnd={endDrag}
-            {...dropHandlers(repo.path, node.path, key)}
+            {...dragHandle(repo.path, node.path, "dir")}
+            {...dropSpot(repo.path, node.path, key)}
             onClick={() => p.onToggle(key)}
             onContextMenu={(e) => {
               e.preventDefault();
@@ -506,9 +543,7 @@ export const FileTree = memo(function FileTree(p: Props) {
           dragging?.repo === repo.path && dragging.path === node.path ? "lifted" : ""
         }`}
         style={pad}
-        draggable
-        onDragStart={(e) => startDrag(e, repo.path, node.path, "file")}
-        onDragEnd={endDrag}
+        {...dragHandle(repo.path, node.path, "file")}
         onClick={() => p.onOpen(repo.path, node.path)}
         onContextMenu={(e) => {
           e.preventDefault();
@@ -548,7 +583,17 @@ export const FileTree = memo(function FileTree(p: Props) {
   };
 
   return (
-    <div className="tree">
+    <div
+      className="tree"
+      // A completed drag ends on a row, and the click that follows would open
+      // or toggle it — swallowed here, once, at the capture phase.
+      onClickCapture={(e) => {
+        if (!didDrag.current) return;
+        didDrag.current = false;
+        e.preventDefault();
+        e.stopPropagation();
+      }}
+    >
       {menu && (
         <div
           className="ctx"
@@ -644,6 +689,15 @@ export const FileTree = memo(function FileTree(p: Props) {
           >
             Reveal in Finder
           </button>
+
+          {menu.kind === "repo" && (
+            <button
+              className="ctx-item"
+              onClick={() => act(() => p.onTerminal(menu.repo))}
+            >
+              Open in Terminal
+            </button>
+          )}
 
           {menu.kind === "file" && menu.mark !== "clean" && (
             <>
@@ -753,7 +807,7 @@ export const FileTree = memo(function FileTree(p: Props) {
               className={`row repo ${r.path === p.activeRepoPath ? "current" : ""} ${
                 over === `${r.path}::root` ? "over" : ""
               }`}
-              {...dropHandlers(r.path, "", `${r.path}::root`)}
+              {...dropSpot(r.path, "", `${r.path}::root`)}
               onClick={() => p.onToggle(key)}
               aria-expanded={open}
               onContextMenu={(e) => {

@@ -1,5 +1,5 @@
 ---
-status: draft
+status: done
 ---
 # Improved Hotkeys
 
@@ -105,10 +105,19 @@ Worth wanting; not worth conflating with this.
 
 ## Next
 
-- [ ] `keys` on `Command`, with the existing unconditional bindings moved onto
-      it and the chain in `App.tsx` reduced to a lookup
-- [ ] Render `hint` from `keys` so the palette cannot disagree with reality
-- [ ] The sheet: every command, grouped, from the registry
-- [ ] Overrides in settings, merged the way settings already merge
-- [ ] Decide whether contextual keys ever join the table, or stay hand-written
-- [ ] Chords — only once the sheet shows the single-key space is full
+- [x] The registry lives in `src/keys.ts` (`DEFAULT_KEYS`) rather than on
+      `Command` itself — one table, matched by the keydown handler and joined
+      to palette commands by id. The chain in `App.tsx` is a lookup for every
+      unconditional binding
+- [x] Palette hints rendered from the registry (`renderKeys`), the hand-typed
+      strings deleted
+- [x] The sheet: `ShortcutSheet.tsx`, a modal on ⌘/ (not ⌘? — the shift
+      fiddliness the open question flagged), grouped from the registry, with
+      the contextual keys listed as fixed
+- [x] Overrides: `keyOverrides` in settings, merged over the defaults; rebind
+      by clicking a binding and pressing the keys, ⌫ unbinds, reset restores.
+      A conflict is refused by name — not last-one-wins
+- [x] Contextual keys stay hand-written (Escape, ⌘B, ⌘+/−, ⌘⌫, the palette's
+      own doors), and the sheet says so
+- [ ] Chords — deferred, as argued: revisit once the sheet shows the
+      single-key space is full

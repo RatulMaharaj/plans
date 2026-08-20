@@ -1,5 +1,5 @@
 ---
-status: ready
+status: done
 ---
 # Drop A Markdown File In And Edit It
 
@@ -79,7 +79,18 @@ repo's file, and keep Diff.
       repository into another, which is a copy rather than a move. `copy_plan`
       takes two `(repo, relPath)` pairs and joins each inside its own root, so
       widening to two repositories widened nothing else
-- [ ] Decide the `dragDropEnabled` trade, and what rebuilding the tree's drag
-      would cost
-- [ ] A dropped file as `(dir, name)`, reusing the memory-buffer plumbing
-- [ ] Views offered per buffer, rather than the same three everywhere
+- [x] Decided: `dragDropEnabled` is on. The HTML5-vs-native conflict the plan
+      feared is Tauri's documented *Windows* limitation; on macOS the
+      webview's internal drag (the tree's move) and Tauri's native file-drop
+      events coexist. Worth one manual check in the built app: drag a file
+      inside the tree, then drag one in from Finder — Playwright runs against
+      the browser and cannot see either
+- [x] A dropped file as `(dir, name)` — its folder is the root every command
+      already takes, so watcher, autosave and the stamp check just work. It
+      lives in its tab (which `plans.tabs.v1` already restores across
+      restarts); in-repo drops open as the repo's own file
+- [x] Views offered per buffer: a dropped file shows Write and Source, no
+      Diff — the button is absent and `goto("diff")` declines, same as memory
+      buffers hide the whole switch
+- [x] A dropped folder is the add-a-repository gesture; non-markdown is
+      declined with a toast

@@ -1,0 +1,377 @@
+/**
+ * The second pane: one more document, side by side with the main one.
+ *
+ * Deliberately self-contained. The main editor's per-document state lives as
+ * singletons across App.tsx — buffer, stamp, pending write, conflict — and
+ * extracting all of it into a shared `Pane` is a rewrite this feature does not
+ * need to hold hostage. This component carries its own copy of exactly that
+ * cluster: its own buffer, its own save machinery against its own stamp, its
+ * own watcher, its own view. Two panes that cannot reach into each other's
+ * state cannot save against each other's stamps.
+ *
+ * Two panes and no more, in writing: recursive splits are where editors grow
+ * a layout tree, a serialization format for it, and focus rules nobody
+ * remembers. For a plans editor on a laptop screen, two is the useful number.
+ */
+import { useCallback, useEffect, useRef, useState } from "react";
+import { api } from "./api";
+import { Editor } from "./Editor";
+import { FrontmatterSheet } from "./Frontmatter";
+import { SourceView } from "./SourceView";
+import { joinFrontmatter, matterValue, splitFrontmatter, statusTone } from "./matter";
+import { displayName } from "./FileTree";
+import type { Settings } from "./settings";
+
+type Props = {
+  repo: string;
+  relPath: string;
+  settings: Settings;
+  author: string;
+  /** Set from the chrome's one view switch, which acts on the focused pane. */
+  view: "write" | "source";
+  /** This pane's own tab set — each pane keeps its own strip. */
+  tabs: { repo: string; path: string }[];
+  onSelectTab: (repo: string, path: string) => void;
+  onCloseTab: (repo: string, path: string) => void;
+  /** The shared tab-drag machinery: press to maybe-drag, swallow the click. */
+  onTabPress: (repo: string, path: string, e: React.PointerEvent) => void;
+  onStripClickCapture: (e: React.MouseEvent) => void;
+  /** Painted on the header so a keystroke cannot land in the wrong document. */
+  focused: boolean;
+  onFocus: () => void;
+  onClose: () => void;
+  notify: (msg: string, kind?: "info" | "error") => void;
+  /** ⌘S while this pane has focus lands here. */
+  flushRef: React.MutableRefObject<(() => Promise<void>) | null>;
+  /** ⌘-click on a link in this pane. */
+  onOpenLink?: (href: string) => void;
+};
+
+export function SplitPane({
+  repo,
+  relPath,
+  settings,
+  author,
+  view,
+  tabs,
+  onSelectTab,
+  onCloseTab,
+  onTabPress,
+  onStripClickCapture,
+  focused,
+  onFocus,
+  onClose,
+  notify,
+  flushRef,
+  onOpenLink,
+}: Props) {
+  const [body, setBody] = useState("");
+  const [matter, setMatter] = useState<string | null>(null);
+  const [docKey, setDocKey] = useState("");
+  const [dirty, setDirty] = useState(false);
+  const [matterOpen, setMatterOpen] = useState(false);
+  const [conflict, setConflict] = useState<string | null>(null);
+
+  const stamp = useRef<string | null>(null);
+  const original = useRef<{ matter: string | null; raw: string; eol: boolean }>({
+    matter: null,
+    raw: "",
+    eol: true,
+  });
+  const pending = useRef<string | null>(null);
+  const writing = useRef(false);
+  const saveTimer = useRef<number | undefined>(undefined);
+
+  const assemble = useCallback(
+    (m: string | null, b: string) => {
+      const text = joinFrontmatter(m, b, original.current);
+      return original.current.eol && text && !text.endsWith("\n") ? `${text}\n` : text;
+    },
+    [],
+  );
+  const source = assemble(matter, body);
+
+  const load = useCallback(async () => {
+    try {
+      const { content: text, stamp: at } = await api.readPlan(repo, relPath);
+      stamp.current = at;
+      const split = settings.showFrontmatter
+        ? splitFrontmatter(text)
+        : { matter: null, body: text, raw: "" };
+      original.current = { matter: split.matter, raw: split.raw, eol: /\n$/.test(text) };
+      pending.current = null;
+      setMatter(split.matter);
+      setBody(split.body);
+      setDocKey(`${repo}::${relPath}::${Date.now()}`);
+      setDirty(false);
+      setConflict(null);
+      setMatterOpen(false);
+    } catch (e) {
+      notify(`Could not open ${relPath}: ${String(e).replace(/^Error:\s*/, "")}`, "error");
+      onClose();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [repo, relPath, settings.showFrontmatter]);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  const flush = useCallback(async () => {
+    const text = pending.current;
+    if (text === null) return;
+    pending.current = null;
+    writing.current = true;
+    try {
+      // Conditional on the version this pane loaded — the main pane's stamp is
+      // its own business, which is the whole reason this state lives here.
+      stamp.current = await api.writePlan(repo, relPath, text, stamp.current ?? undefined);
+      setDirty(false);
+    } catch (e) {
+      if (String(e).includes("STALE")) {
+        pending.current = text; // no keystroke lost while the reader decides
+        const theirs = await api.readPlan(repo, relPath).then(
+          (r) => r.content,
+          () => "",
+        );
+        setConflict(theirs);
+      } else {
+        notify(String(e), "error");
+      }
+    } finally {
+      writing.current = false;
+    }
+  }, [repo, relPath, notify]);
+
+  useEffect(() => {
+    flushRef.current = flush;
+    return () => {
+      flushRef.current = null;
+    };
+  }, [flush, flushRef]);
+
+  const edited = useCallback(
+    (m: string | null, b: string) => {
+      setMatter(m);
+      setBody(b);
+      setDirty(true);
+      pending.current = joinFrontmatter(m, b, original.current);
+      if (original.current.eol && pending.current && !pending.current.endsWith("\n")) {
+        pending.current += "\n";
+      }
+      if (saveTimer.current) clearTimeout(saveTimer.current);
+      if (settings.autosave === "afterDelay") {
+        saveTimer.current = window.setTimeout(() => void flush(), settings.autosaveDelay * 1000);
+      }
+    },
+    [flush, settings.autosave, settings.autosaveDelay],
+  );
+
+  // Pane blur is the save cue for "onBlur" — moving to the other document is
+  // exactly the moment a reader expects this one to be written.
+  useEffect(() => {
+    if (!focused && settings.autosave === "onBlur") void flush();
+  }, [focused, settings.autosave, flush]);
+
+  // Nothing pending survives the pane closing.
+  useEffect(
+    () => () => {
+      if (saveTimer.current) clearTimeout(saveTimer.current);
+      void flush();
+    },
+    [flush],
+  );
+
+  // The same watcher rules as the main pane: clean takes the new version,
+  // dirty says so and lets the reader choose — never silently.
+  useEffect(() => {
+    if (settings.watchSeconds <= 0) return;
+    const t = setInterval(async () => {
+      if (conflict || writing.current) return;
+      const at = await api.statPlan(repo, relPath).catch(() => null);
+      if (!at || at === stamp.current || at === "absent") return;
+      if (dirty || pending.current !== null) {
+        const theirs = await api.readPlan(repo, relPath).then(
+          (r) => r.content,
+          () => "",
+        );
+        setConflict(theirs);
+      } else {
+        await load();
+      }
+    }, Math.max(1, settings.watchSeconds) * 1000);
+    return () => clearInterval(t);
+  }, [repo, relPath, settings.watchSeconds, dirty, conflict, load]);
+
+  // The editor reads `initialValue` only when `docKey` changes, so edits made
+  // in the source view reach it by rebuilding it on the way back — and only
+  // then; an untouched round trip keeps the instance. The view itself is set
+  // from the chrome's switch, so the rebuild watches the prop.
+  const sourceTouched = useRef(false);
+  const prevView = useRef(view);
+  useEffect(() => {
+    if (prevView.current === "source" && view === "write" && sourceTouched.current) {
+      sourceTouched.current = false;
+      setDocKey(`${repo}::${relPath}::${Date.now()}`);
+    }
+    prevView.current = view;
+  }, [view, repo, relPath]);
+
+  const status = matter !== null ? matterValue(matter, "status") : null;
+  const who =
+    matter !== null ? (matterValue(matter, "owner") ?? matterValue(matter, "assignee")) : null;
+  const due = matter !== null ? matterValue(matter, "due") : null;
+  const overdue = !!due && !Number.isNaN(Date.parse(due)) && Date.parse(due) < Date.now();
+
+  return (
+    <div
+      className={`split-pane ${focused ? "focused" : ""}`}
+      onFocusCapture={onFocus}
+      onMouseDownCapture={onFocus}
+    >
+      {/* The same skeleton as the main pane — a tab strip, then a header —
+          so the two panes read as siblings, at the same height. No view
+          buttons: the chrome's switch acts on whichever pane has focus. */}
+      <div className="tab-row">
+        <div className="tabs" data-strip="split" role="tablist" onClickCapture={onStripClickCapture}>
+          {tabs.map((t) => {
+            const on = t.repo === repo && t.path === relPath;
+            const tabName = t.path.split("/").pop() ?? t.path;
+            return (
+              <span className={`tab ${on ? "on" : ""}`} key={`${t.repo}::${t.path}`}>
+                <button
+                  className="tab-name"
+                  role="tab"
+                  aria-selected={on}
+                  title={t.path}
+                  onClick={() => onSelectTab(t.repo, t.path)}
+                  onAuxClick={(e) => {
+                    if (e.button === 1) onCloseTab(t.repo, t.path);
+                  }}
+                  onPointerDown={(e) => onTabPress(t.repo, t.path, e)}
+                >
+                  {displayName(tabName, settings.showExtensions)}
+                  {on && dirty ? " •" : ""}
+                </button>
+                <button
+                  className="tab-close"
+                  aria-label={`Close ${tabName}`}
+                  onClick={() => onCloseTab(t.repo, t.path)}
+                >
+                  ×
+                </button>
+              </span>
+            );
+          })}
+        </div>
+      </div>
+      <div className="page-head">
+        <span className="page-path">{relPath}</span>
+        <span className="page-actions">
+          {/* The same frontmatter facts the main header shows for its file. */}
+          {status && (
+            <span
+              className={`status-badge tone-${statusTone(status)}`}
+              title="status: from this file's frontmatter"
+            >
+              {status}
+            </span>
+          )}
+          {who && (
+            <span className="matter-owner" title="owner: from this file's frontmatter">
+              @{who}
+            </span>
+          )}
+          {due && (
+            <span
+              className={`matter-due ${overdue ? "overdue" : ""}`}
+              title="due: from this file's frontmatter"
+            >
+              due {due}
+            </span>
+          )}
+          {/* Only where there is one to edit — the same rule as the main
+              header. No close button: the pane closes from the palette, or
+              when its last tab does. */}
+          {matter !== null && (
+            <button
+              className={`rail-btn ${matterOpen ? "on" : ""}`}
+              onClick={() => setMatterOpen((o) => !o)}
+              title="Edit this file's YAML frontmatter"
+            >
+              Frontmatter
+            </button>
+          )}
+        </span>
+      </div>
+
+      {matterOpen && (
+        <FrontmatterSheet
+          matter={matter}
+          onChange={(next) => edited(next, body)}
+          onClose={() => setMatterOpen(false)}
+        />
+      )}
+
+      {conflict !== null && (
+        <div className="conflict">
+          <p className="conflict-line">This file changed on disk while you were editing it.</p>
+          <span className="conflict-acts">
+            <button
+              className="rail-btn"
+              onClick={() => {
+                setConflict(null);
+                pending.current = source;
+                stamp.current = null; // write unconditionally: mine survives
+                void flush();
+              }}
+            >
+              Keep mine
+            </button>
+            <button
+              className="rail-btn"
+              onClick={() => {
+                pending.current = null;
+                setConflict(null);
+                void load();
+              }}
+            >
+              Take theirs
+            </button>
+          </span>
+        </div>
+      )}
+
+      {/* Both surfaces stay mounted, the hidden one put aside with CSS —
+          the same trick the main pane uses to keep view switching instant. */}
+      <div className={`surface ${view === "write" ? "" : "aside"}`}>
+        <Editor
+          docKey={docKey}
+          repo={repo}
+          relPath={relPath}
+          initialValue={body}
+          spellcheck={settings.spellcheck}
+          imageFolder={settings.imageFolder}
+          author={author}
+          onChange={(md) => edited(matter, md)}
+          onOpenLink={onOpenLink}
+        />
+      </div>
+      <div className={`surface ${view === "source" ? "" : "aside"}`}>
+        <SourceView
+          value={source}
+          onChange={(text) => {
+            sourceTouched.current = true;
+            const split = settings.showFrontmatter
+              ? splitFrontmatter(text)
+              : { matter: null, body: text, raw: original.current.raw };
+            edited(split.matter, split.body);
+          }}
+          settings={settings}
+          docKey={docKey}
+          active={view === "source"}
+        />
+      </div>
+    </div>
+  );
+}

@@ -160,6 +160,13 @@ button, .rail, .bar, .tabs, .ctx {
   border-radius: 2px;
 }
 
+/* Escape parks focus on the active tab so keys keep working, but that's a
+   silent handoff — the tab row shouldn't light up for it. */
+.tab-name:focus-visible,
+.tab-close:focus-visible {
+  outline: none;
+}
+
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {
     animation-duration: 0.01ms !important;
@@ -989,8 +996,19 @@ input[type="range"]::-webkit-slider-thumb {
   overflow: hidden;
 }
 .change-path:hover { color: var(--ink); }
-.change-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.change-dir { color: var(--ink-3); font-size: 9px; flex-shrink: 0; }
+/* The filename is the point of the row: it never gives way. A long folder
+   path is what truncates, from the front, so the nearest folder survives. */
+.change-name { flex-shrink: 0; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.change-dir {
+  color: var(--ink-3);
+  font-size: 9px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  direction: rtl;
+  text-align: left;
+}
 
 .act {
   background: none;
@@ -1791,6 +1809,32 @@ body.resizing.resizing-row, body.resizing.resizing-row .chat-edge { cursor: row-
 * { scrollbar-width: none; }
 *::-webkit-scrollbar { width: 0; height: 0; display: none; }
 
+/* Except the document itself. A long plan with no bar gives no sense of where
+   you are in it, so the reading surfaces carry a thin one in the paper's own
+   colours — visible on hover and while scrolling, quiet otherwise. */
+.editor-host,
+.source .cm-scroller {
+  scrollbar-width: thin;
+  scrollbar-color: var(--rule-strong) transparent;
+}
+.editor-host::-webkit-scrollbar,
+.source .cm-scroller::-webkit-scrollbar {
+  width: 9px;
+  height: 0;
+  display: block;
+}
+.editor-host::-webkit-scrollbar-thumb,
+.source .cm-scroller::-webkit-scrollbar-thumb {
+  background: var(--rule-strong);
+  border-radius: 5px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+.editor-host::-webkit-scrollbar-thumb:hover,
+.source .cm-scroller::-webkit-scrollbar-thumb:hover { background-color: var(--ink-3); background-clip: content-box; }
+.editor-host::-webkit-scrollbar-track,
+.source .cm-scroller::-webkit-scrollbar-track { background: transparent; }
+
 /* The page and the source both stay mounted; the one you are not looking at
    is set aside rather than torn down, so switching is instant. */
 .surface { display: contents; }
@@ -2576,3 +2620,121 @@ body.resizing.resizing-row, body.resizing.resizing-row .chat-edge { cursor: row-
   letter-spacing: 0.05em;
   color: var(--ink-3);
 }
+
+/* --- keyboard shortcuts sheet -------------------------------------------- */
+.shortcut-sheet { width: min(560px, calc(100vw - 64px)); }
+.shortcut-list {
+  overflow-y: auto;
+  max-height: min(60vh, 560px);
+  padding: 6px 16px 12px;
+}
+.shortcut-group {
+  margin: 14px 0 4px;
+  font-family: var(--mono);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--ink-3);
+}
+.shortcut-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 0;
+}
+.shortcut-label { flex: 1; font-size: 13px; }
+.shortcut-note { color: var(--ink-3); }
+.shortcut-keys {
+  font-family: var(--mono);
+  font-size: 12px;
+  padding: 2px 8px;
+  border: 1px solid var(--rule);
+  border-radius: 4px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  min-width: 44px;
+}
+.shortcut-keys:hover { border-color: var(--rule-strong); }
+.shortcut-keys.capturing { border-color: var(--ink); color: var(--ink); }
+.shortcut-keys.fixed { cursor: default; border-color: transparent; color: var(--ink-3); }
+.shortcut-reset {
+  font-family: var(--mono);
+  font-size: 11px;
+  background: none;
+  border: none;
+  color: var(--ink-3);
+  cursor: pointer;
+  text-decoration: underline;
+}
+
+/* --- split panes --------------------------------------------------------- */
+.page-body { display: flex; flex: 1; min-height: 0; min-width: 0; }
+/* Direction classes carry a dir- prefix: the bare words "row" and "column"
+   are already taken by the tree's rows, and a shared word is a shared bug. */
+.page-body.dir-col { flex-direction: column; }
+.main-pane { display: flex; flex-direction: column; flex: 1; min-width: 0; min-height: 0; }
+.pane-divider { flex: 0 0 5px; cursor: col-resize; background: transparent; }
+.pane-divider:hover { background: var(--rule); }
+.page-body.dir-col > .pane-divider { cursor: row-resize; }
+.split-host { display: flex; min-width: 0; min-height: 0; }
+.split-pane {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  border-left: 1px solid var(--rule);
+}
+.page-body.dir-col .split-pane { border-left: none; border-top: 1px solid var(--rule); }
+/* The split's header rows reuse the main pane's classes, so the two panes
+   sit at the same heights by construction. An empty strip still holds the
+   line: the header row below must stay level with the main pane's. */
+.split-pane > .tab-row { min-height: var(--strip); }
+/* The focused pane is visible without being loud: the idle header dims. */
+.split-pane:not(.focused) > .tab-row,
+.split-pane:not(.focused) > .page-head { opacity: 0.55; }
+
+/* --- drag a file onto the page to split ---------------------------------- */
+/* Inert until the tree is dragging a file; then it takes the pointer along
+   the page's far edge, and lights up under the drag. When a split is already
+   open, the split pane itself is the target instead and this strip sits
+   behind it, so a drop there retargets the open pane. */
+.page-body { position: relative; }
+.split-drop {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 26%;
+  z-index: 6;
+  pointer-events: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  border-left: 1px dashed transparent;
+}
+.page-body.dir-col > .split-drop {
+  top: auto;
+  left: 0;
+  width: auto;
+  height: 26%;
+  border-left: none;
+  border-top: 1px dashed transparent;
+}
+body.tree-drag .split-drop { pointer-events: auto; opacity: 0.5; }
+body.tree-drag .split-drop:hover {
+  opacity: 1;
+  background: var(--raised);
+  border-color: var(--rule-strong);
+}
+.split-drop-hint {
+  font-family: var(--mono);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--ink-3);
+}
+/* A drag over the open split pane means "show it here" — say so. */
+body.tree-drag .split-host { outline: 1px dashed var(--rule-strong); outline-offset: -1px; }

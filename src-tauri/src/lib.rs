@@ -809,11 +809,57 @@ fn existing_dirs(repo: String, rel_paths: Vec<String>) -> R<Vec<String>> {
     Ok(out)
 }
 
+/// Keep the bundled skills' user-level copies fresh: `~/.plans/skills/`.
+///
+/// A home for the skills that belongs to no repository — for readers who use
+/// them from the chat (or point other tools at them) rather than installing
+/// a copy into every project. App-owned, so replaced outright on every
+/// launch; edits belong upstream, not here.
+#[tauri::command]
+fn sync_user_skills(skills: Vec<(String, String)>) -> R<String> {
+    let home = std::env::var("HOME").map_err(|e| e.to_string())?;
+    let root = Path::new(&home).join(".plans").join("skills");
+    for (name, text) in &skills {
+        // Names come from the app's own bundled table, but stay careful.
+        if name.is_empty() || name.contains(['/', '\\', '.']) {
+            return Err(format!("suspicious skill name: {name}"));
+        }
+        let dir = root.join(name);
+        std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+        std::fs::write(dir.join("SKILL.md"), text).map_err(|e| e.to_string())?;
+    }
+    Ok(root.display().to_string())
+}
+
 /// Show the file or folder in the platform's file manager, selected.
 #[tauri::command]
 fn reveal_in_finder(repo: String, rel_path: String) -> R<()> {
     let p = safe_join(&repo, &rel_path)?;
     tauri_plugin_opener::reveal_item_in_dir(&p).map_err(|e| e.to_string())
+}
+
+/// Open a terminal window in the repository. macOS: whatever the default
+/// terminal is not knowable cheaply, so Terminal.app — `open -a` falls back
+/// to complaining usefully if it is somehow absent. Elsewhere: best effort.
+#[tauri::command]
+fn open_in_terminal(repo: String) -> R<()> {
+    let p = safe_join(&repo, "")?;
+    let path = p.to_string_lossy();
+    #[cfg(target_os = "macos")]
+    {
+        exec("open", &["-a", "Terminal", &path]).map(|_| ())
+    }
+    #[cfg(target_os = "linux")]
+    {
+        // The freedesktop way; most distributions alias something here.
+        exec("x-terminal-emulator", &["--working-directory", &path])
+            .or_else(|_| exec("gnome-terminal", &[&format!("--working-directory={path}")]))
+            .map(|_| ())
+    }
+    #[cfg(target_os = "windows")]
+    {
+        exec("cmd", &["/C", "start", "cmd", "/K", &format!("cd /d {path}")]).map(|_| ())
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1293,6 +1339,8 @@ pub fn run() {
             delete_folder,
             existing_dirs,
             reveal_in_finder,
+            open_in_terminal,
+            sync_user_skills,
             git_status,
             git_diff,
             git_head_text,

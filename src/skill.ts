@@ -1,19 +1,55 @@
 import { api } from "./api";
-import skillText from "../skills/plans/SKILL.md?raw";
+import plansText from "../skills/plans/SKILL.md?raw";
+import reviewText from "../skills/review/SKILL.md?raw";
 
 /**
- * The conventions ship inside the bundle, imported at build time from the one
- * canonical file in this repo — the app can never drift from it.
+ * The conventions ship inside the bundle, imported at build time from the
+ * canonical files in this repo — the app can never drift from them.
  *
  * What differs between agents is only *where* a copy goes. The text is the same
- * text whoever is reading it, so there is one file here and a table of paths in
- * `discover.rs` saying which agent looks where. "Install" used to write Claude
- * Code's path and only Claude Code's, which meant that for three of the four
- * agents the button was a no-op with a reassuring label.
+ * text whoever is reading it, so there is a table of skills here and a table of
+ * paths in `discover.rs` saying which agent looks where. "Install" used to
+ * write Claude Code's path and only Claude Code's, which meant that for three
+ * of the four agents the button was a no-op with a reassuring label.
  */
 
-/** Claude Code's, still — now one destination among several rather than the only one. */
-export const SKILL_PATH = ".claude/skills/plans/SKILL.md";
+export type BundledSkill = {
+  /** The skill's directory name — also its palette-facing identity. */
+  name: string;
+  label: string;
+  text: string;
+  /**
+   * The fence around this skill's section in a repository-owned file. The
+   * plans section keeps the bare spelling so existing installs still match;
+   * later skills carry their name in the marker.
+   */
+  begin: string;
+  end: string;
+  /** Where Claude Code reads this skill — its own file, one per skill. */
+  claudePath: string;
+};
+
+export const SKILLS: BundledSkill[] = [
+  {
+    name: "plans",
+    label: "plans skill",
+    text: plansText,
+    begin: "<!-- plans:begin -->",
+    end: "<!-- plans:end -->",
+    claudePath: ".claude/skills/plans/SKILL.md",
+  },
+  {
+    name: "review",
+    label: "review skill",
+    text: reviewText,
+    begin: "<!-- plans:begin review -->",
+    end: "<!-- plans:end review -->",
+    claudePath: ".claude/skills/review/SKILL.md",
+  },
+];
+
+/** Claude Code's plans path, still — the default destination when no agent is found. */
+export const SKILL_PATH = SKILLS[0].claudePath;
 
 export type SkillInstall = "installed" | "updated" | "current";
 
@@ -41,27 +77,62 @@ function appOwned(path: string): boolean {
  * markers have to be invisible when rendered and obvious when edited. Matching
  * on the markers rather than on the content means a section someone has since
  * reworded is still found and still replaced — the app owns the region, not
- * the text that happens to be in it.
+ * the text that happens to be in it. The bare markers cannot match the named
+ * ones: `<!-- plans:begin -->` includes its closing ` -->`, which
+ * `<!-- plans:begin review -->` does not contain.
  */
-const BEGIN = "<!-- plans:begin -->";
-const END = "<!-- plans:end -->";
-const SECTION = `${BEGIN}\n${skillText.trim()}\n${END}\n`;
+function section(skill: BundledSkill): string {
+  return `${skill.begin}\n${skill.text.trim()}\n${skill.end}\n`;
+}
 
-/** The managed section, put into a file that may already say other things. */
-function merge(existing: string | null): string {
-  if (existing === null || !existing.trim()) return SECTION;
-  const from = existing.indexOf(BEGIN);
-  const to = existing.indexOf(END);
+/** One skill's managed section, put into a file that may already say other things. */
+function merge(existing: string | null, skill: BundledSkill): string {
+  const wanted = section(skill);
+  if (existing === null || !existing.trim()) return wanted;
+  const from = existing.indexOf(skill.begin);
+  const to = existing.indexOf(skill.end);
   if (from !== -1 && to > from) {
-    return existing.slice(0, from) + SECTION.trimEnd() + existing.slice(to + END.length);
+    return existing.slice(0, from) + wanted.trimEnd() + existing.slice(to + skill.end.length);
   }
-  // Nothing of ours in there yet: append, and leave every word of theirs alone.
-  return `${existing.replace(/\s*$/, "")}\n\n${SECTION}`;
+  // Nothing of this skill's in there yet: append, and leave every word else alone.
+  return `${existing.replace(/\s*$/, "")}\n\n${wanted}`;
+}
+
+/**
+ * Every file that installing writes, given the paths the agents look at.
+ *
+ * An app-owned path is Claude Code's per-skill file: one destination per
+ * bundled skill, each holding that skill alone. A repository-owned file
+ * (`AGENTS.md`, `GEMINI.md`) holds every skill, each in its own fenced
+ * section — one file, several fences, a single block of our footprint.
+ */
+function targets(paths: string[]): { path: string; skills: BundledSkill[] }[] {
+  const wants = paths.length ? paths : [SKILL_PATH];
+  const out: { path: string; skills: BundledSkill[] }[] = [];
+  const seen = new Set<string>();
+  for (const path of wants) {
+    if (appOwned(path)) {
+      // The table in discover.rs names the plans file; the review file sits
+      // beside it, in the same skills directory.
+      for (const skill of SKILLS) {
+        const dest = path.replace(/\/plans\/SKILL\.md$/, `/${skill.name}/SKILL.md`);
+        if (seen.has(dest)) continue;
+        seen.add(dest);
+        out.push({ path: dest, skills: [skill] });
+      }
+    } else {
+      if (seen.has(path)) continue;
+      seen.add(path);
+      out.push({ path, skills: SKILLS });
+    }
+  }
+  return out;
 }
 
 /** What the file at `path` should contain once the conventions are installed. */
-function wanted(path: string, existing: string | null): string {
-  return appOwned(path) ? skillText : merge(existing);
+function wanted(target: { path: string; skills: BundledSkill[] }, existing: string | null): string {
+  if (appOwned(target.path)) return target.skills[0].text;
+  return target.skills.reduce((acc, skill) => merge(acc, skill), existing) as string;
 }
 
 async function read(repo: string, path: string): Promise<string | null> {
@@ -78,17 +149,16 @@ async function read(repo: string, path: string): Promise<string | null> {
  * every repository regardless of what is already there.
  *
  * `missing` when any destination has no copy at all, `stale` when every one
- * exists but at least one differs. Answered across all the paths at once
- * because the button is one button: a repository where Claude Code's copy is
- * current and Codex's is absent has not had the conventions installed.
+ * exists but at least one differs. Answered across all the skills and paths at
+ * once because the button is one button: a repository with the plans
+ * conventions and no review skill has not had the conventions installed.
  */
 export async function skillState(repo: string, paths: string[]): Promise<SkillState> {
-  const wants = paths.length ? paths : [SKILL_PATH];
   let stale = false;
-  for (const path of wants) {
-    const existing = await read(repo, path);
+  for (const target of targets(paths)) {
+    const existing = await read(repo, target.path);
     if (existing === null) return "missing";
-    if (existing !== wanted(path, existing)) stale = true;
+    if (existing !== wanted(target, existing)) stale = true;
   }
   return stale ? "stale" : "current";
 }
@@ -97,7 +167,7 @@ export async function skillState(repo: string, paths: string[]): Promise<SkillSt
  * Write the bundled conventions everywhere the agents on this machine look.
  *
  * A file the app owns is replaced; a file the repository owns keeps everything
- * in it and has only the fenced section rewritten. Either way the change lands
+ * in it and has only the fenced sections rewritten. Either way the change lands
  * in git as a reviewable, revertable diff rather than a silent divergence —
  * which is the reason overwriting is acceptable at all.
  */
@@ -105,14 +175,13 @@ export async function installConventions(
   repo: string,
   paths: string[],
 ): Promise<SkillInstall> {
-  const wants = paths.length ? paths : [SKILL_PATH];
   let touched = false;
   let made = false;
-  for (const path of wants) {
-    const existing = await read(repo, path);
-    const next = wanted(path, existing);
+  for (const target of targets(paths)) {
+    const existing = await read(repo, target.path);
+    const next = wanted(target, existing);
     if (existing === next) continue;
-    await api.writePlan(repo, path, next);
+    await api.writePlan(repo, target.path, next);
     touched = true;
     if (existing === null) made = true;
   }

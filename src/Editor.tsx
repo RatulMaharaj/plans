@@ -30,6 +30,8 @@ type Props = {
   /** `@name` written into new comments and replies; "" when git has no name. */
   author: string;
   onChange: (markdown: string) => void;
+  /** ⌘-click on a link lands here; the caller decides file versus browser. */
+  onOpenLink?: (href: string) => void;
 };
 
 /**
@@ -98,6 +100,7 @@ export function Editor({
   imageFolder,
   author,
   onChange,
+  onOpenLink,
 }: Props) {
   const hostRef = useRef<HTMLDivElement | null>(null);
   const instance = useRef<Crepe | null>(null);
@@ -564,5 +567,24 @@ export function Editor({
     if (el) el.spellcheck = spellcheck;
   }, [spellcheck, docKey]);
 
-  return <div className="editor-host" ref={hostRef} />;
+  return (
+    <div
+      className="editor-host"
+      ref={hostRef}
+      /*
+       * Links do something. A plain click stays an editing click — the caret
+       * lands in the link text — but the webview must never navigate away,
+       * and ⌘-click follows the link: another markdown file opens here,
+       * anything with a scheme opens where it belongs.
+       */
+      onClickCapture={(e) => {
+        const a = (e.target as Element).closest?.("a[href]");
+        if (!a) return;
+        e.preventDefault();
+        if (!(e.metaKey || e.ctrlKey)) return;
+        e.stopPropagation();
+        onOpenLink?.(a.getAttribute("href") ?? "");
+      }}
+    />
+  );
 }

@@ -244,6 +244,13 @@ export const api = {
   revealInFinder: (repo: string, relPath: string) =>
     invoke<void>("reveal_in_finder", { repo, relPath }),
 
+  /** Open a terminal window sitting in the repository. */
+  openInTerminal: (repo: string) => invoke<void>("open_in_terminal", { repo }),
+
+  /** Write the bundled skills to ~/.plans/skills — returns where they went. */
+  syncUserSkills: (skills: [string, string][]) =>
+    invoke<string>("sync_user_skills", { skills }),
+
   gitStatus: (repo: string, scope: string[]) =>
     invoke<any>("git_status", { repo, scope }).then(camelStatus),
 

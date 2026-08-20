@@ -562,7 +562,7 @@ export function SettingsPage({
         {/* ---- library -------------------------------------------------- */}
         <Group
           name="Repositories"
-          hint="Forgetting a repository removes it from this list only. Nothing on disk changes. Install skill writes the plan-writing conventions to .claude/skills/plans/SKILL.md — which is where Claude Code looks. Other agents read their own files, and do not read this one."
+          hint="Forgetting a repository removes it from this list only. Nothing on disk changes. Install conventions writes the bundled skills — plan-writing and PR review — everywhere the agents on this machine look: Claude Code's .claude/skills/ files, and a fenced section per skill in AGENTS.md or GEMINI.md for the agents that read those."
         >
           {repos.length === 0 && <p className="none">None yet.</p>}
           {repos.map((r) => (

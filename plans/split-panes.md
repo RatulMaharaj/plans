@@ -1,5 +1,5 @@
 ---
-status: ready
+status: done
 ---
 # Split Panes
 
@@ -165,13 +165,44 @@ another is exactly the moment a reader expects the first one to be written.
       none of the refactor. `cycleTab` is now shared by ⌃Tab and ⌘⌥←/→ rather
       than written twice, and it reopens a memory buffer from what the app holds
       instead of trying to read a file that was never on disk
-- [ ] Measure a second Milkdown instance against the perf budgets — this gates the rest
-- [ ] Extract the `Pane` type and move the per-document state into it, one pane only
-- [ ] Prove no behaviour changed: full e2e suite green on the single-pane refactor
-- [ ] Per-pane `flush`, stamp, pending, and autosave timer
-- [ ] Decide the keymap, including the digit collision
-- [ ] Two panes, flex layout, draggable divider, persisted ratio
-- [ ] Focus treatment, and focus-follows rather than second-copy for a file open twice
-- [ ] Palette commands and the `blank-keys` list
-- [ ] Zen collapses to one; split state survives a restart
-- [ ] <br />
+- [x] Built as composition rather than extraction: the second pane is a
+      self-contained component (`SplitPane.tsx`) carrying its own buffer,
+      stamp, pending write, autosave timer, watcher and conflict bar — the
+      per-pane isolation the plan wanted, without holding the feature hostage
+      to rewriting App.tsx's singletons. The full `Pane[]` extraction remains
+      open as a refactor if a third reason for it appears
+- [x] Per-pane `flush`, stamp, pending, and autosave timer — and pane blur
+      (not window blur) is the split pane's "onBlur" save cue
+- [x] The keymap, digit collision decided: ⌘\ split, ⌘⌥\ the other way,
+      ⌘⌥1/⌘⌥2 focus panes — the bare digits stay the view switch. All in the
+      new shortcut registry, so all rebindable
+- [x] Two panes, flex layout, draggable divider (double-click evens out),
+      ratio/direction/contents persisted in localStorage
+- [x] Focus treatment (the idle pane's header dims), and focus-follows rather
+      than second-copy for a file open twice — `openFile` routes by pane focus
+- [x] Palette commands (Split, Split the other way, Close the split), hints
+      from the registry
+- [x] Drag to split: the tree's pointer drag recognises a drop zone along the
+      page's far edge ("Open beside") and the open split pane itself, so a
+      file can be pointed into a pane as well as keyed there — covered by
+      `e2e/split.spec.ts`
+- [x] Two sets of tabs after all — the plan's single-strip argument lost to
+      use: the strip splits with the pane, each pane's chrome (tabs, path,
+      badges) living inside it. The strips are disjoint sets: a tab dragged
+      across *moves*, the next tab filling the space it left (or the blank
+      state showing), and tabs reorder live within a strip. ⌃Tab cycles the
+      focused pane's own strip
+- [x] One view switch, in the chrome, acting on the focused pane; the split
+      pane's own Write/Source buttons removed. Its header shows its file's
+      status, owner and due, like the main header does
+- [x] The split header carries a Frontmatter button and no close ✕ — the
+      pane closes from the palette or with its last tab. "Swap the panes"
+      trades the tab sets wholesale; "Open this document in both panes"
+      deliberately duplicates one file, the watcher and conflict machinery
+      mediating between the two views
+- [x] Zen collapses to one; split state survives a restart and zen both
+- [ ] The tree does not yet mark *where* a file is open — revisit with the
+      mark system in `FileTree.tsx`
+- [ ] A second Milkdown instance was not measured against the perf budgets
+      first (the pane mounts two editors, as the main one does); if typing
+      cost appears, the fallback stands — tear down the inactive pane

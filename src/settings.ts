@@ -139,6 +139,13 @@ export type Settings = {
   /** Poll interval for picking up outside edits, in seconds. 0 turns it off. */
   watchSeconds: number;
 
+  /**
+   * Rebound shortcuts, by command id, merged over the registry's defaults the
+   * way this whole blob merges over `DEFAULTS`. "" means unbound. Edited from
+   * the shortcut sheet (⌘/), not by hand.
+   */
+  keyOverrides: Record<string, string>;
+
   // Updates
   /**
    * Whether the app looks for a new version of itself. There is no "auto":
@@ -197,6 +204,7 @@ export const DEFAULTS: Settings = {
   chatWidth: 420,
   showStatusBar: true,
   watchSeconds: 4,
+  keyOverrides: {},
   updates: "notify",
   telemetry: true,
   // Empty rather than the current version: a settings blob from an older build

@@ -12,6 +12,7 @@ import { FONTS, MONO_FONTS } from "./fonts";
 import { DEFAULTS, RANGES, type Settings } from "./settings";
 import type { ChatRef, Index as ChatIndex } from "./chats";
 import { THEMES } from "./theme";
+import { renderKeys, type KeymapEntry } from "./keys";
 
 export type Command = {
   id: string;
@@ -100,12 +101,32 @@ type Props = {
   onCycleTab: (step: number) => void;
   onCopyAgentCommand: () => void;
   onMatter: () => void;
+  /**
+   * The bundled skills' installed copies in the active repository, openable
+   * like any other file. Empty when no repository is active.
+   */
+  skillFiles: { name: string; label: string; path: string }[];
   /** From settings: what `status:` may be set to from here. */
   statuses: string[];
   /** The open file's current status, so it is not offered again. */
   currentStatus: string | null;
   onSetStatus: (value: string | null) => void;
   onScaffoldMatter: () => void;
+  /**
+   * The merged keymap. Where a command's id has a binding, its hint is
+   * rendered from it rather than typed by hand — so the palette cannot lie
+   * about a key the reader has rebound.
+   */
+  keymap: KeymapEntry[];
+  onShortcuts: () => void;
+  /** Whether the second pane is open, and the things you do to it. */
+  splitOpen: boolean;
+  onSplit: () => void;
+  onSplitDir: () => void;
+  onSwapPanes: () => void;
+  /** Show the open document in both panes at once. */
+  canSplitSame: boolean;
+  onSplitSame: () => void;
 };
 
 const onOff = (b: boolean) => (b ? "on" : "off");
@@ -139,7 +160,7 @@ function buildCommands(p: Props): Command[] {
 
   // --- doing things ---------------------------------------------------------
   add({ id: "new", group: "Plans", label: "New plan", run: p.onNewPlan });
-  add({ id: "save", group: "Plans", label: "Save now", hint: "⌘S", run: p.onSave });
+  add({ id: "save", group: "Plans", label: "Save now", run: p.onSave });
   add({
     id: "reload",
     group: "Plans",
@@ -284,7 +305,6 @@ function buildCommands(p: Props): Command[] {
       id: "comment",
       group: "Plans",
       label: "New comment…",
-      hint: "⌘⇧M",
       terms: "note thread review aside",
       run: p.onNewComment,
     });
@@ -294,6 +314,22 @@ function buildCommands(p: Props): Command[] {
       label: "Insert HTML…",
       hint: "at the cursor",
       run: p.onInsertHtml,
+    });
+  }
+  /*
+   * The installed skills are ordinary repo-relative markdown, so "manage" is a
+   * command to open each, not a management screen. The hint carries the one
+   * honest caveat: the app rewrites these copies on update, so edits belong
+   * around the fence or upstream, not in them.
+   */
+  for (const k of p.skillFiles) {
+    add({
+      id: `skill.open.${k.name}`,
+      group: "Agent",
+      label: `Open the ${k.label}`,
+      hint: "replaced on update — edit upstream, not here",
+      terms: "conventions skill installed review plans manage",
+      run: () => p.activeRepoPath && p.onOpenFile(p.activeRepoPath, k.path),
     });
   }
   add({
@@ -321,7 +357,6 @@ function buildCommands(p: Props): Command[] {
     id: "zen",
     group: "Go",
     label: p.zen ? "Leave zen" : "Zen — the page alone",
-    hint: "⌘⇧L",
     run: p.onZen,
   });
   add({ id: "v.write", group: "Go", label: "Write", run: () => p.onView("write") });
@@ -335,7 +370,6 @@ function buildCommands(p: Props): Command[] {
     id: "v.diff",
     group: "Go",
     label: "Diff",
-    hint: "⌘3",
     run: () => p.onView("diff"),
   });
   if (p.openCount > 0) {
@@ -354,7 +388,6 @@ function buildCommands(p: Props): Command[] {
       id: "tab.next",
       group: "Go",
       label: "Next buffer",
-      hint: "⌃⇥",
       terms: "tab cycle switch forward cmd alt right cycle through open",
       run: () => p.onCycleTab(1),
     });
@@ -362,7 +395,6 @@ function buildCommands(p: Props): Command[] {
       id: "tab.prev",
       group: "Go",
       label: "Previous buffer",
-      hint: "⌃⇧⇥",
       terms: "tab cycle switch back cmd alt left cycle through open",
       run: () => p.onCycleTab(-1),
     });
@@ -371,7 +403,6 @@ function buildCommands(p: Props): Command[] {
     id: "v.settings",
     group: "Go",
     label: "Settings",
-    hint: "⌘,",
     run: () => p.onView("settings"),
   });
   add({ id: "repo.add", group: "Repositories", label: "Add a repository…", run: p.onAddRepo });
@@ -539,8 +570,8 @@ function buildCommands(p: Props): Command[] {
   toggle("sourceLineNumbers", "Source", "Line numbers");
   toggle("sourceWrap", "Source", "Wrap long lines");
   toggle("showIndex", "Panels", "File tree", "⌘B", "sidebar files explorer");
-  toggle("showGit", "Panels", "Git panel", "⌘G");
-  toggle("showMux", "Panels", "Agent chat", "⌘J", "chat agent talk ask");
+  toggle("showGit", "Panels", "Git panel");
+  toggle("showMux", "Panels", "Agent chat", undefined, "chat agent talk ask");
   toggle("showStatusBar", "Panels", "Status bar");
 
   // Not `toggle`: "turn off" says nothing about what happens to the plans.
@@ -587,12 +618,60 @@ function buildCommands(p: Props): Command[] {
   });
 
   add({
+    id: "split",
+    group: "Go",
+    label: p.splitOpen ? "Close the split" : "Split — another file beside this one",
+    terms: "pane side by side two editors column",
+    run: p.onSplit,
+  });
+  if (p.splitOpen) {
+    add({
+      id: "split.dir",
+      group: "Go",
+      label: "Split the other way",
+      terms: "pane horizontal vertical direction",
+      run: p.onSplitDir,
+    });
+    add({
+      id: "split.swap",
+      group: "Go",
+      label: "Swap the panes",
+      hint: "each side's tabs trade places",
+      terms: "switch order exchange left right flip",
+      run: p.onSwapPanes,
+    });
+  }
+  if (p.canSplitSame) {
+    add({
+      id: "split.same",
+      group: "Go",
+      label: "Open this document in both panes",
+      hint: "two views of one file",
+      terms: "duplicate same side by side compare source",
+      run: p.onSplitSame,
+    });
+  }
+  add({
+    id: "shortcuts",
+    group: "Go",
+    label: "Keyboard shortcuts",
+    terms: "keys keymap bindings hotkeys rebind customise",
+    run: p.onShortcuts,
+  });
+
+  add({
     id: "diffStyle",
     group: "Diff",
     label: `Diff layout: ${s.diffStyle === "unified" ? "side by side" : "unified"}`,
     value: s.diffStyle,
     run: () => set({ diffStyle: s.diffStyle === "unified" ? "split" : "unified" }),
   });
+
+  // Hints from the registry, where a binding exists — rendered, never typed.
+  for (const c of out) {
+    const bound = p.keymap.find((k) => k.id === c.id);
+    if (bound) c.hint = renderKeys(bound.keys) || undefined;
+  }
 
   return out;
 }

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { api, type AgentCommand, type ChatId, type ConfigOption } from "./api";
+import { SKILLS } from "./skill";
 import { track } from "./analytics";
 import { AgentOptions } from "./AgentOptions";
 import { chatKey, type ChatRef, type Index } from "./chats";
@@ -579,11 +580,24 @@ export function ChatPanel({
          * the new agent starts without it, and the note says so.
          */
         const same = !t.agent || t.agent === cmd;
+        /*
+         * The app's own slash commands: /plans and /review carry a bundled
+         * skill. The transcript keeps what was typed; what travels is the
+         * skill's text with the rest of the message under it — the agent
+         * needs no install in this repository to know the conventions.
+         */
+        const skill = /^\/(\w+)\b\s*([\s\S]*)$/.exec(text);
+        const bundled = skill && SKILLS.find((k) => k.name === skill[1]);
+        const outgoing = bundled
+          ? `${bundled.text.trim()}\n\n---\n\n${
+              skill[2].trim() || "Apply the skill above in this repository."
+            }`
+          : text;
         const id = await api.agentPrompt(
           repo,
           chats.current,
           cmd,
-          where + text,
+          where + outgoing,
           same ? t.session : null,
         );
         if (!same) {
@@ -643,12 +657,23 @@ export function ChatPanel({
    * highlight.
    */
   const slash = /^\/(\S*)$/.exec(input);
-  const suggestions =
-    slash && thread.commands?.length
-      ? thread.commands
-          .filter((c) => c.name.toLowerCase().startsWith(slash[1].toLowerCase()))
-          .slice(0, 8)
-      : [];
+  // The app's skills come first: they work with every agent, installed or not.
+  const skillCommands: AgentCommand[] = SKILLS.map((k) => ({
+    name: k.name,
+    description: `Plans ${k.label} — sent along with your message`,
+  }));
+  const suggestions = slash
+    ? [
+        ...skillCommands,
+        // An agent's own command with a skill's name would never run — the
+        // transform catches the text first — so it is not offered twice.
+        ...(thread.commands ?? []).filter(
+          (c) => !skillCommands.some((k) => k.name === c.name),
+        ),
+      ]
+        .filter((c) => c.name.toLowerCase().startsWith(slash[1].toLowerCase()))
+        .slice(0, 8)
+    : [];
 
   const complete = (name: string) => {
     setInput(`/${name} `);
@@ -885,7 +910,10 @@ export function ChatPanel({
               setPick(-1);
               void send(text);
             } else if (e.key === "Escape") {
-              (e.target as HTMLTextAreaElement).blur();
+              // While the agent is working, Escape means "stop" — the same
+              // gesture every terminal agent teaches. Idle, it leaves the box.
+              if (busy) stop();
+              else (e.target as HTMLTextAreaElement).blur();
             }
           }}
         />
