@@ -11,8 +11,6 @@ Remember to add changesets for any patched bugs - fixed bugs belong in the chang
 
 ## Open
 
-- [ ] Command palette not showing chats across all repos - I like the bahivour of it changing dynamically based on focused repo, but we maybe need a toggle to make it do that or not - also maybe chats should persist across repos maybe that’s the magic of this? — the toggle is in; whether a *chat* should follow you between repositories rather than merely be findable is still open
-
 ## Watch for
 
 Not bugs yet — places the same class of mistake would land next.
@@ -31,6 +29,27 @@ Not bugs yet — places the same class of mistake would land next.
   green test proves the harness agrees with the code, not that the app works.
 
 ## Fixed
+
+### The answer was never the last thing in the chat
+
+Streamed text appended to "the message of this role in the current turn" —
+a backwards scan past everything since the last user message — so an agent
+that wrote prose, ran tools, and then wrote its real answer had that answer
+glued onto the prose *above* the tool lines. The transcript ended in tools;
+the answer hid mid-scroll, which also read as "cut off".
+
+Streaming now grows a bubble only while it is still the last message;
+anything after a tool line starts a new one. Prose, tools, prose is three
+sections in the order they happened. The test that pinned the old behaviour
+was asserting the bug and was rewritten to assert the order.
+
+### The chat title ran into Stop
+
+Both lived in the header, one truncating toward the other. Stop now floats
+just above the composer — the answer is stopped where the next message is
+typed, which Esc in the box already did — and the header keeps only the
+title and the chat actions.
+
 
 ### Dropping a file from Finder did nothing
 
@@ -78,7 +97,6 @@ the rebuild — retried for a few frames, because setting `scrollTop` on a
 Milkdown host that has not finished building clamps to zero. The document
 also shows a thin scrollbar again (the app hides them globally); a long plan
 with no bar gave no sense of place.
-
 
 ### A file grew an empty frontmatter block in front of its real one
 

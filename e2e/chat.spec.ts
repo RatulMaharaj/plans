@@ -133,7 +133,7 @@ test("a message carries the plan it is about", async ({ page }) => {
   expect(sent.agent).toBe("claude");
 });
 
-test("the answer streams into one bubble", async ({ page }) => {
+test("the transcript keeps the order things happened in", async ({ page }) => {
   await open(page);
   await openPlan(page);
   await page.keyboard.press("Meta+j");
@@ -143,14 +143,18 @@ test("the answer streams into one bubble", async ({ page }) => {
   await page.evaluate(() => {
     const f = (window as any).__fake;
     const r = "/repo/one";
-    f.emit("agent-message", { repo: r, turn: 1, text: "Read" });
+    f.emit("agent-message", { repo: r, turn: 1, text: "Reading the plan" });
+    f.emit("agent-message", { repo: r, turn: 1, text: " now." });
     f.emit("agent-tool", { repo: r, turn: 1, callId: "t1", title: "Edit", status: "pending" });
-    f.emit("agent-message", { repo: r, turn: 1, text: "ing the plan now." });
+    f.emit("agent-message", { repo: r, turn: 1, text: "Done — the plan is updated." });
   });
-  await expect(page.locator(".chat-msg.assistant")).toHaveCount(1);
-  await expect(page.locator(".chat-msg.assistant")).toContainText("Reading the plan now.");
-  // The one honest peek at the files: the tool line.
+  // Uninterrupted streaming grows one bubble; text after a tool line starts
+  // a new one, so the closing answer is the LAST thing in the transcript —
+  // never glued above the tools it followed.
+  await expect(page.locator(".chat-msg.assistant")).toHaveCount(2);
+  await expect(page.locator(".chat-msg.assistant").first()).toContainText("Reading the plan now.");
   await expect(page.locator(".chat-tool")).toContainText("Edit");
+  await expect(page.locator(".chat-msg.assistant").last()).toContainText("Done — the plan is updated.");
 });
 
 test("a tool line finishes rather than repeating itself", async ({ page }) => {
@@ -221,7 +225,7 @@ test("stop kills the turn but not the conversation", async ({ page }) => {
   await say(page, "long answer please");
   await expect.poll(() => calls(page, "agent_prompt")).toBe(1);
 
-  await page.locator(".mux-key", { hasText: "Stop" }).click();
+  await page.locator(".chat-stop").click();
   await expect.poll(() => calls(page, "agent_cancel")).toBe(1);
   const [cancelled] = await argsOf(page, "agent_cancel");
   expect(cancelled.turn).toBe(1);

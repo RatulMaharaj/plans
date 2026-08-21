@@ -270,15 +270,18 @@ export function ChatPanel({
       commit(k, (t) => {
         const m = [...t.messages];
         if (append) {
-          // The turn's answer is one bubble: append to the message of this
-          // role in the current turn — anything after the last user message —
-          // so a tool line arriving mid-stream does not split the prose in two.
-          for (let i = m.length - 1; i >= 0 && m[i].role !== "user"; i--) {
-            const at = m[i];
-            if (at.role === role && "text" in at) {
-              m[i] = { role, text: at.text + text };
-              return { ...t, messages: m };
-            }
+          /*
+           * Streamed text grows the bubble it is streaming into — but only
+           * while that bubble is still the last thing in the transcript.
+           * Reaching back past tool lines glued a turn's closing answer onto
+           * the prose *above* the tools, so the answer was never the last
+           * thing on screen. Prose, tools, prose is three sections in the
+           * order they happened; render it that way.
+           */
+          const at = m[m.length - 1];
+          if (at && at.role === role && "text" in at) {
+            m[m.length - 1] = { role, text: at.text + text };
+            return { ...t, messages: m };
           }
         }
         m.push({ role, text });
@@ -748,11 +751,6 @@ export function ChatPanel({
           <span className="chat-title">{chats.list[0]?.title ?? "New chat"}</span>
         )}
         <span className="mux-spacer" />
-        {busy && (
-          <button className="mux-key" onClick={stop} title="Stop this answer">
-            Stop
-          </button>
-        )}
         <button
           className="mux-key"
           onClick={() => onRenameChat(chats.current)}
@@ -862,6 +860,14 @@ export function ChatPanel({
       </div>
 
       <div className="chat-input">
+        {/* Stop lives with the composer, floating clear of the title — the
+            answer is stopped where the next message is typed, and Esc in the
+            box does the same. */}
+        {busy && (
+          <button className="chat-stop" onClick={stop} title="Stop this answer (esc)">
+            Stop
+          </button>
+        )}
         {suggestions.length > 0 && (
           <div className="chat-slash" role="listbox">
             {suggestions.map((c, i) => (
