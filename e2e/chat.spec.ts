@@ -2091,7 +2091,7 @@ test("cmd-D no longer opens the diff", async ({ page }) => {
   await openPlan(page);
   await page.keyboard.press("Meta+d");
 
-  // ⌘3 is the diff; ⌘D was a second way to say it and is now free.
+  // The diff belongs to the git panel's changed files; ⌘D is free.
   await expect(page.locator(".diff-view, .cm-merge-view")).toHaveCount(0);
   await expect(page.locator(".milkdown")).toBeVisible();
 });

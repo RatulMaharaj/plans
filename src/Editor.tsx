@@ -275,10 +275,9 @@ export function Editor({
     };
 
     /**
-     * A comment goes in after the block the selection ends in, not at the
-     * cursor: an aside splitting a sentence in half is valid markdown and
-     * miserable to read as source. Anchoring is by proximity — the comment
-     * sits under the paragraph it is about, the way a person writes one.
+     * A comment goes in at the cursor, where the reader pointed. A selection
+     * is kept, not replaced — the comment sits at its end, about the text it
+     * follows. A selection at the document itself falls back to the end.
      */
     htmlBridge.comment = (value) => {
       touched = true;
@@ -287,11 +286,14 @@ export function Editor({
         const nodes = nodesFor(value, view.state.schema);
         if (!nodes.length) return;
         const { $to } = view.state.selection;
-        // After the top-level block; a selection at the document itself falls
-        // back to the end.
-        const at = $to.depth > 0 ? $to.after(1) : view.state.doc.content.size;
-        const para = view.state.schema.nodes.paragraph.create(null, nodes);
-        view.dispatch(view.state.tr.insert(at, para).scrollIntoView());
+        if ($to.depth > 0) {
+          view.dispatch(view.state.tr.insert($to.pos, nodes).scrollIntoView());
+        } else {
+          const para = view.state.schema.nodes.paragraph.create(null, nodes);
+          view.dispatch(
+            view.state.tr.insert(view.state.doc.content.size, para).scrollIntoView(),
+          );
+        }
       });
     };
 

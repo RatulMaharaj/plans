@@ -5,11 +5,14 @@ line here when it was hard to see, when the cause was somewhere other than the
 symptom, or when the same mistake could be made again.
 
 Fixed entries stay because the pattern is the useful part. Each names how it was
-found, since on this project the finding has usually been harder than the fix.
+found, since on this project the finding jhas usually been harder than the fix.
 
 Remember to add changesets for any patched bugs - fixed bugs belong in the changelog rather than here.
 
 ## Open
+
+- [ ] Stop button does nothing
+- [ ] comments should be allowed to go in between bullet points alsos
 
 ## Watch for
 
@@ -49,7 +52,6 @@ Both lived in the header, one truncating toward the other. Stop now floats
 just above the composer — the answer is stopped where the next message is
 typed, which Esc in the box already did — and the header keeps only the
 title and the chat actions.
-
 
 ### Dropping a file from Finder did nothing
 

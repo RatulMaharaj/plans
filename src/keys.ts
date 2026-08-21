@@ -33,7 +33,6 @@ export const DEFAULT_KEYS: KeymapEntry[] = [
   { id: "repo.add", group: "Repositories", label: "Add a repository", keys: "mod+shift+o" },
   { id: "v.write", group: "Go", label: "Write view", keys: "mod+1" },
   { id: "v.source", group: "Go", label: "Source view", keys: "mod+2" },
-  { id: "v.diff", group: "Go", label: "Diff view", keys: "mod+3" },
   { id: "v.settings", group: "Go", label: "Settings", keys: "mod+," },
   { id: "zen", group: "Go", label: "Zen", keys: "mod+shift+l" },
   { id: "tab.close", group: "Go", label: "Close this buffer", keys: "mod+w" },

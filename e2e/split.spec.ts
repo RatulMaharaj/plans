@@ -258,11 +258,6 @@ test("the view switch is global: both panes follow it", async ({ page }) => {
   await expect(page.locator(".main-pane .source")).toBeVisible();
   await expect(page.locator(".split-pane .source")).toBeVisible();
 
-  // Diff: both panes too.
-  await page.locator(".view-switch button", { hasText: "Diff" }).click();
-  await expect(page.locator(".main-pane .diff-surface, .main-pane .diff-empty")).toHaveCount(1);
-  await expect(page.locator(".split-pane .diff-surface, .split-pane .diff-empty")).toHaveCount(1);
-
   // And back to Write, together.
   await page.locator(".view-switch button", { hasText: "Write" }).click();
   await expect(page.locator(".main-pane .ProseMirror")).toBeVisible();

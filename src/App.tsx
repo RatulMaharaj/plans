@@ -427,9 +427,8 @@ export default function App() {
   const author = activeRepoPath ? (identityByRepo[activeRepoPath] ?? "") : "";
 
   /**
-   * Select some prose, comment on it. The comment goes in after the paragraph
-   * the selection ends in — an aside under the thing it is about, the way a
-   * person writes one — through `htmlBridge.comment`.
+   * Point at some prose, comment on it. The comment goes in at the cursor —
+   * right where the reader was looking — through `htmlBridge.comment`.
    */
   const newComment = useCallback(() => {
     const me = author;
@@ -437,8 +436,8 @@ export default function App() {
       title: "New comment",
       placeholder: "What needs saying?",
       note: me
-        ? `Lands after the paragraph, as <!-- @${me}: … -->. ⌘⇧M from anywhere in the page.`
-        : "Lands after the paragraph as an HTML comment. git config user.name would sign it.",
+        ? `Lands at the cursor, as <!-- @${me}: … -->. ⌘⇧M from anywhere in the page.`
+        : "Lands at the cursor as an HTML comment. git config user.name would sign it.",
       confirm: "Comment",
       multiline: true,
       run: (value) => {
@@ -3130,7 +3129,6 @@ export default function App() {
         "repo.add": () => void addRepo(),
         "v.write": () => goto("write"),
         "v.source": () => goto("source"),
-        "v.diff": () => goto("diff"),
         "v.settings": () => setSettingsOpen((o) => !o),
         zen: () => setZen((z) => !z),
         // Closes the buffer, not the window — there is only ever one window.
@@ -3163,6 +3161,11 @@ export default function App() {
       };
       for (const entry of keymap) {
         if (!matchKeys(e, entry.keys)) continue;
+        // A chord an editor already used is not also an app chord: ⌘/ is
+        // toggle-comment wherever CodeMirror holds the caret, and the event
+        // arrives here already defaultPrevented. Opening the sheet on top of
+        // the comment made one keystroke do two things.
+        if (e.defaultPrevented) return;
         e.preventDefault();
         runs[entry.id]?.();
         return;
@@ -3307,10 +3310,18 @@ export default function App() {
           </>
         ) : (
           <>
+        <button
+          className={`rail-btn ${treeOpen ? "on" : ""}`}
+          onClick={() => set({ showIndex: !settings.showIndex })}
+          title="File tree (⌘B)"
+          aria-pressed={treeOpen}
+        >
+          Files
+        </button>
+        <span className="rail-sep" data-tauri-drag-region />
         <span className="wordmark" data-tauri-drag-region>
           Plans
         </span>
-        <span className="rail-sep" data-tauri-drag-region />
 
         {repos.length > 0 ? (
           <>
@@ -3379,14 +3390,12 @@ export default function App() {
             >
               Source
             </button>
-            {/* Only where there is a commit to diff against — a dropped file
-                from outside every repository shows Write and Source alone. */}
-            {activeRepo && (
-              <button
-                className={(paneFocus === "split" && split ? (splitOverride ?? view) : view) === "diff" ? "on" : ""}
-                onClick={(e) => goto("diff", e.altKey)}
-                title="Live diff against the last commit (⌘3) — ⌥-click: this pane only"
-              >
+            {/* Diff is not a mode you switch into: it belongs to changed
+                files, reached from the git panel — and shown here only while
+                the buffer is actually in it, so there is a way to read the
+                state and a way back out. */}
+            {(paneFocus === "split" && split ? (splitOverride ?? view) : view) === "diff" && (
+              <button className="on" title="Live diff against the last commit">
                 Diff
               </button>
             )}
@@ -3979,7 +3988,7 @@ export default function App() {
               <b>{changeCount}</b> uncommitted
             </span>
           )}
-          <span>⌘G git · ⌘3 diff · ⌘, settings</span>
+          <span>⌘G git · ⌘, settings</span>
         </footer>
       )}
 

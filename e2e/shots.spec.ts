@@ -40,10 +40,9 @@ each page rendered as a page, and the file on disk as the only buffer.
 | ----- | ----------------------------------- |
 | \`⌘1\`  | the page, as a reader would see it  |
 | \`⌘2\`  | the raw markdown, exactly as stored |
-| \`⌘3\`  | the diff against the last commit    |
 
 \`\`\`sh
-# All three are the same buffer, and all three are editable.
+# Both are the same buffer, and both are editable.
 git commit -m "..."   # or ⌘⏎ in the git panel, without leaving
 \`\`\`
 `,

@@ -368,12 +368,6 @@ function buildCommands(p: Props): Command[] {
     label: "Source — the raw markdown",
     run: () => p.onView("source"),
   });
-  add({
-    id: "v.diff",
-    group: "Go",
-    label: "Diff",
-    run: () => p.onView("diff"),
-  });
   if (p.openCount > 0) {
     add({
       id: "tabs.closeAll",

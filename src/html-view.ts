@@ -291,10 +291,7 @@ export const htmlBridge: {
   apply: ((edit: HtmlEdit) => void) | null;
   /** Set by Editor: put a new fragment in at the cursor. */
   insert: ((value: string) => void) | null;
-  /**
-   * Set by Editor: put a comment in after the block holding the selection —
-   * never inline, where it would split a sentence in the source.
-   */
+  /** Set by Editor: put a comment in at the cursor. */
   comment: ((value: string) => void) | null;
   /** Set by Editor: put the cursor at the end of the document and focus it. */
   focusEnd: (() => void) | null;

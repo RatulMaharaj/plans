@@ -248,6 +248,7 @@ button, .rail, .bar, .tabs, .ctx {
 /* --- top rail ------------------------------------------------------------ */
 
 .rail {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 14px;
@@ -257,7 +258,12 @@ button, .rail, .bar, .tabs, .ctx {
   background: var(--paper);
 }
 
+/* Centered in the rail, out of the flow, so the buttons flank it evenly. */
 .wordmark {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
   font-family: var(--mono);
   font-size: 11px;
   font-weight: 700;
