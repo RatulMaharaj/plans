@@ -21,6 +21,7 @@ import { FrontmatterSheet } from "./Frontmatter";
 import { SourceView } from "./SourceView";
 import { isMarkdownPath, joinFrontmatter, matterValue, splitFrontmatter, statusTone } from "./matter";
 import { displayName } from "./FileTree";
+import type { FindHandle } from "./find";
 import type { Settings } from "./settings";
 
 type Props = {
@@ -60,6 +61,14 @@ type Props = {
    */
   liveText: string | null;
   onLiveEdit: (text: string) => void;
+  /**
+   * ⌘F while this pane has focus. The pane routes App's one handle to
+   * whichever of its surfaces is showing — null over a diff, which gets
+   * nothing — and hosts the bar so it floats over the pane being searched.
+   */
+  findRef?: React.MutableRefObject<FindHandle | null>;
+  onFindCount?: (current: number, total: number) => void;
+  findBar?: React.ReactNode;
 };
 
 export function SplitPane({
@@ -85,6 +94,9 @@ export function SplitPane({
   onOpenLink,
   liveText,
   onLiveEdit,
+  findRef,
+  onFindCount,
+  findBar,
 }: Props) {
   const [body, setBody] = useState("");
   const [matter, setMatter] = useState<string | null>(null);
@@ -279,6 +291,37 @@ export function SplitPane({
     prevView.current = shown;
   }, [shown, repo, relPath]);
 
+  /*
+   * ⌘F's route into this pane: App holds one handle, the pane forwards it to
+   * whichever surface is showing. Null over a diff — find is not offered
+   * there — and clear() reaches both surfaces, so no paint outlives the bar
+   * on a surface set aside with CSS.
+   */
+  const writeFind = useRef<FindHandle | null>(null);
+  const sourceFind = useRef<FindHandle | null>(null);
+  const shownNow = useRef(shown);
+  shownNow.current = shown;
+  useEffect(() => {
+    if (!findRef) return;
+    const pick = () =>
+      shownNow.current === "write" && isMarkdownPath(relPath)
+        ? writeFind.current
+        : sourceFind.current;
+    const handle: FindHandle = {
+      set: (q, seek) => pick()?.set(q, seek),
+      next: () => pick()?.next(),
+      prev: () => pick()?.prev(),
+      clear: () => {
+        writeFind.current?.clear();
+        sourceFind.current?.clear();
+      },
+    };
+    findRef.current = shown === "diff" ? null : handle;
+    return () => {
+      findRef.current = null;
+    };
+  }, [findRef, shown, relPath]);
+
   const status = matter !== null ? matterValue(matter, "status") : null;
   const who =
     matter !== null ? (matterValue(matter, "owner") ?? matterValue(matter, "assignee")) : null;
@@ -408,6 +451,8 @@ export function SplitPane({
         </div>
       )}
 
+      {findBar}
+
       {/* Both writing surfaces stay mounted, the hidden one put aside with
           CSS — the same trick the main pane uses to keep switching instant.
           Diff, like the main pane's, is built when asked for. */}
@@ -428,6 +473,8 @@ export function SplitPane({
               author={author}
               onChange={(md) => edited(matter, md)}
               onOpenLink={onOpenLink}
+              findRef={writeFind}
+              onFindCount={onFindCount}
             />
           </div>
           )}
@@ -444,6 +491,8 @@ export function SplitPane({
               settings={settings}
               docKey={docKey}
               active={shown === "source"}
+              findRef={sourceFind}
+              onFindCount={onFindCount}
             />
           </div>
         </>

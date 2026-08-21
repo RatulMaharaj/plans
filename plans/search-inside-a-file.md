@@ -1,5 +1,5 @@
 ---
-status: ready
+status: done
 ---
 # Search Inside a File
 
@@ -122,16 +122,16 @@ should not.
 
 ## Next
 
-- [ ] The find bar component: input, count, next/prev, Escape-restores-focus;
+- [x] The find bar component: input, count, next/prev, Escape-restores-focus;
       one instance, positioned over the focused pane
-- [ ] `mod+f` in `DEFAULT_KEYS`, the palette command, the shortcut sheet entry
-- [ ] Source engine: add `@codemirror/search`, drive its query and highlight
+- [x] `mod+f` in `DEFAULT_KEYS`, the palette command, the shortcut sheet entry
+- [x] Source engine: add `@codemirror/search`, drive its query and highlight
       from the bar, no stock panel
-- [ ] Write engine: ProseMirror decoration plugin — match over text nodes,
+- [x] Write engine: ProseMirror decoration plugin — match over text nodes,
       current-match selection, scroll-into-view
-- [ ] Seed the bar from a palette `*` hit: query prefilled, nearest match to
+- [x] Seed the bar from a palette `*` hit: query prefilled, nearest match to
       the hit line current — and thread the line through `onOpenAt`
-- [ ] Decide the special-content rule (mermaid, HTML, frontmatter) and make
+- [x] Decide the special-content rule (mermaid, HTML, frontmatter) and make
       the count honest about it
-- [ ] Measure find-as-you-type on the largest plan in the repo against the
+- [x] Measure find-as-you-type on the largest plan in the repo against the
       perf budgets before shipping the highlight-all default

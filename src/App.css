@@ -2803,3 +2803,78 @@ body.tree-drag .tabs.drop-hot {
   box-shadow: var(--shadow);
 }
 .chat-stop:hover { color: var(--ink); border-color: var(--ink-3); }
+
+/* ===========================================================================
+   In-file find (⌘F)
+   =========================================================================== */
+
+/* A zero-height anchor in the pane's flow, right where the surface begins,
+   so the bar floats over its top edge without measuring any header. */
+.find-anchor { position: relative; height: 0; z-index: 30; }
+.find-bar {
+  position: absolute;
+  top: 10px;
+  right: 28px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 6px;
+  background: var(--paper);
+  border: 1px solid var(--rule-strong);
+  border-radius: 6px;
+  box-shadow: 0 4px 14px color-mix(in srgb, var(--ink) 12%, transparent);
+}
+.find-input {
+  width: 180px;
+  border: none;
+  outline: none;
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  font-size: 12.5px;
+}
+.find-input::placeholder { color: var(--ink-3); }
+.find-count {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--ink-2);
+  white-space: nowrap;
+  min-width: 52px;
+  text-align: right;
+}
+.find-btn {
+  border: none;
+  background: transparent;
+  color: var(--ink-2);
+  font-size: 12px;
+  line-height: 1;
+  padding: 3px 4px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+.find-btn:hover { color: var(--ink); background: var(--shade); }
+
+/* The matches, in both engines' vocabularies: CodeMirror's search classes in
+   Source, the prose plugin's decorations in Write. Same ink either way. */
+.source .cm-searchMatch,
+.milkdown .find-match {
+  background: color-mix(in srgb, var(--git-mod) 22%, transparent);
+  border-radius: 2px;
+}
+.source .cm-searchMatch-selected,
+.milkdown .find-match.current {
+  background: color-mix(in srgb, var(--git-mod) 48%, transparent);
+}
+/* Specially rendered content — an HTML card, collapsed frontmatter — matches
+   as a block: the count is honest, the highlight is the enclosure. */
+.milkdown .find-block {
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--git-mod) 35%, transparent);
+  border-radius: 4px;
+}
+.milkdown .find-block.current {
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--git-mod) 75%, transparent);
+}
+
+/* The search state machine wants a panel before it highlights; ours renders
+   nothing, and this keeps even its empty strip out of the layout. */
+.source .cm-panels { display: none; }

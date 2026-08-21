@@ -54,7 +54,10 @@ type Props = {
   onReload: () => void;
   /** Search inside files, for the "*" mode. */
   onSearch: (query: string) => Promise<{ relPath: string; line: number; text: string }[]>;
-  onOpenAt: (repoPath: string, relPath: string) => void;
+  /** Open a hit with the find bar seeded: the query, and the line it was on. */
+  onOpenAt: (repoPath: string, relPath: string, line: number, query: string) => void;
+  /** ⌘F, as a command — a binding nobody can find is a binding nobody uses. */
+  onFind: () => void;
   searchRepo: string | null;
   onPerf: () => void;
   onCheckUpdates: () => void;
@@ -163,6 +166,15 @@ function buildCommands(p: Props): Command[] {
   // --- doing things ---------------------------------------------------------
   add({ id: "new", group: "Plans", label: "New plan", run: p.onNewPlan });
   add({ id: "save", group: "Plans", label: "Save now", run: p.onSave });
+  if (p.canEdit) {
+    add({
+      id: "find",
+      group: "Plans",
+      label: "Find in this file",
+      terms: "search inside document within page",
+      run: p.onFind,
+    });
+  }
   add({
     id: "reload",
     group: "Plans",
@@ -830,7 +842,7 @@ export function Palette(props: Props) {
         key: `${h.relPath}:${h.line}:${i}`,
         label: h.text,
         sub: `${h.relPath}:${h.line}`,
-        run: () => props.searchRepo && props.onOpenAt(props.searchRepo, h.relPath),
+        run: () => props.searchRepo && props.onOpenAt(props.searchRepo, h.relPath, h.line, term),
       }));
     }
     if (isCmd) {

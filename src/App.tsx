@@ -39,6 +39,8 @@ import { NameSheet } from "./NameSheet";
 import { MoveSheet } from "./MoveSheet";
 import { TextPrompt } from "./TextPrompt";
 import { SourceView } from "./SourceView";
+import { FindBar } from "./FindBar";
+import { nearestMatchIndex, type FindHandle } from "./find";
 import { UpdateBanner } from "./UpdateBanner";
 import { RELEASE_SECTIONS, RELEASE_VERSION } from "./release-notes";
 import { checkForUpdate, installUpdate, isNewer, runningVersion, type Available } from "./update";
@@ -3072,6 +3074,104 @@ export default function App() {
   const [editing, setEditing] = useState(false);
   /** The shortcut sheet (⌘/) — the registry, drawn. */
   const [shortcuts, setShortcuts] = useState(false);
+
+  /*
+   * ⌘F: one find bar, owned here where the views are switched, with a
+   * per-surface match engine underneath — the same shape as the buffer
+   * itself, which is App's while the surfaces render it. Null is closed; the
+   * query survives view switches because it lives here, not in any engine.
+   * `focusSeq` is bumped when the bar should take the keyboard, and left
+   * alone when ⌘F came from the chat composer — find opens over the
+   * document, but must not steal a half-written message's cursor.
+   */
+  const [find, setFind] = useState<{ query: string; focusSeq: number } | null>(null);
+  const [findCount, setFindCount] = useState<{ current: number; total: number } | null>(null);
+  /** Where focus was when the bar opened, so Escape can hand it back. */
+  const findReturn = useRef<HTMLElement | null>(null);
+  /** The engines: each surface registers one while mounted. */
+  const mainWriteFind = useRef<FindHandle | null>(null);
+  const mainSourceFind = useRef<FindHandle | null>(null);
+  const splitFind = useRef<FindHandle | null>(null);
+  /** The engine last driven, so switching surfaces clears the old paint. */
+  const findLast = useRef<FindHandle | null>(null);
+  /** A palette hit's line, waiting to pick the nearest match once set runs. */
+  const findSeed = useRef<{ line: number } | null>(null);
+
+  /**
+   * The focused pane's engine — `paneFocus` answers the same question for
+   * save. Null over a diff: a read-only view of a transient comparison gets
+   * nothing, deliberately, so ⌘F there does nothing rather than half-works.
+   */
+  const findEngine = useCallback(() => {
+    const r = paneRoute.current;
+    if (r.split && r.paneFocus === "split") return splitFind.current;
+    const v = viewNow.current;
+    if (v === "diff") return null;
+    if (v === "write" && (r.activeRepoPath === MEMORY || isMarkdownPath(r.activePath ?? "")))
+      return mainWriteFind.current;
+    return mainSourceFind.current;
+  }, []);
+
+  const reportFind = useCallback(
+    (current: number, total: number) => setFindCount({ current, total }),
+    [],
+  );
+
+  const closeFind = useCallback(() => {
+    setFind(null);
+    const el = findReturn.current;
+    findReturn.current = null;
+    // The same "back out" contract Escape already keeps: focus returns to
+    // where the cursor was, if that place still exists.
+    if (el && el.isConnected) el.focus();
+  }, []);
+
+  const openFind = useCallback(() => {
+    if (!paneRoute.current.activePath) return;
+    if (!findEngine()) return; // a diff — find is not offered there
+    const target = document.activeElement as HTMLElement | null;
+    const fromComposer = !!target?.closest(".chat");
+    if (!fromComposer) findReturn.current = target;
+    setFind((f) => ({
+      query: f?.query ?? "",
+      focusSeq: fromComposer ? (f?.focusSeq ?? 0) : (f?.focusSeq ?? 0) + 1,
+    }));
+  }, [findEngine]);
+
+  /** Runs the pending engine update now — Enter must not chase a stale query. */
+  const flushFind = useRef<() => void>(() => {});
+  useEffect(() => {
+    if (!find) {
+      findLast.current?.clear();
+      findLast.current = null;
+      setFindCount(null);
+      flushFind.current = () => {};
+      return;
+    }
+    let timer: number | null = null;
+    const apply = () => {
+      if (timer) clearTimeout(timer);
+      timer = null;
+      const eng = findEngine();
+      if (findLast.current && findLast.current !== eng) findLast.current.clear();
+      findLast.current = eng;
+      const seed = findSeed.current;
+      findSeed.current = null;
+      eng?.set(
+        find.query,
+        seed && find.query ? nearestMatchIndex(sourceNow.current, find.query, seed.line) : undefined,
+      );
+    };
+    flushFind.current = apply;
+    // Debounced like the buffer's own 180ms report: highlight-all on a large
+    // plan is the perf risk, and it should not run on every keystroke.
+    timer = window.setTimeout(apply, 180);
+    return () => {
+      if (timer) clearTimeout(timer);
+    };
+    // Re-targeted whenever the focused surface changes identity, so the
+    // query carries across a write/source switch and across panes.
+  }, [find, view, paneFocus, split, activePath, docKey, findEngine]);
   /** The defaults with the reader's overrides merged on top. */
   const keymap = useMemo(() => mergeKeys(settings.keyOverrides), [settings.keyOverrides]);
 
@@ -3157,6 +3257,7 @@ export default function App() {
           void flush();
         },
         new: newPlan,
+        find: openFind,
         // The convention every app that comments uses.
         comment: () => {
           if (view === "write" && activePath) newComment();
@@ -3280,6 +3381,7 @@ export default function App() {
     split,
     toggleSplit,
     closeSplitTab,
+    openFind,
   ]);
 
   /**
@@ -3327,6 +3429,26 @@ export default function App() {
 
   // Zen keeps the page and nothing else — but Settings needs its chrome back.
   const zenOn = zen && !settingsOpen;
+
+  // The one bar, rendered into whichever pane has focus so the highlight
+  // never appears somewhere you are not looking.
+  const findBar = find ? (
+    <FindBar
+      query={find.query}
+      focusSeq={find.focusSeq}
+      count={findCount}
+      onQuery={(q) => setFind((f) => (f ? { ...f, query: q } : f))}
+      onNext={() => {
+        flushFind.current();
+        findEngine()?.next();
+      }}
+      onPrev={() => {
+        flushFind.current();
+        findEngine()?.prev();
+      }}
+      onClose={closeFind}
+    />
+  ) : null;
   const gitOpen = settings.showGit && !!activeRepo && !settingsOpen && !zenOn;
   const treeOpen = settings.showIndex && !zenOn;
 
@@ -3779,6 +3901,8 @@ export default function App() {
                 </div>
               )}
 
+              {(!split || paneFocus === "main") && findBar}
+
               {!activePath ? (
                 <div className="blank">
                   <p className="blank-line">
@@ -3845,6 +3969,8 @@ export default function App() {
                         activePath &&
                         followLink(activeRepoPath, activePath, href)
                       }
+                      findRef={mainWriteFind}
+                      onFindCount={reportFind}
                     />
                   </div>
                   )}
@@ -3855,6 +3981,8 @@ export default function App() {
                       settings={settings}
                       docKey={docKey}
                       active={view === "source"}
+                      findRef={mainSourceFind}
+                      onFindCount={reportFind}
                     />
                   </div>
                 </>
@@ -3954,6 +4082,9 @@ export default function App() {
                           : null
                       }
                       onLiveEdit={adoptFromSplit}
+                      findRef={splitFind}
+                      onFindCount={reportFind}
+                      findBar={paneFocus === "split" ? findBar : null}
                     />
                   </div>
                 </>
@@ -4189,7 +4320,17 @@ export default function App() {
             ? api.searchPlans(activeRepoPath, query, settings.showIgnored)
             : Promise.resolve([])
         }
-        onOpenAt={(r, f) => void openFile(r, f)}
+        onOpenAt={(r, f, line, q) =>
+          void openFile(r, f).then(() => {
+            // In-file find is the missing half of cross-file search: the hit
+            // opens with the bar seeded — query prefilled, the match nearest
+            // the hit line current — instead of landing at the top and reading.
+            findSeed.current = { line };
+            findReturn.current = null;
+            setFind((prev) => ({ query: q, focusSeq: (prev?.focusSeq ?? 0) + 1 }));
+          })
+        }
+        onFind={openFind}
         onPerf={() => setPerf(true)}
         onCheckUpdates={() => void lookForUpdate(true)}
         onReleaseNotes={() => void showNotes()}

@@ -29,6 +29,10 @@ export const DEFAULT_KEYS: KeymapEntry[] = [
   { id: "save", group: "Plans", label: "Save now", keys: "mod+s" },
   { id: "new", group: "Plans", label: "New plan", keys: "mod+n" },
   { id: "comment", group: "Plans", label: "New comment", keys: "mod+shift+m" },
+  // "Find in this document" does not depend on what is on screen, which is
+  // this table's admission test. Diff quietly declines it, and that decision
+  // lives with the other view-dependent choices in App.
+  { id: "find", group: "Plans", label: "Find in this file", keys: "mod+f" },
   { id: "rename", group: "Plans", label: "Rename this file", keys: "f2" },
   { id: "repo.add", group: "Repositories", label: "Add a repository", keys: "mod+shift+o" },
   { id: "v.write", group: "Go", label: "Write view", keys: "mod+1" },

@@ -14,7 +14,17 @@ import { EditorState, type Extension } from "@codemirror/state";
 import { EditorView, keymap, lineNumbers, highlightActiveLineGutter } from "@codemirror/view";
 import { history, historyKeymap, defaultKeymap, indentWithTab } from "@codemirror/commands";
 import { markdown } from "@codemirror/lang-markdown";
+import {
+  SearchQuery,
+  closeSearchPanel,
+  findNext,
+  findPrevious,
+  openSearchPanel,
+  search,
+  setSearchQuery,
+} from "@codemirror/search";
 import { codeTheme } from "./code-theme";
+import { FIND_CAP, findCaseSensitive, type FindHandle } from "./find";
 import type { Settings } from "./settings";
 
 type Props = {
@@ -25,6 +35,9 @@ type Props = {
   docKey: string;
   /** False while the page is showing: stay mounted, but do no work. */
   active: boolean;
+  /** ⌘F's engine for this surface, registered while the view is mounted. */
+  findRef?: React.MutableRefObject<FindHandle | null>;
+  onFindCount?: (current: number, total: number) => void;
 };
 
 /**
@@ -62,7 +75,7 @@ const surface = EditorView.theme({
   ".cm-lineNumbers .cm-gutterElement": { minWidth: "3ch", textAlign: "right" },
 });
 
-export function SourceView({ value, onChange, settings, docKey, active }: Props) {
+export function SourceView({ value, onChange, settings, docKey, active, findRef, onFindCount }: Props) {
   const host = useRef<HTMLDivElement | null>(null);
   const view = useRef<EditorView | null>(null);
   const onChangeRef = useRef(onChange);
@@ -70,6 +83,98 @@ export function SourceView({ value, onChange, settings, docKey, active }: Props)
   const pending = useRef<number | null>(null);
   /** The last text this view sent out, so its own echo can be recognised. */
   const sent = useRef<string | null>(null);
+
+  const onFindCountRef = useRef(onFindCount);
+  onFindCountRef.current = onFindCount;
+  /** The query being highlighted, so next/prev and doc changes can recount. */
+  const liveSearch = useRef<SearchQuery | null>(null);
+
+  /** Every match, in order, capped — counting is the cap's only casualty. */
+  const findRanges = (v: EditorView, sq: SearchQuery) => {
+    const out: { from: number; to: number }[] = [];
+    const c = sq.getCursor(v.state.doc);
+    while (out.length < FIND_CAP) {
+      const n = c.next();
+      if (n.done) break;
+      out.push(n.value);
+    }
+    return out;
+  };
+
+  const reportFind = (v: EditorView, sq: SearchQuery) => {
+    const all = findRanges(v, sq);
+    const sel = v.state.selection.main;
+    const cur = all.findIndex((r) => r.from === sel.from && r.to === sel.to);
+    onFindCountRef.current?.(cur + 1, all.length);
+  };
+
+  /**
+   * ⌘F's engine: @codemirror/search's query machinery — SearchQuery, its
+   * highlighter, findNext — and none of its panel. The highlighter only
+   * paints while the panel state says "open", so the extension below opens a
+   * panel that renders nothing; the visible bar is the app's own.
+   */
+  useEffect(() => {
+    if (!findRef) return;
+    const handle: FindHandle = {
+      set: (q, seek) => {
+        const v = view.current;
+        if (!v) return;
+        if (!q) {
+          handle.clear();
+          onFindCountRef.current?.(0, 0);
+          return;
+        }
+        const sq = new SearchQuery({ search: q, literal: true, caseSensitive: findCaseSensitive(q) });
+        const same = liveSearch.current?.search === q;
+        liveSearch.current = sq;
+        openSearchPanel(v);
+        v.dispatch({ effects: setSearchQuery.of(sq) });
+        const all = findRanges(v, sq);
+        if (!all.length) {
+          onFindCountRef.current?.(0, 0);
+          return;
+        }
+        if (seek !== undefined) {
+          // Seeded from a palette hit: that occurrence is the current match.
+          const m = all[Math.min(seek, all.length - 1)];
+          v.dispatch({
+            selection: { anchor: m.from, head: m.to },
+            effects: EditorView.scrollIntoView(m.from, { y: "center" }),
+          });
+        } else {
+          const sel = v.state.selection.main;
+          const on = all.some((r) => r.from === sel.from && r.to === sel.to);
+          // An unchanged query keeps its match; a new one starts at the cursor.
+          if (!same || !on) findNext(v);
+        }
+        reportFind(v, sq);
+      },
+      next: () => {
+        const v = view.current;
+        if (!v || !liveSearch.current) return;
+        findNext(v);
+        reportFind(v, liveSearch.current);
+      },
+      prev: () => {
+        const v = view.current;
+        if (!v || !liveSearch.current) return;
+        findPrevious(v);
+        reportFind(v, liveSearch.current);
+      },
+      clear: () => {
+        const v = view.current;
+        if (!v) return;
+        liveSearch.current = null;
+        v.dispatch({ effects: setSearchQuery.of(new SearchQuery({ search: "" })) });
+        closeSearchPanel(v);
+      },
+    };
+    findRef.current = handle;
+    return () => {
+      if (findRef.current === handle) findRef.current = null;
+    };
+  }, [findRef]);
 
   /** Anything typed in the last moment still reaches the buffer. */
   const flushPending = () => {
@@ -92,6 +197,10 @@ export function SourceView({ value, onChange, settings, docKey, active }: Props)
       history(),
       keymap.of([...defaultKeymap, ...historyKeymap, indentWithTab]),
       markdown(),
+      // The find machinery. Its state machine wants a panel before it will
+      // highlight, so it gets one that renders nothing (and CSS hides the
+      // empty strip); the bar people see is the app's own.
+      search({ createPanel: () => ({ dom: document.createElement("div") }) }),
       codeTheme,
       surface,
       /**
@@ -104,6 +213,9 @@ export function SourceView({ value, onChange, settings, docKey, active }: Props)
        */
       EditorView.updateListener.of((u) => {
         if (!u.docChanged) return;
+        // A live find keeps its count honest while the text moves — an
+        // agent's write through the watcher, or typing here.
+        if (liveSearch.current) reportFind(u.view, liveSearch.current);
         if (pending.current) clearTimeout(pending.current);
         pending.current = window.setTimeout(() => {
           pending.current = null;

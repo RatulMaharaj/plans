@@ -14,6 +14,8 @@ import { mermaidView } from "./mermaid-view";
 import { pasteLink } from "./paste-link";
 import { imageContext, pasteImage } from "./paste-image";
 import { yamlSchema } from "./yaml-node";
+import { findPluginKey, findProsePlugin, scrollToCurrent } from "./find-prose";
+import type { FindHandle } from "./find";
 import { trace } from "./perf";
 import "./editor-theme.css";
 
@@ -32,6 +34,9 @@ type Props = {
   onChange: (markdown: string) => void;
   /** ⌘-click on a link lands here; the caller decides file versus browser. */
   onOpenLink?: (href: string) => void;
+  /** ⌘F's engine for this surface, registered while the editor is mounted. */
+  findRef?: React.MutableRefObject<FindHandle | null>;
+  onFindCount?: (current: number, total: number) => void;
 };
 
 /**
@@ -101,6 +106,8 @@ export function Editor({
   author,
   onChange,
   onOpenLink,
+  findRef,
+  onFindCount,
 }: Props) {
   const hostRef = useRef<HTMLDivElement | null>(null);
   const instance = useRef<Crepe | null>(null);
@@ -129,6 +136,51 @@ export function Editor({
   const untouch = useRef<(() => void) | null>(null);
   const onChangeRef = useRef(onChange);
   onChangeRef.current = onChange;
+  const onFindCountRef = useRef(onFindCount);
+  onFindCountRef.current = onFindCount;
+
+  /**
+   * ⌘F's engine: metas into the find plugin, through the editor that exists.
+   * Registered once — the functions reach the live instance through refs, so
+   * they survive the editor being rebuilt underneath them.
+   */
+  useEffect(() => {
+    if (!findRef) return;
+    const act = (fn: (view: import("@milkdown/kit/prose/view").EditorView) => void) => {
+      const crepe = instance.current;
+      if (!crepe || !created.current) return;
+      try {
+        crepe.editor.action((ctx) => fn(ctx.get(editorViewCtx)));
+      } catch (e) {
+        trace("find action failed", { error: String(e) });
+      }
+    };
+    const handle: FindHandle = {
+      set: (q, seek) =>
+        act((view) => {
+          const before = findPluginKey.getState(view.state);
+          view.dispatch(view.state.tr.setMeta(findPluginKey, { set: q, seek }));
+          // Scroll when the current match is new — a fresh query or a seek —
+          // not on a recount of the query already on screen.
+          if (q && (seek !== undefined || before?.query !== q)) scrollToCurrent(view);
+        }),
+      next: () =>
+        act((view) => {
+          view.dispatch(view.state.tr.setMeta(findPluginKey, { nav: 1 }));
+          scrollToCurrent(view);
+        }),
+      prev: () =>
+        act((view) => {
+          view.dispatch(view.state.tr.setMeta(findPluginKey, { nav: -1 }));
+          scrollToCurrent(view);
+        }),
+      clear: () => act((view) => view.dispatch(view.state.tr.setMeta(findPluginKey, { clear: true }))),
+    };
+    findRef.current = handle;
+    return () => {
+      if (findRef.current === handle) findRef.current = null;
+    };
+  }, [findRef]);
 
   useEffect(() => {
     const root = hostRef.current;
@@ -234,6 +286,9 @@ export function Editor({
     crepe.editor.use(pictureView);
     // ```mermaid blocks keep their source and gain a diagram beneath it.
     crepe.editor.use(mermaidView);
+    // ⌘F over the rendered text: matches as decorations, recomputed with the
+    // document so an agent's write through the watcher cannot strand them.
+    crepe.editor.use($prose(() => findProsePlugin((c, t) => onFindCountRef.current?.(c, t))));
 
     /**
      * Writing HTML back into the document. A fragment may be several lines, and
