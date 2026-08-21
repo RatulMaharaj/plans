@@ -31,6 +31,25 @@ Rules the app relies on:
 - `status` is lowercase by convention. The app matches it case-insensitively
   and renders it as written.
 
+Two optional keys route a dispatched implementation run:
+
+```yaml
+---
+status: ready
+model: opus
+effort: high
+---
+```
+
+- `model` and `effort` say which model tier picks the plan up and how long it
+  may think. The vocabulary is the agent's own (the values pass straight
+  through to the invocation, e.g. `claude -p --model opus`), not this app's.
+- A key that is present is respected; a key that is missing falls back to the
+  dispatcher's configured default. No heuristics about what the plan "looks
+  like it needs".
+- The keys bind a dispatcher, not the lifecycle — in a hand-driven session
+  you choose your own model, and that is fine.
+
 ## The four statuses
 
 Each status marks a handoff: whose move it is next.
@@ -69,6 +88,16 @@ human writes → draft → agent fleshes out → ready → session implements �
   human's call unless they've asked.
 - **Never demote a status you didn't set.** A `busy` plan that isn't yours is
   someone else's session, mid-flight. Leave it alone.
+
+## Feature folders
+
+Related plans that describe one feature can live in a folder named for it:
+`plans/feature-name/*.md`. The folder means the plans were split for
+readability but describe **one unit of work** — one implementation run, one
+branch, one PR — and its plans share fate. When a run needs one `model` or
+`effort` for the whole folder, the highest requested value in the folder
+wins, because the unit was priced by its hardest member. The only other
+folders with meaning are `completed/` (archived plans) and `drafts/`.
 
 ## Editing etiquette
 

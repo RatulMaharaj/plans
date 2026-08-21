@@ -1,0 +1,75 @@
+---
+name: pr
+description: How an agent turns a ready plan into a pull request — pick one unit of work, claim it with a pushed busy flip, build in a worktree from the default branch's tip, open a PR, and fail loudly back to ready. Use when asked to pick up, implement, or work a ready plan in a repository with a plans/ folder.
+---
+# Turning a plan into a PR
+
+The plans skill teaches an agent to *write* the board; this one teaches an
+agent to *work* it. A run of this skill starts from a `ready` plan and ends in
+exactly one of two states: a pull request into the default branch that
+implements the plan, or the plan back on the board marked `ready` with a note
+saying why not. Nothing in between — no half-done PRs, no silent stalls.
+
+## Pick one unit of work
+
+A unit is either **one `ready` plan** or **one feature folder** — a folder of
+related plans named after a feature (`plans/feature-name/*.md`), taken
+together, because plans that were split for readability still describe one
+change and one PR. A feature folder is always one run: its plans share fate.
+
+Never two units in one run. A run maps to a branch maps to a PR, and a PR
+that implements two unrelated plans is unreviewable.
+
+If a dispatcher handed you a specific plan or folder, that is the unit. If
+you are picking for yourself, pick one `ready` unit from the default branch's
+plans folder and stop there.
+
+## Claim it first — and push the claim
+
+The very first act of the run, before any implementation:
+
+1. Flip the unit's status to `busy` — every plan in a feature folder.
+2. Commit that flip and nothing else. The commit is the claim, and it must
+   stay auditable as exactly that: one frontmatter change, no other edits.
+3. Push it to the default branch.
+
+Pushed, the claim is the mutual-exclusion lock between workers, and git's own
+push rejection is the arbiter: a non-fast-forward on the claim means another
+worker won the race. Do not force, do not retry — pick a different unit or
+stop.
+
+This is the one deliberate exception to "never push to the default branch."
+Nothing else in the run touches it.
+
+## Work in a worktree
+
+`git worktree add` from the *latest commit of the default branch*, on a fresh
+branch named for the plan (or the feature folder). All implementation happens
+in the worktree: the human's checkout is never dirtied, parallel units cannot
+collide, and a failed run is discarded by deleting a directory.
+
+## Finish into a PR
+
+- **Verify** with the smallest relevant check the repository offers — its
+  test command, its lint, its build; whatever CI would run first. If the
+  repository has no checks at all, verify by exercising the change directly
+  and say in the PR body what you did.
+- Set the unit's status to `done` — this flip travels in the branch, not the
+  default branch.
+- Push the branch and open a PR into the default branch with `gh pr create`.
+  The PR body links the plan file(s) it implements.
+- **Never merge.** The PR is the human's review boundary. And never push to
+  the default branch beyond the claim flip above.
+
+## Fail loudly, not creatively
+
+A plan that turns out underspecified, contradictory, or blocked goes back to
+`ready` with a note at the top of the plan saying what was missing — the
+plans skill's "no blocked status, write it in the file" rule, applied from
+the implementation side. Commit and push that flip to the default branch
+(releasing the claim), delete the worktree, and do not open a PR. A half-done
+PR is worse than no PR.
+
+Never ask questions mid-run. If the run cannot proceed without an answer,
+that is a fail-loudly: write the question into the plan and put it back to
+`ready`.
