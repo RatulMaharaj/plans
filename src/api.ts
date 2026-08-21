@@ -149,8 +149,8 @@ export const api = {
   /** `npm i -g` the agent, so it starts without npx fetching it first. */
   agentInstall: (id: string) => invoke<string>("agent_install", { id }),
 
-  listPlans: (repo: string, dirs: string[], includeIgnored = false) =>
-    invoke<any[]>("list_plans", { repo, dirs, includeIgnored }).then((xs) =>
+  listPlans: (repo: string, dirs: string[], includeIgnored = false, onlyMarkdown = true) =>
+    invoke<any[]>("list_plans", { repo, dirs, includeIgnored, onlyMarkdown }).then((xs) =>
       xs.map(camelFile),
     ),
 

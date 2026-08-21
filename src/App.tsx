@@ -49,6 +49,7 @@ import { authorSlug, htmlBridge, type HtmlEdit } from "./html-view";
 import {
   inDoneFolder,
   isDone,
+  isMarkdownPath,
   joinFrontmatter,
   matterValue,
   setMatterValue,
@@ -264,9 +265,19 @@ export default function App() {
   /** Open buffers whose file has changed on disk since we read it. */
   const [outside, setOutside] = useState<Set<string>>(new Set());
   /** The mode belongs to the buffer, so it is a derivation of the tab, not
-   *  state of its own — which is also what makes it survive a restart. */
-  const view: View =
+   *  state of its own — which is also what makes it survive a restart. A file
+   *  that is not markdown must never sit in the writing surface, so "write"
+   *  clamps to "source" for it — memory buffers excepted, since those are
+   *  Write-only prose of the app's own making. */
+  const storedView: View =
     tabs.find((t) => t.repo === activeRepoPath && t.path === activePath)?.view ?? "write";
+  const view: View =
+    storedView === "write" &&
+    activePath &&
+    activeRepoPath !== MEMORY &&
+    !isMarkdownPath(activePath)
+      ? "source"
+      : storedView;
   const setBufferView = useCallback(
     (next: View) => {
       setTabs((prev) =>
@@ -699,7 +710,10 @@ export default function App() {
     const got: (readonly [string, PlanFile[]])[] = [];
     for (const r of repos) {
       try {
-        got.push([r.path, await api.listPlans(r.path, [""], settings.showIgnored)] as const);
+        got.push([
+          r.path,
+          await api.listPlans(r.path, [""], settings.showIgnored, !settings.showAllFiles),
+        ] as const);
       } catch {
         got.push([r.path, []] as const);
       }
@@ -746,7 +760,7 @@ export default function App() {
       return changed ? next : prev;
     });
     done();
-  }, [repos, settings.showIgnored]);
+  }, [repos, settings.showIgnored, settings.showAllFiles]);
 
   /** One repository's status, for when only one thing can have changed. */
   const refreshStatusFor = useCallback(async (repo: string) => {
@@ -1498,6 +1512,19 @@ export default function App() {
 
   const goto = useCallback(
     (next: View, focusedOnly = false) => {
+      // Write is for markdown alone. ⌘1 on anything else does nothing rather
+      // than silently switching — Milkdown would rewrite the file on save.
+      const target =
+        focusedOnly && paneRoute.current.split && paneRoute.current.paneFocus === "split"
+          ? paneRoute.current.split.path
+          : activePath;
+      if (
+        next === "write" &&
+        target &&
+        activeRepoPath !== MEMORY &&
+        !isMarkdownPath(target)
+      )
+        return;
       if (focusedOnly && paneRoute.current.split) {
         if (paneRoute.current.paneFocus === "split") {
           // Pin the split alone; the main pane stays where it is.
@@ -1784,9 +1811,13 @@ export default function App() {
         setConflict(null);
         // With the block turned off the YAML simply stays in the prose, where
         // the editor can still reach it — hidden and uneditable would be worse.
-        const split = settings.showFrontmatter
-          ? splitFrontmatter(text)
-          : { matter: null, body: text, raw: "" };
+        // Frontmatter is a markdown convention: a YAML file that happens to
+        // open with `---` is not carrying any.
+        const md = isMarkdownPath(relPath);
+        const split =
+          settings.showFrontmatter && md
+            ? splitFrontmatter(text)
+            : { matter: null, body: text, raw: "" };
         original.current = {
           matter: split.matter,
           raw: split.raw,
@@ -1804,11 +1835,20 @@ export default function App() {
         setDirty(false);
         setSavedAt(null);
         setMatterOpen(false);
-        setTabs((prev) =>
-          prev.some((t) => t.repo === repoPath && t.path === relPath)
+        // Markdown keeps whatever mode the buffer was left in; anything else
+        // opens in Source, the only surface that will not rewrite it.
+        setTabs((prev) => {
+          const next = prev.some((t) => t.repo === repoPath && t.path === relPath)
             ? prev
-            : [...prev, { repo: repoPath, path: relPath }],
-        );
+            : [...prev, { repo: repoPath, path: relPath }];
+          return md
+            ? next
+            : next.map((t) =>
+                t.repo === repoPath && t.path === relPath && t.view !== "diff"
+                  ? { ...t, view: "source" as View }
+                  : t,
+              );
+        });
         setSettingsOpen(false);
         // Open every folder on the way down to it.
         setExpanded((prev) => {
@@ -3376,13 +3416,17 @@ export default function App() {
              focused pane, so one file can sit rich on one side and raw on
              the other. The highlight follows the focused pane. */
           <span className="segmented small view-switch">
-            <button
-              className={(paneFocus === "split" && split ? (splitOverride ?? view) : view) === "write" ? "on" : ""}
-              onClick={(e) => goto("write", e.altKey)}
-              title="⌥-click: this pane only"
-            >
-              Write
-            </button>
+            {/* Write is a markdown surface: for anything else it is hidden,
+                not disabled — the buffer has one honest mode, Source. */}
+            {isMarkdownPath(paneFocus === "split" && split ? split.path : activePath) && (
+              <button
+                className={(paneFocus === "split" && split ? (splitOverride ?? view) : view) === "write" ? "on" : ""}
+                onClick={(e) => goto("write", e.altKey)}
+                title="⌥-click: this pane only"
+              >
+                Write
+              </button>
+            )}
             <button
               className={(paneFocus === "split" && split ? (splitOverride ?? view) : view) === "source" ? "on" : ""}
               onClick={(e) => goto("source", e.altKey)}
@@ -3774,6 +3818,11 @@ export default function App() {
                     every glance at the source, which is what made switching
                     feel slow; hiding costs a little memory and nothing else.
                   */}
+                  {/* Not mounted at all for a non-markdown file: even parked
+                      aside, Milkdown would parse the text as markdown, and
+                      that document must never exist for a file it could
+                      rewrite. Memory buffers are the app's own prose. */}
+                  {(activeRepoPath === MEMORY || isMarkdownPath(activePath)) && (
                   <div
                     className={`surface ${view === "write" ? "" : "aside"}`}
                     onContextMenu={(e) => {
@@ -3798,6 +3847,7 @@ export default function App() {
                       }
                     />
                   </div>
+                  )}
                   <div className={`surface ${view === "source" ? "" : "aside"}`}>
                     <SourceView
                       value={source}
@@ -3867,7 +3917,13 @@ export default function App() {
                       relPath={split.path}
                       settings={settings}
                       author={author}
-                      view={splitOverride ?? view}
+                      view={
+                        // The split obeys the same rule as the main pane:
+                        // Write only ever holds markdown.
+                        (splitOverride ?? view) === "write" && !isMarkdownPath(split.path)
+                          ? "source"
+                          : (splitOverride ?? view)
+                      }
                       epoch={epoch}
                       canDiff={repos.some((r) => r.path === split.repo)}
                       tabs={splitTabs}

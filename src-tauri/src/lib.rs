@@ -261,7 +261,7 @@ fn frontmatter_status(path: &Path, modified: u64) -> Option<String> {
     status
 }
 
-/// Walking a repository for markdown.
+/// Walking a repository for files — markdown only, or everything.
 ///
 /// This was a hand-rolled recursive read_dir followed by one
 /// `git check-ignore --stdin` over every path found. On a repository with a few
@@ -270,7 +270,7 @@ fn frontmatter_status(path: &Path, modified: u64) -> Option<String> {
 ///
 /// `ignore` is ripgrep's walker: parallel across cores, and it reads .gitignore
 /// itself, so the subprocess disappears entirely.
-fn walk_markdown(root: &Path, include_ignored: bool) -> Vec<PlanFile> {
+fn walk_files(root: &Path, include_ignored: bool, only_markdown: bool) -> Vec<PlanFile> {
     use ignore::{WalkBuilder, WalkState};
     use std::sync::Mutex;
 
@@ -305,7 +305,8 @@ fn walk_markdown(root: &Path, include_ignored: bool) -> Vec<PlanFile> {
                 .extension()
                 .map(|s| s.to_string_lossy().to_ascii_lowercase())
                 .unwrap_or_default();
-            if ext != "md" && ext != "markdown" {
+            let is_markdown = ext == "md" || ext == "markdown";
+            if only_markdown && !is_markdown {
                 return WalkState::Continue;
             }
             let Ok(rel) = path.strip_prefix(root) else {
@@ -327,7 +328,13 @@ fn walk_markdown(root: &Path, include_ignored: bool) -> Vec<PlanFile> {
                 .rsplit_once('/')
                 .map(|(d, _)| d.to_string())
                 .unwrap_or_default();
-            let status = frontmatter_status(path, modified);
+            // `status:` is a markdown-plan convention; a YAML file that
+            // happens to open with `---` is not declaring one.
+            let status = if is_markdown {
+                frontmatter_status(path, modified)
+            } else {
+                None
+            };
             if let Ok(mut out) = found.lock() {
                 out.push(PlanFile {
                     rel_path: rel,
@@ -345,17 +352,22 @@ fn walk_markdown(root: &Path, include_ignored: bool) -> Vec<PlanFile> {
 }
 
 #[tauri::command]
-fn list_plans(repo: String, dirs: Vec<String>, include_ignored: bool) -> R<Vec<PlanFile>> {
+fn list_plans(
+    repo: String,
+    dirs: Vec<String>,
+    include_ignored: bool,
+    only_markdown: bool,
+) -> R<Vec<PlanFile>> {
     let root = PathBuf::from(&repo);
     let mut out = Vec::new();
     // An empty entry means the repository itself, which is the only caller now.
     if dirs.is_empty() || dirs.iter().any(|d| d.is_empty()) {
-        out = walk_markdown(&root, include_ignored);
+        out = walk_files(&root, include_ignored, only_markdown);
     } else {
         for d in dirs {
             let abs = safe_join(&repo, &d)?;
             if abs.is_dir() {
-                out.extend(walk_markdown(&abs, include_ignored));
+                out.extend(walk_files(&abs, include_ignored, only_markdown));
             }
         }
     }
@@ -533,7 +545,7 @@ fn search_plans(repo: String, query: String, include_ignored: bool, limit: u32) 
         return Ok(Vec::new());
     }
     let root = PathBuf::from(&repo);
-    let files = walk_markdown(&root, include_ignored);
+    let files = walk_files(&root, include_ignored, true);
     let cap = limit.max(1) as usize;
 
     let mut hits = Vec::new();

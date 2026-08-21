@@ -161,10 +161,12 @@ function rollUp(
 
 /**
  * The name as shown. With extensions off, the file reads as a title —
- * "auth-plan.md" becomes "auth plan".
+ * "auth-plan.md" becomes "auth plan". Prettifying is a markdown-plan
+ * convention: "my_module.rs" as "my module.rs" would be a lie, so anything
+ * that is not markdown keeps its real name, extension and all.
  */
 export function displayName(name: string, showExtensions: boolean) {
-  if (showExtensions) return name;
+  if (showExtensions || !/\.(md|markdown)$/i.test(name)) return name;
   return name.replace(/\.(md|markdown)$/i, "").replace(/[-_]+/g, " ");
 }
 

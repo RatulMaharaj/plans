@@ -274,6 +274,12 @@ export function SettingsPage({
             on={s.showIgnored}
             onChange={(showIgnored) => onChange({ showIgnored })}
           />
+          <Toggle
+            label="All files"
+            hint="Every text file, not only the markdown. Anything that is not markdown opens in Source."
+            on={s.showAllFiles}
+            onChange={(showAllFiles) => onChange({ showAllFiles })}
+          />
           <Slider
             label="Tree width"
             value={s.treeWidth}

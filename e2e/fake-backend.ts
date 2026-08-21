@@ -102,10 +102,11 @@ export function installFakeBackend(repos: FakeRepo[], update?: FakeUpdate) {
       if (!r) throw new Error(`${path} is not inside a git repository`);
       return { path: r.path, name: r.name, branch: r.branch, plan_dirs: [] };
     },
-    list_plans: ({ repo: p }) => {
+    list_plans: ({ repo: p, onlyMarkdown }) => {
       const r = repo(p);
       if (!r) return [];
       return Object.keys(r.files)
+        .filter((rel) => onlyMarkdown === false || /\.(md|markdown)$/i.test(rel))
         .sort()
         .map((rel) => ({
           rel_path: rel,

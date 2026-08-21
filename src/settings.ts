@@ -53,6 +53,11 @@ export type Settings = {
    */
   showCompleted: boolean;
   /**
+   * Every text file in the tree, not only the markdown. Off is the default:
+   * a plans repository wants plans, not the machinery around them.
+   */
+  showAllFiles: boolean;
+  /**
    * The choices the palette offers for `status:`, comma-separated. A
    * convention, not a schema — a file may say anything; these are only what
    * the app offers to write.
@@ -185,6 +190,7 @@ export const DEFAULTS: Settings = {
   showExtensions: true,
   showFrontmatter: true,
   showCompleted: true,
+  showAllFiles: false,
   statuses: "draft, ready, busy, done",
   agentCommand: "claude {prompt}",
   chatCommand: "claude",

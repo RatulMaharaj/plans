@@ -581,6 +581,17 @@ function buildCommands(p: Props): Command[] {
     run: () => set({ showCompleted: !s.showCompleted }),
   });
 
+  // Show/Hide rather than on/off, for the same reason as finished plans:
+  // "turn off all files" sounds like the tree goes dark.
+  add({
+    id: "showAllFiles",
+    group: "Files",
+    label: `${s.showAllFiles ? "Hide" : "Show"} all files`,
+    value: s.showAllFiles ? "shown" : "hidden",
+    terms: "every file text source code extensions markdown only",
+    run: () => set({ showAllFiles: !s.showAllFiles }),
+  });
+
   // Not a `toggle`: the label has to name where it is going, not what it is.
   add({
     id: "chatPlace",

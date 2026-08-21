@@ -155,6 +155,15 @@ export function inDoneFolder(relPath: string): boolean {
   return parts.some((p) => DONE_DIRS.includes(p.trim().toLowerCase()));
 }
 
+/**
+ * Whether a file is markdown — and so whether the markdown conventions apply
+ * to it: the writing surface, the frontmatter block, the status badge. Any
+ * other file is Source-only; Milkdown would rewrite it on the round trip.
+ */
+export function isMarkdownPath(path: string): boolean {
+  return /\.(md|markdown|mdx)$/i.test(path);
+}
+
 /** The keys, for the collapsed summary line. */
 export function matterKeys(matter: string): string[] {
   return matter

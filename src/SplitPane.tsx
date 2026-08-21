@@ -19,7 +19,7 @@ import { DiffView } from "./DiffView";
 import { Editor } from "./Editor";
 import { FrontmatterSheet } from "./Frontmatter";
 import { SourceView } from "./SourceView";
-import { joinFrontmatter, matterValue, splitFrontmatter, statusTone } from "./matter";
+import { isMarkdownPath, joinFrontmatter, matterValue, splitFrontmatter, statusTone } from "./matter";
 import { displayName } from "./FileTree";
 import type { Settings } from "./settings";
 
@@ -116,7 +116,7 @@ export function SplitPane({
     try {
       const { content: text, stamp: at } = await api.readPlan(repo, relPath);
       stamp.current = at;
-      const split = settings.showFrontmatter
+      const split = settings.showFrontmatter && isMarkdownPath(relPath)
         ? splitFrontmatter(text)
         : { matter: null, body: text, raw: "" };
       original.current = { matter: split.matter, raw: split.raw, eol: /\n$/.test(text) };
@@ -200,7 +200,7 @@ export function SplitPane({
   useEffect(() => {
     if (liveText === null || focused) return;
     if (liveText === source) return;
-    const sp = settings.showFrontmatter
+    const sp = settings.showFrontmatter && isMarkdownPath(relPath)
       ? splitFrontmatter(liveText)
       : { matter: null, body: liveText, raw: "" };
     original.current = { matter: sp.matter, raw: sp.raw, eol: /\n$/.test(liveText) };
@@ -413,6 +413,10 @@ export function SplitPane({
           Diff, like the main pane's, is built when asked for. */}
       {shown !== "diff" ? (
         <>
+          {/* Not mounted at all for a non-markdown file — even parked aside,
+              Milkdown would parse it as markdown, and that document must
+              never exist for a file it could rewrite. */}
+          {isMarkdownPath(relPath) && (
           <div className={`surface ${shown === "write" ? "" : "aside"}`}>
             <Editor
               docKey={docKey}
@@ -426,12 +430,13 @@ export function SplitPane({
               onOpenLink={onOpenLink}
             />
           </div>
+          )}
           <div className={`surface ${shown === "source" ? "" : "aside"}`}>
             <SourceView
               value={source}
               onChange={(text) => {
                 sourceTouched.current = true;
-                const split = settings.showFrontmatter
+                const split = settings.showFrontmatter && isMarkdownPath(relPath)
                   ? splitFrontmatter(text)
                   : { matter: null, body: text, raw: original.current.raw };
                 edited(split.matter, split.body);
@@ -450,7 +455,7 @@ export function SplitPane({
             buffer={source}
             onEdit={(text) => {
               sourceTouched.current = true;
-              const split = settings.showFrontmatter
+              const split = settings.showFrontmatter && isMarkdownPath(relPath)
                 ? splitFrontmatter(text)
                 : { matter: null, body: text, raw: original.current.raw };
               edited(split.matter, split.body);
