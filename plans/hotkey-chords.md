@@ -1,12 +1,12 @@
 ---
-status: draft
+status: done
 ---
 # Chords, And The Rest Of The Hotkey Plan
 
 `improved-hotkeys.md` shipped the registry (`src/keys.ts`), the sheet (⌘/,
 `ShortcutSheet.tsx`), and overrides (`keyOverrides` in settings), and
-deliberately deferred the rest. This plan is the rest, in the order it
-becomes worth doing — and an honest note on what still is not.
+deliberately deferred the rest. This plan is the rest — chords, a real
+Keyboard page in Settings, and preset keybinding packs.
 
 ## The trigger, restated
 
@@ -14,10 +14,9 @@ The original argument was: chords are only worth building once the
 single-keystroke space is genuinely full. The sheet now shows how full it
 is. The split-pane work spent ⌘, ⌘⌥, ⌘⌥1/2 and turned ⌘W polysemous
 (split tab, then pane, then buffer); the view switch grew ⌥-click as a
-modifier because a fourth meaning had nowhere to live on the keys. That is
-what "the space is filling" looks like from inside. Not full yet — but the
-shape of the work can be written down now, so that when the next binding has
-no home, the answer is a table entry rather than a design session.
+modifier because a fourth meaning had nowhere to live on the keys. The find
+work just spent ⌘F too. The human has now asked for the rest directly, so
+the trigger has fired.
 
 ## Chords, on the registry
 
@@ -33,60 +32,76 @@ follows from keeping that one representation:
 - **The indicator**: a half-typed chord must be visible or it reads as the
   app dropping keystrokes. The status bar is already the app's quiet voice —
   render the armed prefix there (`⌘K …`), cleared on completion or timeout.
-- **Capture** (`specFrom` / `ShortcutSheet.tsx`): the sheet's rebind capture
-  learns to accept two combos — after the first, keep capturing for a beat
-  instead of committing, exactly the timeout the matcher uses. ⌫ and Esc
-  keep their meanings.
+- **Capture** (`specFrom` / the rebind UI): the rebind capture learns to
+  accept two combos — after the first, keep capturing for a beat instead of
+  committing, exactly the timeout the matcher uses. ⌫ and Esc keep their
+  meanings.
 - **Rendering** (`renderKeys`): a space becomes a thin joiner — `⌘K ⌘W` —
   and the palette hints inherit it for free, since hints are already
   rendered from the registry.
 
-**The collision that must be decided first:** ⌘K is a door into the palette
-today (`App.tsx`, hand-written, beside ⌘P). Every editor that has chords
-spends ⌘K as the prefix, and this app has already spent it. Options: keep
-⌘K for the palette and use another prefix; or make ⌘K the chord prefix and
-let the palette keep ⌘P/⌘⇧P alone. The second is what the muscle memory of
-every VS Code hand expects, and ⌘P already opens the same box. Decide in
-this plan's first commit, not mid-implementation.
+**The prefix decision, made now:** ⌘K becomes the chord prefix. The palette
+keeps ⌘P/⌘⇧P, which already open the same box; ⌘K's palette meaning goes.
+This is what the muscle memory of every VS Code hand expects.
 
-**Conflict rules extend, not change:** the sheet already refuses a binding
-that another command holds. Two more refusals: a chord whose prefix is
+**Conflict rules extend, not change:** the rebind UI already refuses a
+binding another command holds. Two more refusals: a chord whose prefix is
 another command's whole binding (the prefix would swallow it), and a single
-binding equal to an existing chord's prefix (same problem, other direction).
-Both are the same sentence the sheet already says, with a different clause.
+binding equal to an existing chord's prefix (same problem, other
+direction).
+
+**First real chords**, from the pressure that exists today: the ⌘W family
+(`mod+k w` close all buffers alongside ⌘W's close-this) and the view
+overrides that ride on ⌥-click.
+
+## A Keyboard page in Settings
+
+Rebinding today lives only in the shortcut sheet. The human asked for
+customisable hotkeys "in a page similar to settings" — so the sheet stays
+the quick reference (⌘/), and a **Settings → Keyboard** page becomes the
+place bindings are managed:
+
+- Every registry command, grouped as the sheet groups them, each with its
+  current keys rendered, a capture-to-rebind control, unbind, and
+  reset-to-default; overridden rows visibly marked.
+- The contextual (hand-written) and editor-local keys listed read-only, so
+  the page is complete about what it does not own.
+- The same conflict refusals as the sheet, same wording.
+- A "Reset all" that clears `keyOverrides`.
+
+## Preset keybinding packs
+
+`keyOverrides` is `{ [commandId]: keys }` merged over defaults. A pack is
+the same shape with a different source: a named, hand-kept table shipped in
+`src/keys.ts` (or a sibling module), chosen on the Keyboard page.
+
+- Setting: `keyPreset: "default" | "vscode" | "vim"`, default `"default"`.
+  Merge order: defaults ← pack ← the reader's own overrides, so personal
+  rebinds survive switching packs.
+- **VS Code pack**: where this app's command has a VS Code sibling, use its
+  keys — ⌘K W for close-all, ⌘K ⌘S opens the Keyboard page, ⌘⇧F for
+  cross-file search (the palette's `*`), ⌃` for the agent chat, etc. Kept
+  small and honest: only commands that exist here.
+- **Vim pack**: app-level navigation in vim's spirit where the app's chrome
+  allows — this is *not* modal editing. Modal editing lives inside the
+  editor surfaces and remains its own future plan; the page says so in a
+  sentence next to the pack, so nobody buys more than is sold.
 
 ## Editor-local keys join the sheet, read-only
 
-The plan's open question — does the registry cover bold and italic — has a
-cheap honest answer: list them in the sheet's fixed section the way the
-contextual keys are listed, sourced from a small hand-kept table, and do not
-make them rebindable. They belong to Milkdown and CodeMirror; the sheet's
-job is to stop being *incomplete*, not to own them. The day someone actually
-asks to rebind bold is the day that trade gets revisited.
-
-## Keybinding packs — the shape exists, unbuilt
-
-`keyOverrides` is `{ [commandId]: keys }` merged over defaults. A pack is
-the same shape with a different source. Nothing to build until a second
-keymap someone wants actually exists; noted here so nobody designs a new
-mechanism for it.
-
-## Still not this plan
-
-Vim/modal editing stays a different feature — it lives inside the editor
-surfaces, not the app's keydown handler, and would arrive as a CodeMirror/
-Milkdown extension. If it is wanted, it gets its own seed.
+List bold/italic and friends in the sheet's (and Keyboard page's) fixed
+section from a small hand-kept table; not rebindable. They belong to
+Milkdown and CodeMirror.
 
 ## Next
 
-- [ ] Decide the prefix: ⌘K moves to chords (palette keeps ⌘P/⌘⇧P), or a
-  different prefix — written down before any code
-- [ ] `matchKeys`/`specFrom`/`renderKeys` learn the two-step spec
-- [ ] `pendingChord` in the keydown lookup, with the timeout and the
-  status-bar indicator
-- [ ] Sheet capture takes chords; the two new conflict refusals
-- [ ] Editor-local keys listed in the sheet's fixed section
-- [ ] First real chords, from the pressure that exists today: candidates are
-  the ⌘W family (close tab / close pane / close all) and the view
-  overrides that currently ride on ⌥-click
-
+- [x] `matchKeys`/`specFrom`/`renderKeys` learn the two-step spec
+- [x] `pendingChord` in the keydown lookup, timeout, status-bar indicator
+- [x] ⌘K moves from palette-door to chord prefix; palette keeps ⌘P/⌘⇧P
+- [x] Capture takes chords; the two new conflict refusals
+- [x] Settings → Keyboard page: rebind, unbind, reset, reset-all,
+      read-only contextual + editor-local sections
+- [x] `keyPreset` setting and the pack merge order; VS Code and Vim packs
+- [x] First real chords (⌘W family, view overrides)
+- [x] Tests: chord matching/timeout, conflict refusals, pack merge order,
+      and an e2e pass over the Keyboard page (`e2e/keys.spec.ts`)

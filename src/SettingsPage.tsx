@@ -28,6 +28,8 @@ type Props = {
   version: string;
   onCheckUpdates: () => void;
   onReleaseNotes: () => void;
+  /** Open the Keyboard page, which lives beside this one. */
+  onKeyboard: () => void;
 };
 
 /**
@@ -63,6 +65,7 @@ export function SettingsPage({
   version,
   onCheckUpdates,
   onReleaseNotes,
+  onKeyboard,
 }: Props) {
   const [q, setQ] = useState("");
 
@@ -519,6 +522,24 @@ export function SettingsPage({
             {...RANGES.watchSeconds}
             onChange={(watchSeconds) => onChange({ watchSeconds })}
           />
+        </Group>
+
+        {/* ---- keyboard ------------------------------------------------- */}
+        <Group
+          name="Keyboard"
+          hint="Every shortcut, on its own page: rebind, chords, preset packs. ⌘/ shows the quick reference."
+        >
+          <div className="setting-row static">
+            <span className="setting-label">
+              Keyboard shortcuts
+              <span className="setting-hint">
+                Rebind any command, build ⌘K chords, or choose a preset pack.
+              </span>
+            </span>
+            <button className="act" onClick={onKeyboard}>
+              Open
+            </button>
+          </div>
         </Group>
 
         {/* ---- updates -------------------------------------------------- */}

@@ -1,70 +1,71 @@
 /**
  * Every shortcut, from the registry — a view of `DEFAULT_KEYS`, not a
- * hand-written table that goes stale. Click a binding to press a new one;
- * overrides land in settings and merge over the defaults the way settings
- * already merge.
+ * hand-written table that goes stale. Click a binding to press a new one —
+ * chords included: a second combo within the beat makes a two-step spec.
+ * Overrides land in settings and merge over the defaults (and the chosen
+ * preset pack) the way settings already merge.
  *
  * The contextual keys — Escape, ⌘B, and friends — are listed but not
  * rebindable: their meaning depends on what is on screen, and they stay
- * hand-written in App.tsx. The sheet says so rather than pretending.
+ * hand-written in App.tsx. The sheet says so rather than pretending. The
+ * editor's own keys — bold, italic — are listed on the same terms: they
+ * belong to Milkdown and CodeMirror.
+ *
+ * The sheet is the quick reference (⌘/); Settings → Keyboard is where
+ * bindings are managed at length.
  */
 import { useEffect, useState } from "react";
+import { useKeyCapture } from "./capture";
 import {
+  bindingConflict,
   CONTEXTUAL_KEYS,
-  DEFAULT_KEYS,
+  EDITOR_KEYS,
   mergeKeys,
   renderKeys,
-  specFrom,
+  type KeyPreset,
 } from "./keys";
 
 type Props = {
   overrides: Record<string, string>;
+  preset: KeyPreset;
   onOverrides: (next: Record<string, string>) => void;
   onClose: () => void;
 };
 
-export function ShortcutSheet({ overrides, onOverrides, onClose }: Props) {
+export function ShortcutSheet({ overrides, preset, onOverrides, onClose }: Props) {
   /** The command id waiting for its new keys, if any. */
   const [capturing, setCapturing] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
-  const merged = mergeKeys(overrides);
+  const merged = mergeKeys(overrides, preset);
+  /** What the command falls back to without an override: defaults plus pack. */
+  const base = mergeKeys({}, preset);
 
-  useEffect(() => {
-    if (!capturing) return;
-    const h = (e: KeyboardEvent) => {
-      e.preventDefault();
-      e.stopPropagation();
-      if (e.key === "Escape") {
+  const armed = useKeyCapture(capturing !== null, {
+    onCancel: () => setCapturing(null),
+    onUnbind: () => {
+      // Unbound, explicitly — "" merges as "no keys".
+      if (capturing) onOverrides({ ...overrides, [capturing]: "" });
+      setCapturing(null);
+    },
+    onSpec: (spec) => {
+      if (!capturing) return;
+      // A conflict is an error, not a silent last-one-wins: two commands on
+      // one chord means one of them silently never runs.
+      const clash = bindingConflict(spec, capturing, merged);
+      if (clash) {
+        setNote(clash);
         setCapturing(null);
         return;
       }
-      if (e.key === "Backspace" || e.key === "Delete") {
-        // Unbound, explicitly — "" merges as "no keys".
-        onOverrides({ ...overrides, [capturing]: "" });
-        setCapturing(null);
-        return;
-      }
-      const spec = specFrom(e);
-      if (!spec) return; // a bare modifier: keep waiting
-      const taken = merged.find((k) => k.id !== capturing && k.keys === spec);
-      if (taken) {
-        // A conflict is an error, not a silent last-one-wins: two commands on
-        // one chord means one of them silently never runs.
-        setNote(`${renderKeys(spec)} already runs “${taken.label}” — unbind that first.`);
-        setCapturing(null);
-        return;
-      }
-      const dflt = DEFAULT_KEYS.find((k) => k.id === capturing)?.keys;
+      const dflt = base.find((k) => k.id === capturing)?.keys;
       const next = { ...overrides };
       if (spec === dflt) delete next[capturing];
       else next[capturing] = spec;
       onOverrides(next);
       setNote(null);
       setCapturing(null);
-    };
-    window.addEventListener("keydown", h, true);
-    return () => window.removeEventListener("keydown", h, true);
-  }, [capturing, overrides, onOverrides, merged]);
+    },
+  });
 
   // Esc closes the sheet — unless a capture owns the keyboard right now.
   useEffect(() => {
@@ -100,7 +101,7 @@ export function ShortcutSheet({ overrides, onOverrides, onClose }: Props) {
                     {overrides[k.id] !== undefined && (
                       <button
                         className="shortcut-reset"
-                        title={`Back to ${renderKeys(DEFAULT_KEYS.find((d) => d.id === k.id)?.keys ?? "")}`}
+                        title={`Back to ${renderKeys(base.find((d) => d.id === k.id)?.keys ?? "") || "unbound"}`}
                         onClick={() => {
                           const next = { ...overrides };
                           delete next[k.id];
@@ -112,13 +113,17 @@ export function ShortcutSheet({ overrides, onOverrides, onClose }: Props) {
                     )}
                     <button
                       className={`shortcut-keys ${capturing === k.id ? "capturing" : ""}`}
-                      title="Click, then press the new keys. ⌫ unbinds, esc cancels."
+                      title="Click, then press the new keys — two combos make a chord. ⌫ unbinds, esc cancels."
                       onClick={() => {
                         setNote(null);
                         setCapturing(capturing === k.id ? null : k.id);
                       }}
                     >
-                      {capturing === k.id ? "press keys…" : renderKeys(k.keys) || "unbound"}
+                      {capturing === k.id
+                        ? armed
+                          ? `${renderKeys(armed)} …`
+                          : "press keys…"
+                        : renderKeys(k.keys) || "unbound"}
                     </button>
                   </div>
                 ))}
@@ -127,6 +132,18 @@ export function ShortcutSheet({ overrides, onOverrides, onClose }: Props) {
           <section>
             <h3 className="shortcut-group">Contextual — not rebindable</h3>
             {CONTEXTUAL_KEYS.map((k) => (
+              <div className="shortcut-row" key={k.keys}>
+                <span className="shortcut-label">
+                  {k.label}
+                  {k.note && <span className="shortcut-note"> — {k.note}</span>}
+                </span>
+                <span className="shortcut-keys fixed">{renderKeys(k.keys)}</span>
+              </div>
+            ))}
+          </section>
+          <section>
+            <h3 className="shortcut-group">In the editor — not rebindable</h3>
+            {EDITOR_KEYS.map((k) => (
               <div className="shortcut-row" key={k.keys}>
                 <span className="shortcut-label">
                   {k.label}

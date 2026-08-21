@@ -150,6 +150,12 @@ export type Settings = {
    * the shortcut sheet (⌘/), not by hand.
    */
   keyOverrides: Record<string, string>;
+  /**
+   * The preset keybinding pack merged between the registry's defaults and
+   * `keyOverrides` — personal rebinds survive switching packs. Strictly
+   * opt-in: "default" is the app's own bindings, untouched.
+   */
+  keyPreset: "default" | "vscode" | "vim";
 
   // Updates
   /**
@@ -211,6 +217,7 @@ export const DEFAULTS: Settings = {
   showStatusBar: true,
   watchSeconds: 4,
   keyOverrides: {},
+  keyPreset: "default",
   updates: "notify",
   telemetry: true,
   // Empty rather than the current version: a settings blob from an older build

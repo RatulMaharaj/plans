@@ -28,7 +28,8 @@ import { agentCommandLine, HANDOFF_PROMPT } from "./agent";
 import { DiffView } from "./DiffView";
 import { SettingsPage } from "./SettingsPage";
 import { installConventions, skillState, SKILLS, type SkillState } from "./skill";
-import { matchKeys, mergeKeys } from "./keys";
+import { CHORD_MS, matchChordPrefix, matchKeys, mergeKeys, renderKeys } from "./keys";
+import { KeyboardPage } from "./KeyboardPage";
 import { ShortcutSheet } from "./ShortcutSheet";
 import { SplitPane } from "./SplitPane";
 import { Palette } from "./Palette";
@@ -233,6 +234,8 @@ export default function App() {
   const [chatSeed, setChatSeed] = useState<string | null>(null);
   const [toast, setToast] = useState<Toast>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  /** The Keyboard page, which lives beside Settings and shows in its place. */
+  const [keyboardOpen, setKeyboardOpen] = useState(false);
   const [epoch, setEpoch] = useState(0);
   const [palette, setPalette] = useState<null | { commands: boolean }>(null);
   /** So the open path can call itself once after refreshing a stale tree. */
@@ -3172,8 +3175,27 @@ export default function App() {
     // Re-targeted whenever the focused surface changes identity, so the
     // query carries across a write/source switch and across panes.
   }, [find, view, paneFocus, split, activePath, docKey, findEngine]);
-  /** The defaults with the reader's overrides merged on top. */
-  const keymap = useMemo(() => mergeKeys(settings.keyOverrides), [settings.keyOverrides]);
+  /** The defaults, the chosen pack, then the reader's overrides on top. */
+  const keymap = useMemo(
+    () => mergeKeys(settings.keyOverrides, settings.keyPreset),
+    [settings.keyOverrides, settings.keyPreset],
+  );
+
+  /**
+   * A half-typed chord: the armed prefix, waiting `CHORD_MS` for its second
+   * combo. A ref for the keydown handler, a state twin for the status bar —
+   * a half-typed chord must be visible or it reads as dropped keystrokes.
+   */
+  const pendingChord = useRef<string | null>(null);
+  const chordTimer = useRef<number | null>(null);
+  const [chordHint, setChordHint] = useState<string | null>(null);
+  const clearChord = useCallback(() => {
+    pendingChord.current = null;
+    if (chordTimer.current) clearTimeout(chordTimer.current);
+    chordTimer.current = null;
+    setChordHint(null);
+  }, []);
+
 
   /** ⌘\ — open the most recent other buffer beside this one, or close the split. */
   const toggleSplit = useCallback(() => {
@@ -3222,9 +3244,10 @@ export default function App() {
         return;
       }
 
-      // ⌘P plans, ⌘⇧P commands, ⌘K either way. The ">" is what actually picks
-      // the mode, so these are just two doors into the same box.
-      if (mod && !e.ctrlKey && (e.key.toLowerCase() === "p" || e.key.toLowerCase() === "k")) {
+      // ⌘P plans, ⌘⇧P commands. The ">" is what actually picks the mode, so
+      // these are two doors into the same box. ⌘K used to be a third; it is
+      // now the chord prefix, matched from the registry below.
+      if (mod && !e.ctrlKey && e.key.toLowerCase() === "p") {
         e.preventDefault();
         setPalette({ commands: e.shiftKey });
         return;
@@ -3270,7 +3293,10 @@ export default function App() {
         "repo.add": () => void addRepo(),
         "v.write": () => goto("write"),
         "v.source": () => goto("source"),
-        "v.settings": () => setSettingsOpen((o) => !o),
+        "v.settings": () => {
+          setKeyboardOpen(false);
+          setSettingsOpen((o) => !o);
+        },
         zen: () => setZen((z) => !z),
         // Closes the buffer, not the window — there is only ever one window.
         // With two panes, the focused split closes first: the pane, then buffers.
@@ -3290,6 +3316,7 @@ export default function App() {
         "tab.prev": () => cycleTab(-1),
         "tab.next2": () => cycleTab(1),
         "tab.prev2": () => cycleTab(-1),
+        "tab.closeAll": () => void closeAllTabs(),
         showMux: () => showPanel("showMux"),
         showGit: () => showPanel("showGit"),
         shortcuts: () => setShortcuts((v) => !v),
@@ -3299,7 +3326,30 @@ export default function App() {
         "pane.2": () => {
           if (split) setPaneFocus("split");
         },
+        // The keys for what used to be ⌥-click only: pin the focused pane.
+        "v.write.pane": () => goto("write", true),
+        "v.source.pane": () => goto("source", true),
+        "v.keyboard": () => {
+          setSettingsOpen(true);
+          setKeyboardOpen(true);
+        },
       };
+      /*
+       * A chord is half-typed: the next combo either completes one, or the
+       * armed state clears and the keystroke is processed normally. Bare
+       * modifiers keep waiting — they are how the second combo is reached.
+       */
+      if (pendingChord.current) {
+        if (["Meta", "Control", "Shift", "Alt"].includes(e.key)) return;
+        const pending = pendingChord.current;
+        clearChord();
+        for (const entry of keymap) {
+          if (!matchKeys(e, entry.keys, pending)) continue;
+          e.preventDefault();
+          runs[entry.id]?.();
+          return;
+        }
+      }
       for (const entry of keymap) {
         if (!matchKeys(e, entry.keys)) continue;
         // A chord an editor already used is not also an app chord: ⌘/ is
@@ -3309,6 +3359,22 @@ export default function App() {
         if (e.defaultPrevented) return;
         e.preventDefault();
         runs[entry.id]?.();
+        return;
+      }
+      /*
+       * The first combo of any bound chord: swallow it, arm the pending
+       * state, and give the second combo `CHORD_MS` to arrive. Still the one
+       * lookup — a chord is a spec with a space, not a second dispatch path.
+       */
+      for (const entry of keymap) {
+        const prefix = matchChordPrefix(e, entry.keys);
+        if (!prefix) continue;
+        if (e.defaultPrevented) return;
+        e.preventDefault();
+        pendingChord.current = prefix;
+        setChordHint(prefix);
+        if (chordTimer.current) clearTimeout(chordTimer.current);
+        chordTimer.current = window.setTimeout(clearChord, CHORD_MS);
         return;
       }
       if (mod && e.key.toLowerCase() === "b") {
@@ -3347,7 +3413,9 @@ export default function App() {
       } else if (e.key === "Escape" && zen) {
         setZen(false);
       } else if (e.key === "Escape" && settingsOpen) {
-        setSettingsOpen(false);
+        // The Keyboard page backs out to Settings first, then Settings closes.
+        if (keyboardOpen) setKeyboardOpen(false);
+        else setSettingsOpen(false);
       }
     };
     window.addEventListener("keydown", h);
@@ -3375,7 +3443,10 @@ export default function App() {
     zen,
     editing,
     settingsOpen,
+    keyboardOpen,
     keymap,
+    clearChord,
+    closeAllTabs,
     cycleTab,
     paneFocus,
     split,
@@ -3598,7 +3669,10 @@ export default function App() {
         )}
         <button
           className={`rail-btn ${settingsOpen ? "on" : ""}`}
-          onClick={() => setSettingsOpen((o) => !o)}
+          onClick={() => {
+            setKeyboardOpen(false);
+            setSettingsOpen((o) => !o);
+          }}
           title="Settings (⌘,)"
           aria-pressed={settingsOpen}
         >
@@ -3679,7 +3753,9 @@ export default function App() {
 
         {/* --- page -------------------------------------------------------- */}
         <main className="page">
-          {settingsOpen ? (
+          {settingsOpen && keyboardOpen ? (
+            <KeyboardPage settings={settings} onChange={set} onBack={() => setKeyboardOpen(false)} />
+          ) : settingsOpen ? (
             <SettingsPage
               settings={settings}
               onChange={set}
@@ -3719,6 +3795,7 @@ export default function App() {
               version={appVersion}
               onCheckUpdates={() => void lookForUpdate(true)}
               onReleaseNotes={() => void showNotes()}
+              onKeyboard={() => setKeyboardOpen(true)}
             />
           ) : (
             <>
@@ -4156,6 +4233,8 @@ export default function App() {
           ) : (
             <span>{activeRepo?.name ?? "No repository"}</span>
           )}
+          {/* The armed chord prefix — visible, or it reads as dropped keys. */}
+          {chordHint && <span className="chord-hint">{renderKeys(chordHint)} …</span>}
           <span className="bar-spacer" />
           {activeRepoPath && usage[`${activeRepoPath}::${chats.current}`] && (
             <span title="The agent's context window, and what this session has cost">
@@ -4285,7 +4364,12 @@ export default function App() {
           if (saveTimer.current) clearTimeout(saveTimer.current);
           void flush();
         }}
-        onView={(v) => (v === "settings" ? setSettingsOpen(true) : goto(v))}
+        onView={(v) => {
+          if (v === "settings") {
+            setKeyboardOpen(false);
+            setSettingsOpen(true);
+          } else goto(v);
+        }}
         zen={zen}
         onZen={() => setZen((z) => !z)}
         canInsertHtml={view === "write" && !!activePath}
@@ -4417,6 +4501,7 @@ export default function App() {
       {shortcuts && (
         <ShortcutSheet
           overrides={settings.keyOverrides}
+          preset={settings.keyPreset}
           onOverrides={(next) => set({ keyOverrides: next })}
           onClose={() => setShortcuts(false)}
         />

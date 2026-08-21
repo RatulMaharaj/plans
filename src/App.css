@@ -2664,6 +2664,21 @@ body.resizing.resizing-row, body.resizing.resizing-row .chat-edge { cursor: row-
 .shortcut-keys:hover { border-color: var(--rule-strong); }
 .shortcut-keys.capturing { border-color: var(--ink); color: var(--ink); }
 .shortcut-keys.fixed { cursor: default; border-color: transparent; color: var(--ink-3); }
+
+/* --- the keyboard page, which reuses the sheet's rows --------------------- */
+.keyboard-row { padding: 5px 0; }
+.keyboard-note {
+  font-size: 13px;
+  color: var(--ink-3);
+  margin: 0 0 8px;
+}
+.key-edited {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--ink-3);
+}
+/* The half-typed chord, in the status bar's quiet voice. */
+.chord-hint { font-family: var(--mono); }
 .shortcut-reset {
   font-family: var(--mono);
   font-size: 11px;
