@@ -119,5 +119,5 @@ Worth wanting; not worth conflating with this.
       A conflict is refused by name — not last-one-wins
 - [x] Contextual keys stay hand-written (Escape, ⌘B, ⌘+/−, ⌘⌫, the palette's
       own doors), and the sheet says so
-- [ ] Chords — deferred, as argued: revisit once the sheet shows the
-      single-key space is full
+- [x] Chords — deferred, as argued; the deferral now has its own plan:
+      [`hotkey-chords.md`](hotkey-chords.md)

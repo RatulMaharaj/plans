@@ -1,5 +1,5 @@
 ---
-status: draft
+status: ready
 ---
 # See Every File, Not Only The Markdown
 
@@ -13,6 +13,10 @@ Settings → Files.
 
 ## The rule that keeps it honest
 
+There are two editor modes, and only two: **Write and Source**. Diff is not a
+per-buffer mode any more — it belongs to the git tools, where reviewing a PR
+or a changed file actually happens, and it should stay there.
+
 A file that is not markdown must not open in the writing surface. Milkdown
 parses markdown into a document and serialises it back; hand it TypeScript and
 it will render something, and saving that something would rewrite the file
@@ -24,7 +28,7 @@ opens in Source. The switch already lives per buffer (`App.tsx:244`), and the
 mode row already hides itself for memory buffers — the same idea, one more
 reason.
 
-- The mode row shows Source and Diff only.
+- The mode row shows Source only.
 - ⌘1 (Write) does nothing on such a buffer rather than silently switching.
 - The frontmatter panel, the status badge and the comment actions are all
   markdown conventions and should stay hidden.
@@ -67,6 +71,7 @@ reason.
 
 - [ ] `walk_files` with a flag, and `list_plans` threading the setting
 - [ ] `showAllFiles` in settings, the palette, and Settings → Files
+- [ ] Drop Diff from the per-buffer mode row; it lives with the git tools
 - [ ] Force Source for non-markdown, and hide Write rather than disabling it
 - [ ] A test that a `.ts` file cannot reach the writing surface
 
