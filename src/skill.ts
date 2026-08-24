@@ -2,6 +2,7 @@ import { api } from "./api";
 import plansText from "../skills/plans/SKILL.md?raw";
 import reviewText from "../skills/review/SKILL.md?raw";
 import prText from "../skills/pr/SKILL.md?raw";
+import factoryText from "../skills/factory/SKILL.md?raw";
 
 /**
  * The conventions ship inside the bundle, imported at build time from the
@@ -54,6 +55,14 @@ export const SKILLS: BundledSkill[] = [
     begin: "<!-- plans:begin pr -->",
     end: "<!-- plans:end pr -->",
     claudePath: ".claude/skills/pr/SKILL.md",
+  },
+  {
+    name: "factory",
+    label: "factory skill",
+    text: factoryText,
+    begin: "<!-- plans:begin factory -->",
+    end: "<!-- plans:end factory -->",
+    claudePath: ".claude/skills/factory/SKILL.md",
   },
 ];
 
