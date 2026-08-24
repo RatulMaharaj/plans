@@ -78,12 +78,18 @@ jobs:
           node-version: 22
           cache: pnpm
 
+      # Not anthropics/claude-code-action: it refuses push-triggered events
+      # ("Unsupported event type: push"). The CLI underneath has no such
+      # restriction and takes the same OAuth token, so this is the worker's
+      # own invocation, verbatim, on a runner.
+      - name: Install Claude Code
+        run: npm install -g @anthropic-ai/claude-code
+
       - name: Implement the unit
-        uses: anthropics/claude-code-action@v1
-        with:
-          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          prompt: |
+        env:
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PROMPT: |
             You are a headless dispatched run: nobody is watching and nothing
             can answer a question, so never ask one. Read skills/pr/SKILL.md
             and follow it exactly. Your unit of work has already been picked
@@ -95,10 +101,13 @@ jobs:
             ${{ github.ref_name }}). The ONLY way you may push is:
             scripts/git-push.sh origin <branch> — plain git push will be
             denied.
-          claude_args: |
-            --model ${{ matrix.unit.model }}
-            --effort ${{ matrix.unit.effort }}
-            --max-turns 80
-            --permission-mode acceptEdits
-            --allowedTools "Glob,Grep,LS,Read,Bash(git status:*),Bash(git diff:*),Bash(git log:*),Bash(git show:*),Bash(git branch:*),Bash(git add:*),Bash(git commit:*),Bash(git rm:*),Bash(git worktree:*),Bash(git fetch:*),Bash(git checkout:*),Bash(scripts/git-push.sh:*),Bash(gh pr create:*),Bash(gh pr list:*),Bash(pnpm install:*),Bash(pnpm test:*),Bash(pnpm run:*),Bash(pnpm exec tsc:*),Bash(pnpm exec playwright:*)"
+        run: |
+          git config user.name "factory"
+          git config user.email "factory@users.noreply.github.com"
+          claude -p "$PROMPT" \
+            --model "${{ matrix.unit.model }}" \
+            --effort "${{ matrix.unit.effort }}" \
+            --max-turns 80 \
+            --permission-mode acceptEdits \
+            --allowedTools "Glob,Grep,LS,Read,Bash(git status:*),Bash(git diff:*),Bash(git log:*),Bash(git show:*),Bash(git branch:*),Bash(git add:*),Bash(git commit:*),Bash(git rm:*),Bash(git worktree:*),Bash(git fetch:*),Bash(git checkout:*),Bash(scripts/git-push.sh:*),Bash(gh pr create:*),Bash(gh pr list:*),Bash(pnpm install:*),Bash(pnpm test:*),Bash(pnpm run:*),Bash(pnpm exec tsc:*),Bash(pnpm exec playwright:*)" \
             --disallowedTools "WebSearch,WebFetch"

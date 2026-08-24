@@ -28,9 +28,12 @@ they are already at these paths; otherwise fetch each from
    at the highest value any folder member asks for, and degrades invalid
    values to the defaults with a warning.
 3. `.github/workflows/factory.yml` — the workflow. Install, then adapt it
-   to the repository (below). It is a gate job feeding a
-   `strategy.matrix` implement job that runs `anthropics/claude-code-action@v1`
-   with the pr skill prompt.
+   to the repository (below). It is a gate job feeding a `strategy.matrix`
+   implement job that installs the Claude Code CLI and runs `claude -p`
+   with the pr skill prompt. Do not swap the CLI for
+   `anthropics/claude-code-action` — that action refuses push-triggered
+   events ("Unsupported event type: push"), which is exactly the trigger
+   the factory lives on.
 
 The repository must also carry the plans and pr skills (the Plans app's
 Install writes them); a factory without the pr skill has nothing to follow.
@@ -54,10 +57,10 @@ Install writes them); a factory without the pr skill has nothing to follow.
   the factory to specific branches.
 
 Two lines are load-bearing and must survive any adaptation: the implement
-job's `if:` on the gate's output (an empty push must cost nothing), and
-`github_token: ${{ secrets.GITHUB_TOKEN }}` — the default token is GitHub's
-recursion guard, so the claim flip the run pushes cannot retrigger the
-workflow. Substituting a PAT there reopens that loop.
+job's `if:` on the gate's output (an empty push must cost nothing), and the
+default `GITHUB_TOKEN` as the run's git/`gh` credential — the default token
+is GitHub's recursion guard, so the claim flip the run pushes cannot
+retrigger the workflow. Substituting a PAT there reopens that loop.
 
 ## Auth
 
