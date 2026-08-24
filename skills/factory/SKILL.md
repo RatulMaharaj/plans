@@ -48,8 +48,10 @@ Install writes them); a factory without the pr skill has nothing to follow.
 - **Defaults.** `env.DEFAULT_MODEL` / `env.DEFAULT_EFFORT` are the fallback
   for plans carrying no hints; set them to what the owner asked for, or
   leave them as shipped.
-- **Branch.** The `on.push.branches` entry must be the repository's default
-  branch.
+- **Branches.** The workflow triggers on a plans flip pushed to *any*
+  branch, and the pushed branch is the run's base — worktree, claim flip,
+  and PR target alike. Leave it unfiltered unless the owner asks to confine
+  the factory to specific branches.
 
 Two lines are load-bearing and must survive any adaptation: the implement
 job's `if:` on the gate's output (an empty push must cost nothing), and

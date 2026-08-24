@@ -1,10 +1,13 @@
 # The factory's second host: the same PR skill the local worker dispatches,
 # driven by anthropics/claude-code-action instead of ~/.plans-worker.
 #
-# Dispatch is the status flip: a push to main that flips a plan (or a feature
-# folder member) to `ready` runs one matrix job per unit, routed by the
-# plan's `model`/`effort` frontmatter (invalid values degrade to the defaults
-# below). A push with no flip skips the paid job entirely.
+# Dispatch is the status flip: a push to any branch that flips a plan (or a
+# feature folder member) to `ready` runs one matrix job per unit, routed by
+# the plan's `model`/`effort` frontmatter (invalid values degrade to the
+# defaults below). A push with no flip skips the paid job entirely. The
+# pushed branch is the run's base — the worktree branches from it, the claim
+# flip goes to it, and the PR targets it — so a plan travelling on a feature
+# branch builds against that branch, and on main this is the plain factory.
 #
 # Loop safety: the claim flip this job pushes to main uses GITHUB_TOKEN, and
 # GitHub's recursion guard means such pushes never retrigger workflows. Keep
@@ -19,7 +22,6 @@ name: Factory
 
 on:
   push:
-    branches: [main]
     paths: ["plans/**"]
 
 permissions:
@@ -86,9 +88,13 @@ jobs:
             can answer a question, so never ask one. Read skills/pr/SKILL.md
             and follow it exactly. Your unit of work has already been picked
             for you: ${{ matrix.unit.unit }} (files: ${{ matrix.unit.files }}).
-            You are on the default branch at its tip. The ONLY way you may
-            push is: scripts/git-push.sh origin <branch> — plain git push
-            will be denied.
+            You are on branch ${{ github.ref_name }} at its tip, and it is
+            this run's base: where the skill says the default branch, read
+            this branch — branch your worktree from it, push the claim flip
+            to it, and open the PR into it (gh pr create --base
+            ${{ github.ref_name }}). The ONLY way you may push is:
+            scripts/git-push.sh origin <branch> — plain git push will be
+            denied.
           claude_args: |
             --model ${{ matrix.unit.model }}
             --effort ${{ matrix.unit.effort }}
