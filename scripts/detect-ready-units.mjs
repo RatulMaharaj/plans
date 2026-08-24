@@ -17,7 +17,7 @@
  * (`plans/feature-name/`) whose plans share fate — any member flipping to
  * ready dispatches the folder once, at the highest `model`/`effort` any
  * member asks for. Invalid hint values warn (stderr) and degrade to the
- * defaults (env DEFAULT_MODEL / DEFAULT_EFFORT, else sonnet / medium) —
+ * defaults (env DEFAULT_MODEL / DEFAULT_EFFORT, else opus / medium) —
  * a typo in frontmatter must not fail the run.
  */
 import { execFileSync } from "node:child_process";
@@ -55,7 +55,7 @@ const frontmatter = (text) => {
 
 const MODELS = ["haiku", "sonnet", "opus"];
 const EFFORTS = ["low", "medium", "high", "xhigh", "max"];
-const DEFAULT_MODEL = process.env.DEFAULT_MODEL || "sonnet";
+const DEFAULT_MODEL = process.env.DEFAULT_MODEL || "opus";
 const DEFAULT_EFFORT = process.env.DEFAULT_EFFORT || "medium";
 const highest = (rank, values, fallback) => {
   const bad = values.filter((v) => v && !rank.includes(v));

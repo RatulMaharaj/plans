@@ -27,7 +27,7 @@ permissions:
   pull-requests: write
 
 env:
-  DEFAULT_MODEL: sonnet
+  DEFAULT_MODEL: opus
   DEFAULT_EFFORT: medium
 
 jobs:

@@ -45,7 +45,7 @@ const BIN_DIR = join(WORKDIR, "bin");
 
 const EXAMPLE_CONFIG = `{
   "repos": ["https://github.com/you/your-repo.git"],
-  "model": "sonnet",
+  "model": "opus",
   "effort": "medium",
   "pollSeconds": 60,
   "maxTurns": 80,
@@ -63,7 +63,7 @@ if (!existsSync(CONFIG_PATH)) {
 
 const config = JSON.parse(readFileSync(CONFIG_PATH, "utf8"));
 const DEFAULTS = {
-  model: config.model ?? "sonnet",
+  model: config.model ?? "opus",
   effort: config.effort ?? "medium",
   pollSeconds: config.pollSeconds ?? 60,
   maxTurns: config.maxTurns ?? 80,
