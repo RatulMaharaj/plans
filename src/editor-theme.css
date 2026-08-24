@@ -58,7 +58,11 @@
 }
 .editor-host .milkdown .ProseMirror h1 { font-size: 1.72em; margin: 0 0 0.5em; font-weight: 600; }
 .editor-host .milkdown .ProseMirror h2 { font-size: 1.26em; margin: 1.9em 0 0.45em; font-weight: 600; }
-.editor-host .milkdown .ProseMirror h3 { font-size: 1.06em; margin: 1.6em 0 0.4em; font-weight: 600; }
+.editor-host .milkdown .ProseMirror h3 { font-size: 1.13em; margin: 1.6em 0 0.4em; font-weight: 600; }
+/* h4 had no rule at all, so it sat at body size with nothing but the shared
+   colour — indistinguishable from a bold paragraph. Barely larger than the
+   text, and slightly heavier, so the rank reads without shouting. */
+.editor-host .milkdown .ProseMirror h4 { font-size: 1.03em; margin: 1.4em 0 0.35em; font-weight: 650; }
 
 .editor-host .milkdown .ProseMirror p { margin: 0 0 0.9em; }
 
@@ -268,7 +272,16 @@
 .editor-host .milkdown .ProseMirror .mermaid-figure svg {
   max-width: 100%;
   height: auto;
+  /* A tall diagram is capped rather than given the whole page: inline it is a
+     figure in a document, not the document. The aspect ratio holds — width and
+     height are both maxima, so the browser scales to whichever binds — and the
+     way to read a big diagram large is the way it already was: zoom, or the
+     full-screen view, neither of which this cap touches. */
+  max-height: 60vh;
   display: block;
+  /* The stage is full width; a height-capped diagram is narrower than it, and
+     a figure hugging the left edge of its own frame reads as a mistake. */
+  margin-inline: auto;
 }
 /* The stage is what zoom and pan move; the figure around it stays put. */
 .editor-host .milkdown .ProseMirror .mermaid-figure .mermaid-stage {
@@ -351,7 +364,9 @@
   border-radius: 4px;
   background: var(--paper);
 }
-.mermaid-full .mermaid-stage { width: 100%; }
+/* Full height as well as full width: the stage is what the maximised SVG's
+   100% height resolves against, so a short stage is a cropped diagram. */
+.mermaid-full .mermaid-stage { width: 100%; height: 100%; }
 .mermaid-full.zoomed { cursor: grab; }
 .mermaid-full.zoomed:active { cursor: grabbing; }
 .mermaid-full.zoomed .mermaid-stage { will-change: transform; }

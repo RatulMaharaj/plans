@@ -1,6 +1,6 @@
 import { FONTS, MONO_FONTS } from "./fonts";
 import { applyTheme, DEFAULT_THEME, type ThemeId } from "./theme";
-import { HANDOFF_PROMPT } from "./agent";
+import { HANDOFF_PROMPT, IMPLEMENT_PROMPT } from "./agent";
 
 /** Everything the reader can change, in one place. */
 export type Settings = {
@@ -78,7 +78,7 @@ export type Settings = {
 
   // Agents
   /**
-   * The command run by "Hand off to agent", as a template.
+   * The copyable agent command, as a template.
    *
    * `{prompt}` is the instruction, `{file}` the plan's repo-relative path.
    * A template rather than a binary name because no two agents take a prompt
@@ -94,11 +94,17 @@ export type Settings = {
    */
   chatCommand: string;
   /**
-   * The instruction "Hand off to agent" sends. Editable because it is the
-   * one piece of the feature that is about *your* house style, and a prompt
-   * you cannot see is a prompt you cannot argue with.
+   * The instruction "Hand off to agent: complete this plan" sends. Editable
+   * because it is the one piece of the feature that is about *your* house
+   * style, and a prompt you cannot see is a prompt you cannot argue with.
    */
   handoffPrompt: string;
+  /**
+   * The instruction "Hand off to agent: implement this plan" sends. Kept
+   * apart from the completion prompt because they ask for different moves:
+   * one writes the plan, the other builds from it.
+   */
+  implementPrompt: string;
   /**
    * Whether `#` in the palette reaches the conversations of the repository you
    * are in, or of every repository open.
@@ -201,6 +207,7 @@ export const DEFAULTS: Settings = {
   agentCommand: "claude {prompt}",
   chatCommand: "claude",
   handoffPrompt: HANDOFF_PROMPT,
+  implementPrompt: IMPLEMENT_PROMPT,
   chatScope: "repo" as const,
   treeSort: "name" as const,
   imageFolder: "assets",

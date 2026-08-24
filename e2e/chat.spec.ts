@@ -245,8 +245,8 @@ test("handing a plan to the agent is the first message of its chat", async ({ pa
   await openPlan(page);
   // The palette is the only door now: the page header carries no agent button.
   await page.keyboard.press("Meta+p");
-  await page.locator(".palette-input").fill(">hand off");
-  await expect(page.locator(".palette-row").first()).toContainText(/hand off/i);
+  await page.locator(".palette-input").fill(">hand off complete");
+  await expect(page.locator(".palette-row").first()).toContainText(/complete this plan/i);
   await page.keyboard.press("Enter");
 
   // The run is shown as a conversation, not announced from a distance.
@@ -554,12 +554,12 @@ test("the handoff prompt is editable, and is what gets sent", async ({ page }) =
   await openPlan(page);
   await page.keyboard.press("Meta+,");
   await page.locator(".settings-filter").fill("handoff");
-  const area = page.locator('textarea[aria-label="Handoff prompt"]');
+  const area = page.locator('textarea[aria-label="Handoff prompt: complete"]');
   await area.fill("Rewrite {file} in the voice of a ship's log.");
 
   await page.keyboard.press("Escape");
   await page.keyboard.press("Meta+p");
-  await page.locator(".palette-input").fill(">hand off");
+  await page.locator(".palette-input").fill(">hand off complete");
   await page.keyboard.press("Enter");
 
   await expect.poll(() => calls(page, "agent_prompt")).toBe(1);
@@ -790,13 +790,47 @@ test("a plan is handed to the agent from its right-click menu", async ({ page })
   await expandAll(page);
   await page.locator(".row.file").first().click({ button: "right" });
 
-  await page.locator(".ctx-item", { hasText: "Hand off to agent" }).click();
+  await page.locator(".ctx-item", { hasText: "Hand off to agent: complete plan" }).click();
 
   // The chat opens on that plan with the instruction already sent.
   await expect(page.locator(".chat")).toBeVisible();
   await expect.poll(() => calls(page, "agent_prompt")).toBe(1);
   const [sent] = await argsOf(page, "agent_prompt");
   expect(sent.text).toContain("Take over the plan at plans/first.md");
+});
+
+test("a plan is handed to the agent to implement, with its own instruction", async ({ page }) => {
+  await open(page);
+  await expandAll(page);
+  await page.locator(".row.file").first().click({ button: "right" });
+
+  await page.locator(".ctx-item", { hasText: "Hand off to agent: implement plan" }).click();
+
+  await expect(page.locator(".chat")).toBeVisible();
+  await expect.poll(() => calls(page, "agent_prompt")).toBe(1);
+  const [sent] = await argsOf(page, "agent_prompt");
+  expect(sent.text).toContain("Implement the plan at plans/first.md");
+  expect(sent.text).not.toContain("Take over the plan");
+});
+
+test("the implement prompt is editable, and is what gets sent", async ({ page }) => {
+  await open(page);
+  await openPlan(page);
+  await page.keyboard.press("Meta+,");
+  await page.locator(".settings-filter").fill("handoff");
+  const area = page.locator('textarea[aria-label="Handoff prompt: implement"]');
+  await area.fill("Build {file}, quietly.");
+
+  await page.keyboard.press("Escape");
+  await page.keyboard.press("Meta+p");
+  await page.locator(".palette-input").fill(">hand off implement");
+  await expect(page.locator(".palette-row").first()).toContainText(/implement this plan/i);
+  await page.keyboard.press("Enter");
+
+  await expect.poll(() => calls(page, "agent_prompt")).toBe(1);
+  const [sent] = await argsOf(page, "agent_prompt");
+  expect(sent.text).toContain("Build plans/first.md, quietly.");
+  expect(sent.text).not.toContain("Implement the plan at");
 });
 
 test("no agent means no handoff in the menu, rather than one that fails", async ({ page }) => {

@@ -5,6 +5,7 @@
  * it in its real folder structure. The git mark rides on each row, so the tree
  * carries state ambiently and the git panel is only needed to *act*.
  */
+import type { HandoffKind } from "./agent";
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { trace } from "./perf";
 import { statusTone } from "./matter";
@@ -182,6 +183,8 @@ type Props = {
   onToggle: (key: string) => void;
   onOpen: (repoPath: string, relPath: string) => void;
   onForgetRepo: (repoPath: string) => void;
+  /** Give the repo heading a name of the reader's choosing — an alias, not a move. */
+  onRenameRepo: (repoPath: string) => void;
   filter: string;
   showExtensions: boolean;
   /**
@@ -201,7 +204,7 @@ type Props = {
    * the menu then simply does not carry the item, rather than carrying one
    * that fails when pressed.
    */
-  onHandOff?: (repoPath: string, relPath: string) => void;
+  onHandOff?: (repoPath: string, relPath: string, kind: HandoffKind) => void;
   onDelete: (repoPath: string, relPath: string) => void;
   /** Delete a folder and everything inside it; App asks first if need be. */
   onDeleteDir: (repoPath: string, relPath: string) => void;
@@ -656,12 +659,20 @@ export const FileTree = memo(function FileTree(p: Props) {
                 New file here
               </button>
               {p.onHandOff && (
-                <button
-                  className="ctx-item"
-                  onClick={() => act(() => p.onHandOff!(menu.repo, menu.path))}
-                >
-                  Hand off to agent
-                </button>
+                <>
+                  <button
+                    className="ctx-item"
+                    onClick={() => act(() => p.onHandOff!(menu.repo, menu.path, "complete"))}
+                  >
+                    Hand off to agent: complete plan
+                  </button>
+                  <button
+                    className="ctx-item"
+                    onClick={() => act(() => p.onHandOff!(menu.repo, menu.path, "implement"))}
+                  >
+                    Hand off to agent: implement plan
+                  </button>
+                </>
               )}
             </>
           ) : (
@@ -800,6 +811,12 @@ export const FileTree = memo(function FileTree(p: Props) {
                 Collapse all
               </button>
               <span className="ctx-rule" />
+              <button
+                className="ctx-item"
+                onClick={() => act(() => p.onRenameRepo(menu.repo))}
+              >
+                Rename in sidebar…
+              </button>
               <button
                 className="ctx-item warn"
                 onClick={() =>

@@ -8,7 +8,14 @@
  */
 
 /**
- * What the agent is told when a plan is handed to it.
+ * The two handoffs, named for the lifecycle move each one asks for
+ * (skills/plans/SKILL.md): `complete` fleshes a plan out towards `ready`,
+ * `implement` builds a `ready` plan and marks it `busy`, then `done`.
+ */
+export type HandoffKind = "complete" | "implement";
+
+/**
+ * What the agent is told when a plan is handed to it to be completed.
  *
  * A handoff, not a command: the plan is the brief, and the agent is being
  * asked to take it further in the voice the folder already speaks.
@@ -18,6 +25,21 @@ export const HANDOFF_PROMPT =
   "this folder: argue the design rather than listing steps, cite file:line " +
   "for anything you claim about the code, keep an open questions section, " +
   "and end with a Next checklist. Do not change any file other than the plan.";
+
+/**
+ * What the agent is told when a plan is handed to it to be implemented.
+ *
+ * The plan is the spec now, not the deliverable: the agent claims it in the
+ * frontmatter, builds what it describes, and records in the plan what it
+ * did differently and why — so the file stays a true account of the work.
+ */
+export const IMPLEMENT_PROMPT =
+  "Implement the plan at {file}. Read it in full first, and set its status to " +
+  "busy before you touch anything else. Build exactly what it describes, in " +
+  "the style of the surrounding code; where you must diverge, say so in the " +
+  "plan rather than silently. Run the relevant tests. When the work is " +
+  "finished and verified, set the plan's status to done and end it with a " +
+  "short account of what landed and where. Do not commit.";
 
 /**
  * Split a command line into an argv, honouring quotes.

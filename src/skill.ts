@@ -153,6 +153,27 @@ async function read(repo: string, path: string): Promise<string | null> {
 }
 
 /**
+ * Where a skill actually lives in this repository, if anywhere.
+ *
+ * The palette's "Open the … skill" used to assume Claude Code's per-skill
+ * path, which is only one of the places installing writes — a repository
+ * whose conventions live in `AGENTS.md` had a command that opened nothing.
+ * This walks the same targets installing would and returns the first file
+ * that both carries the skill and exists.
+ */
+export async function skillFileFor(
+  repo: string,
+  paths: string[],
+  name: string,
+): Promise<string | null> {
+  for (const target of targets(paths)) {
+    if (!target.skills.some((s) => s.name === name)) continue;
+    if ((await read(repo, target.path)) !== null) return target.path;
+  }
+  return null;
+}
+
+/**
  * What `installConventions` would do, without doing it — so a button can say
  * "Install", "Update" or nothing at all rather than offering the same press to
  * every repository regardless of what is already there.

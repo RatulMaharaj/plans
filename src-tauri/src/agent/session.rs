@@ -13,9 +13,9 @@
 
 use crate::agent::events;
 use agent_client_protocol::schema::v1::{
-    ContentBlock, InitializeRequest, LoadSessionRequest, NewSessionRequest, PromptRequest,
-    SessionConfigOptionValue, SessionId, SessionNotification, SetSessionConfigOptionRequest,
-    TextContent,
+    CancelNotification, ContentBlock, InitializeRequest, LoadSessionRequest, NewSessionRequest,
+    PromptRequest, SessionConfigOptionValue, SessionId, SessionNotification,
+    SetSessionConfigOptionRequest, TextContent,
 };
 use agent_client_protocol::schema::ProtocolVersion;
 use agent_client_protocol::{AcpAgent, AcpAgentConfig, Agent, ConnectionTo};
@@ -184,17 +184,67 @@ pub async fn run(
                     json!({ "repo": repo, "chat": chat, "gen": gen }),
                 );
 
-                while let Some(op) = ops.recv().await {
+                /*
+                 * Ops that arrived while a prompt was in flight and could not
+                 * be acted on there, replayed before the channel is read again.
+                 */
+                let mut queued: std::collections::VecDeque<Op> = Default::default();
+                loop {
+                    let op = match queued.pop_front() {
+                        Some(op) => op,
+                        None => match ops.recv().await {
+                            Some(op) => op,
+                            None => break,
+                        },
+                    };
                     match op {
                         Op::Prompt { turn, text } => {
                             turn_now.store(turn, std::sync::atomic::Ordering::Relaxed);
-                            let out = c
+                            /*
+                             * The channel keeps being read while the prompt
+                             * runs. This is what makes Stop work: a Cancel
+                             * that arrives mid-turn used to sit unread in the
+                             * queue until the turn ended on its own — the one
+                             * moment it no longer meant anything.
+                             */
+                            let fut = c
                                 .send_request(PromptRequest::new(
                                     sid.clone(),
                                     vec![ContentBlock::Text(TextContent::new(text))],
                                 ))
-                                .block_task()
-                                .await;
+                                .block_task();
+                            tokio::pin!(fut);
+                            let mut closed = false;
+                            let out = loop {
+                                tokio::select! {
+                                    out = &mut fut => break out,
+                                    more = ops.recv(), if !closed => match more {
+                                        Some(Op::Cancel { turn }) => {
+                                            /*
+                                             * Answer every outstanding
+                                             * permission first — the agent is
+                                             * blocked on us — then tell it to
+                                             * stop the turn. The prompt keeps
+                                             * being awaited: it resolves with
+                                             * a Cancelled stop reason, and its
+                                             * late `agent-turn` is ignored by
+                                             * a panel that already moved on.
+                                             */
+                                            crate::agent::client::cancel_all(&perms, &repo, &chat);
+                                            let _ = c.send_notification(CancelNotification::new(sid.clone()));
+                                            let _ = app.emit(
+                                                "agent-turn",
+                                                json!({ "repo": repo, "chat": chat, "turn": turn, "stop": "cancelled", "ok": false }),
+                                            );
+                                        }
+                                        // Anything else waits its turn; a
+                                        // Shutdown replayed from the queue
+                                        // still ends the session.
+                                        Some(other) => queued.push_back(other),
+                                        None => closed = true,
+                                    },
+                                }
+                            };
                             let stop = match &out {
                                 Ok(r) => format!("{:?}", r.stop_reason),
                                 Err(e) => format!("{e}"),
@@ -203,14 +253,14 @@ pub async fn run(
                             "agent-turn",
                             json!({ "repo": repo, "chat": chat, "turn": turn, "stop": stop, "ok": out.is_ok() }),
                         );
+                            if closed {
+                                break;
+                            }
                         }
                         Op::Cancel { turn } => {
-                            /*
-                             * Answer every outstanding permission before asking
-                             * the agent to stop. It is blocked on us; if we go
-                             * quiet it waits forever and the session is wedged
-                             * with no way back short of killing the process.
-                             */
+                            // No turn in flight: nothing to cancel but the
+                            // questions, and the panel is told so it stops
+                            // waiting.
                             crate::agent::client::cancel_all(&perms, &repo, &chat);
                             let _ = app.emit(
                             "agent-turn",

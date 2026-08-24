@@ -7,6 +7,7 @@ import {
   api,
   type AgentFound,
   type CliStatus,
+  type ConfigOption,
   type GitStatus,
   type PlanFile,
   type RepoInfo,
@@ -24,10 +25,16 @@ import {
   without as chatWithout,
   type Index as ChatIndex,
 } from "./chats";
-import { agentCommandLine, HANDOFF_PROMPT } from "./agent";
+import { agentCommandLine, HANDOFF_PROMPT, IMPLEMENT_PROMPT, type HandoffKind } from "./agent";
 import { DiffView, prefetchHead } from "./DiffView";
 import { SettingsPage } from "./SettingsPage";
-import { installConventions, skillState, SKILLS, type SkillState } from "./skill";
+import {
+  installConventions,
+  skillFileFor,
+  skillState,
+  SKILLS,
+  type SkillState,
+} from "./skill";
 import { CHORD_MS, matchChordPrefix, matchKeys, mergeKeys, renderKeys } from "./keys";
 import { KeyboardPage } from "./KeyboardPage";
 import { ShortcutSheet } from "./ShortcutSheet";
@@ -85,6 +92,7 @@ const KEY = {
   splitTabs: "plans.splitTabs.v1",
   splitDir: "plans.splitDir.v1",
   splitRatio: "plans.splitRatio.v1",
+  repoNames: "plans.repoNames.v1",
 };
 
 /** How a buffer is being looked at. The settings page is not a view of a
@@ -214,6 +222,21 @@ export default function App() {
   }, []);
 
   const [repos, setRepos] = useState<RepoInfo[]>([]);
+  /**
+   * What the sidebar calls each repository, when the folder's own name is not
+   * the right one — a worktree's directory, or the third repo named `mono`.
+   * An overlay rather than an edit to `repos`: the backend refreshes those
+   * wholesale, and a name written into them would last until the next poll.
+   */
+  const [repoNames, setRepoNames] = useState<Record<string, string>>(() =>
+    stored(KEY.repoNames, {}),
+  );
+  /** The repositories as the UI shows them — the alias, where one is set. */
+  const shownRepos = useMemo(
+    () =>
+      repos.map((r) => (repoNames[r.path] ? { ...r, name: repoNames[r.path] } : r)),
+    [repos, repoNames],
+  );
   const [activeRepoPath, setActiveRepoPath] = useState<string | null>(null);
   // Every open repo is in the tree at once, so files and status are per-repo.
   const [filesByRepo, setFilesByRepo] = useState<Record<string, PlanFile[]>>({});
@@ -315,6 +338,8 @@ export default function App() {
     multiline?: boolean;
     /** Prefilled, for a rename or anything else that edits what exists. */
     initial?: string;
+    /** When emptying the box is itself an answer — clearing an alias, say. */
+    allowEmpty?: boolean;
     run: (value: string) => void;
   }>(null);
   const [branches, setBranches] = useState<string[]>([]);
@@ -696,6 +721,10 @@ export default function App() {
   }, [repos]);
 
   useEffect(() => {
+    localStorage.setItem(KEY.repoNames, JSON.stringify(repoNames));
+  }, [repoNames]);
+
+  useEffect(() => {
     // Memory buffers are not restored: their text lives only in this window,
     // so a tab pointing at one would come back empty and unopenable.
     localStorage.setItem(KEY.tabs, JSON.stringify(tabs.filter((t) => t.repo !== MEMORY)));
@@ -927,7 +956,7 @@ export default function App() {
    * watched from here: the agent writes files and the poll notices.
    */
   const handOff = useCallback(
-    async (repo?: string, path?: string) => {
+    async (kind: HandoffKind, repo?: string, path?: string) => {
       const r = repo ?? activeRepoPath;
       const f = path ?? activePath;
       if (!r || !f) return;
@@ -937,10 +966,14 @@ export default function App() {
       // Through the ref: `openFile` is declared further down, and this is the
       // same indirection the stale-tree retry already uses.
       if (r !== activeRepoPath || f !== activePath) await openFileRef.current?.(r, f);
-      setChatSeed((settings.handoffPrompt || HANDOFF_PROMPT).replace(/\{file\}/g, f));
+      const prompt =
+        kind === "implement"
+          ? settings.implementPrompt || IMPLEMENT_PROMPT
+          : settings.handoffPrompt || HANDOFF_PROMPT;
+      setChatSeed(prompt.replace(/\{file\}/g, f));
       set({ showMux: true });
     },
-    [activeRepoPath, activePath, set, settings.handoffPrompt],
+    [activeRepoPath, activePath, set, settings.handoffPrompt, settings.implementPrompt],
   );
 
   /**
@@ -1018,6 +1051,11 @@ export default function App() {
   const forgetRepo = useCallback(
     (path: string) => {
       setRepos((prev) => prev.filter((r) => r.path !== path));
+      setRepoNames((prev) => {
+        if (!(path in prev)) return prev;
+        const { [path]: _gone, ...rest } = prev;
+        return rest;
+      });
       track("repo_removed", { repos: Math.max(0, repos.length - 1) });
       setActiveRepoPath((cur) => (cur === path ? null : cur));
       if (activeRepoPath === path) {
@@ -1027,6 +1065,40 @@ export default function App() {
       }
     },
     [activeRepoPath, repos.length],
+  );
+
+  /**
+   * Give a repository the name the sidebar should use.
+   *
+   * The folder's name is sometimes the wrong answer — a worktree's directory,
+   * or the third repository called `mono`. The alias is the app's own memory,
+   * per path; emptying it goes back to the folder's name.
+   */
+  const renameRepo = useCallback(
+    (path: string) => {
+      const r = repos.find((x) => x.path === path);
+      if (!r) return;
+      setAsking({
+        title: "Rename repository",
+        placeholder: r.name,
+        initial: repoNames[path] ?? r.name,
+        note: `Only in this app — nothing on disk changes. Empty goes back to “${r.name}”.`,
+        confirm: "Rename",
+        allowEmpty: true,
+        run: (next) => {
+          const name = next.trim();
+          setRepoNames((prev) => {
+            if (!name || name === r.name) {
+              if (!(path in prev)) return prev;
+              const { [path]: _gone, ...rest } = prev;
+              return rest;
+            }
+            return { ...prev, [path]: name };
+          });
+        },
+      });
+    },
+    [repos, repoNames],
   );
 
   /**
@@ -1060,6 +1132,39 @@ export default function App() {
   useEffect(() => {
     setChats(loadChats(activeRepoPath ?? ""));
   }, [activeRepoPath]);
+
+  /**
+   * The current chat's advertised config options, mirrored from the same
+   * `agent-config` event the chat panel consumes. The palette's routing
+   * commands (`model:` / `effort:` frontmatter) offer only what the live
+   * agent says it has — the vocabulary is the agent's ("gpt-5.6-sol" for
+   * one, "opus" for another), so with no session advertising options there
+   * are no commands, and the keys are set by hand in the frontmatter sheet.
+   */
+  const [agentOptionsBy, setAgentOptionsBy] = useState<Map<string, ConfigOption[]>>(
+    () => new Map(),
+  );
+  useEffect(() => {
+    // One listener for the app's lifetime, keeping every session's options:
+    // the event fires once when a session opens, so a listener scoped to the
+    // current chat would drop what fired for the others and have nothing when
+    // you switch back.
+    const un = listen<{ repo: string; chat: string; options: ConfigOption[] }>(
+      "agent-config",
+      (e) =>
+        setAgentOptionsBy((m) =>
+          new Map(m).set(`${e.payload.repo}\n${e.payload.chat}`, e.payload.options ?? []),
+        ),
+    );
+    return () => void un.then((f) => f());
+  }, []);
+  const routingChoices = useMemo(() => {
+    const opts = agentOptionsBy.get(`${activeRepoPath}\n${chats.current}`) ?? [];
+    return {
+      model: opts.find((o) => o.category === "model")?.options.map((c) => c.value) ?? [],
+      effort: opts.find((o) => o.category === "thought_level")?.options.map((c) => c.value) ?? [],
+    };
+  }, [agentOptionsBy, activeRepoPath, chats]);
 
   const putChats = useCallback(
     (next: ChatIndex) => {
@@ -1110,7 +1215,7 @@ export default function App() {
    * are actually in.
    */
   const allChats = useMemo(() => {
-    const out = repos.flatMap((r) => {
+    const out = shownRepos.flatMap((r) => {
       const i = r.path === activeRepoPath ? chats : peekChats(r.path);
       return (i?.list ?? []).map((c) => ({
         repoPath: r.path,
@@ -1132,7 +1237,7 @@ export default function App() {
       );
     }
     return out;
-  }, [repos, activeRepoPath, chats]);
+  }, [shownRepos, activeRepoPath, chats]);
 
   /**
    * Open a conversation belonging to another repository.
@@ -1664,6 +1769,15 @@ export default function App() {
     [matter, onMatterChange],
   );
 
+  /** Write a routing key (`model:` / `effort:`) the same way `setStatus` does. */
+  const setRouting = useCallback(
+    (key: "model" | "effort", value: string | null) => {
+      const next = setMatterValue(matter ?? "", key, value);
+      onMatterChange(next.trim().length ? next : null);
+    },
+    [matter, onMatterChange],
+  );
+
   /**
    * Scaffold the conventional keys in one stroke — the ones the header reads —
    * then open the sheet so the blanks can be filled. Existing keys keep their
@@ -1922,6 +2036,28 @@ export default function App() {
   );
 
   /**
+   * Open a bundled skill's installed copy from the palette.
+   *
+   * Resolved at press time rather than baked into the command: where the copy
+   * lives depends on which agents this machine has, and the answer used to be
+   * assumed to be Claude Code's path — a command that opened nothing for
+   * everyone else.
+   */
+  const openSkill = useCallback(
+    async (name: string) => {
+      if (!activeRepoPath) return;
+      // The agents' paths are read lazily — the settings page is what
+      // usually populates them, and the palette must not depend on it having
+      // been opened first.
+      if (!agentPaths.current.length) await readInstalls();
+      const path = await skillFileFor(activeRepoPath, agentPaths.current, name);
+      if (path) return openFileRef.current?.(activeRepoPath, path);
+      notify(`The ${name} skill is not installed here — install the conventions from Settings`, "info");
+    },
+    [activeRepoPath, notify, readInstalls],
+  );
+
+  /**
    * A file dragged in from outside the app.
    *
    * Tauri's own drag-drop events, which carry real filesystem paths — the
@@ -2045,24 +2181,60 @@ export default function App() {
    * scrollTop on an empty host clamps to zero, so the restore retries until
    * the content is tall enough to take it.
    */
-  const scrollPos = useRef(new Map<string, number>());
+  const scrollPos = useRef(new Map<string, { top: number; range: number; view: string }>());
   useEffect(() => {
     if (!activeRepoPath || !activePath) return;
-    const host = document.querySelector<HTMLElement>(".main-pane .editor-host");
+    /*
+     * The scrolling element depends on the mode: Write and Diff scroll the
+     * editor host, Source scrolls CodeMirror's own scroller. Only the visible
+     * surface's element counts — both stay mounted, and the hidden one is the
+     * wrong thing to either restore into or listen to.
+     */
+    const host = document.querySelector<HTMLElement>(
+      view === "source"
+        ? ".main-pane .surface:not(.aside) .cm-scroller"
+        : ".main-pane .editor-host",
+    );
     if (!host) return;
     const k = `${activeRepoPath}::${activePath}`;
-    const want = scrollPos.current.get(k) ?? 0;
+    const saved = scrollPos.current.get(k);
+    const across = !!saved && saved.view !== view && saved.range > 0;
     let tries = 0;
+    let lastHeight = -1;
     const restore = window.setInterval(() => {
       tries += 1;
-      if (want <= host.scrollHeight - host.clientHeight) {
+      const range = host.scrollHeight - host.clientHeight;
+      /*
+       * A fraction of a range that is still growing lands short, so a
+       * cross-mode restore waits for two ticks of the same height — a pixel
+       * restore can keep the old rule, which is simply "tall enough yet".
+       */
+      if (across && host.scrollHeight !== lastHeight && tries <= 20) {
+        lastHeight = host.scrollHeight;
+        return;
+      }
+      /*
+       * The same place, not the same number. Write and Source lay the same
+       * text out at different heights, so a position saved in one mode is
+       * carried into the other as a fraction of the scrollable range — which
+       * is what keeps the two modes in sync on the same file. Within a mode
+       * the exact pixel is kept.
+       */
+      const want =
+        !saved ? 0 : saved.view === view || !saved.range ? saved.top : (saved.top / saved.range) * range;
+      if (want <= range) {
         host.scrollTop = want;
         clearInterval(restore);
       } else if (tries > 20) {
         clearInterval(restore);
       }
     }, 40);
-    const onScroll = () => scrollPos.current.set(k, host.scrollTop);
+    const onScroll = () =>
+      scrollPos.current.set(k, {
+        top: host.scrollTop,
+        range: host.scrollHeight - host.clientHeight,
+        view,
+      });
     host.addEventListener("scroll", onScroll, { passive: true });
     return () => {
       clearInterval(restore);
@@ -3511,14 +3683,14 @@ export default function App() {
 
   const allFiles = useMemo(
     () =>
-      repos.flatMap((r) =>
+      shownRepos.flatMap((r) =>
         (filesByRepo[r.path] ?? []).map((file) => ({
           repoPath: r.path,
           repoName: r.name,
           file,
         })),
       ),
-    [repos, filesByRepo],
+    [shownRepos, filesByRepo],
   );
 
   const activeKey = activeRepoPath && activePath ? `${activeRepoPath}::${activePath}` : null;
@@ -3745,7 +3917,7 @@ export default function App() {
 
           <div className="entries">
             <FileTree
-              repos={repos}
+              repos={shownRepos}
               filesByRepo={shownByRepo}
               marks={liveMarks}
               activeRepoPath={settingsOpen ? null : activeRepoPath}
@@ -3754,6 +3926,7 @@ export default function App() {
               onToggle={toggleNode}
               onOpen={openOne}
               onForgetRepo={forgetRepo}
+              onRenameRepo={renameRepo}
               filter={filter}
               showExtensions={settings.showExtensions}
               statusOrder={statusOrder}
@@ -3765,7 +3938,7 @@ export default function App() {
               onReveal={revealOne}
               onTerminal={terminalOne}
               onOpenSplit={openInSplit}
-              onHandOff={chat === false ? undefined : (repo, path) => void handOff(repo, path)}
+              onHandOff={chat === false ? undefined : (repo, path, kind) => void handOff(kind, repo, path)}
               onNewFile={newFileIn}
               onNewFolder={newFolderIn}
               onMove={moveTo}
@@ -3797,7 +3970,7 @@ export default function App() {
               settings={settings}
               onChange={set}
               onReset={() => setSettings(DEFAULTS)}
-              repos={repos}
+              repos={shownRepos}
               activeRepoPath={activeRepoPath}
               onAddRepo={addRepo}
               onForgetRepo={forgetRepo}
@@ -4338,6 +4511,7 @@ export default function App() {
           confirm={asking.confirm}
           multiline={asking.multiline}
           initial={asking.initial}
+          allowEmpty={asking.allowEmpty}
           onCancel={() => setAsking(null)}
           onSubmit={(v) => {
             const run = asking.run;
@@ -4364,7 +4538,7 @@ export default function App() {
         <NameSheet
           dir={naming.dir}
           repo={naming.repo}
-          repos={repos}
+          repos={shownRepos}
           // Folders belong to a repository, so choosing another starts at its root.
           onRepoChange={(repo) => setNaming({ repo, dir: "" })}
           dirs={folderChoices}
@@ -4389,7 +4563,7 @@ export default function App() {
         files={allFiles}
         activePath={activePath}
         activeRepoPath={activeRepoPath}
-        repos={repos}
+        repos={shownRepos}
         settings={settings}
         set={set}
         onOpenFile={(r, p) => void openFile(r, p)}
@@ -4456,14 +4630,13 @@ export default function App() {
         onReleaseNotes={() => void showNotes()}
         gitCommands={gitCommands}
         skillFiles={
-          activeRepoPath
-            ? SKILLS.map((k) => ({ name: k.name, label: k.label, path: k.claudePath }))
-            : []
+          activeRepoPath ? SKILLS.map((k) => ({ name: k.name, label: k.label })) : []
         }
+        onOpenSkill={(name) => void openSkill(name)}
         hasMatter={matter !== null}
         canEdit={!!activePath}
         canHandOff={!!activePath && chat !== false}
-        onHandOff={() => void handOff()}
+        onHandOff={(kind) => void handOff(kind)}
         onCopyAgentCommand={() => void copyAgentCommand()}
         chats={chats}
         onNewChat={newChat}
@@ -4485,6 +4658,12 @@ export default function App() {
         statuses={statusChoices}
         currentStatus={matter !== null ? matterValue(matter, "status") : null}
         onSetStatus={setStatus}
+        routing={{
+          model: matter !== null ? matterValue(matter, "model") : null,
+          effort: matter !== null ? matterValue(matter, "effort") : null,
+        }}
+        routingChoices={routingChoices}
+        onSetRouting={setRouting}
         onScaffoldMatter={scaffoldMatter}
         keymap={keymap}
         onShortcuts={() => setShortcuts(true)}

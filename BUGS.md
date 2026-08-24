@@ -11,9 +11,7 @@ Remember to add changesets for any patched bugs - fixed bugs belong in the chang
 
 ## Open
 
-- [ ] Stop button does nothing
-- [ ] Scroll position should remain in sync between write mode and source mode for the same file
-- [ ] Can’t open the skills from the command palette
+Nothing at the moment.
 
 ## Watch for
 
@@ -33,6 +31,47 @@ Not bugs yet — places the same class of mistake would land next.
   green test proves the harness agrees with the code, not that the app works.
 
 ## Fixed
+
+### Stop was read only after the turn it was stopping
+
+The session loop handled one op at a time, and a running prompt *was* the
+current op — `Op::Cancel` sat unread in the channel until the turn finished on
+its own, the one moment it no longer meant anything. And even read, it only
+answered pending permissions; nothing ever told the agent to stop. The loop
+now `select!`s the channel against the in-flight prompt and sends a real
+`session/cancel`. Found by tracing the press to the backend and asking what
+consumes the queue while the thing being cancelled is still running: any
+"stop" delivered through the same single-consumer channel as the work is a
+stop that waits for the work.
+
+### The palette's skill commands assumed one agent's path
+
+"Open the … skill" opened `.claude/skills/<name>/SKILL.md` — one of several
+places installing writes, and possibly none of them. A repository whose
+conventions live in a fenced `AGENTS.md` section had a command that errored
+against a path that never existed. The path is resolved at press time by
+walking the same targets installing would. The pattern: a command built from
+a constant answers for the machine it was written on, not the one it runs on.
+
+### The maximised diagram cropped what it existed to show
+
+`fit()` scaled the SVG to the frame's *width*; a tall diagram overflowed the
+frame's height, flex centred it, and the top and bottom were clipped — with
+pan disabled at 1:1 because the clamp thinks an unzoomed picture has nowhere
+to go. The full view now contains on both axes, so it opens whole, and a
+plain wheel zooms there (a modal has no document behind it for the scroll to
+have meant). Same family as the figure clipping: any box that centres content
+it also clips has decided some of the content is unreachable.
+
+### Write and Source each kept their own scroll
+
+The per-buffer scroll memory watched `.editor-host`, which is the Write and
+Diff surface — Source scrolls CodeMirror's own `.cm-scroller`, so a mode
+switch landed at wherever that element happened to be. The memory now follows
+the visible surface and carries the position across modes as a fraction of
+the scrollable range, since the same text lays out at different heights. The
+cross-mode restore waits for the height to stop moving first: a fraction of a
+range still growing lands short.
 
 ### The answer was never the last thing in the chat
 

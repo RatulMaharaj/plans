@@ -91,27 +91,31 @@ function isMermaid(node: PMNode): boolean {
  * for the viewport it happened to render in. Left alone the diagram is cropped
  * — so the intrinsic size is dropped and the viewBox is left to scale it.
  */
-function fit(stage: HTMLElement) {
+function fit(stage: HTMLElement, contain = false) {
   const svg = stage.querySelector("svg");
   if (!svg) return;
   svg.removeAttribute("width");
   svg.removeAttribute("height");
   svg.style.removeProperty("max-width");
   svg.style.width = "100%";
-  svg.style.height = "auto";
+  // Contained — the maximised view — the SVG scales to fit *both* axes of the
+  // frame, so a tall diagram opens whole rather than centred with its top and
+  // bottom cropped somewhere unreachable. In the document the width rules and
+  // the figure grows to whatever height that implies.
+  svg.style.height = contain ? "100%" : "auto";
   svg.style.maxWidth = "100%";
   svg.style.display = "block";
   svg.setAttribute("preserveAspectRatio", "xMidYMid meet");
 }
 
 /** Draw into an existing element; failures show the message, not a blank box. */
-async function draw(host: HTMLElement, stage: HTMLElement, source: string) {
+async function draw(host: HTMLElement, stage: HTMLElement, source: string, contain = false) {
   const at = `${paper()}:${source}`;
   const hit = cache.get(at);
   if (hit) {
     stage.innerHTML = hit;
     host.classList.remove("bad");
-    fit(stage);
+    fit(stage, contain);
     return;
   }
   applyTheme();
@@ -120,7 +124,7 @@ async function draw(host: HTMLElement, stage: HTMLElement, source: string) {
     cache.set(at, svg);
     stage.innerHTML = svg;
     host.classList.remove("bad");
-    fit(stage);
+    fit(stage, contain);
   } catch (e) {
     host.classList.add("bad");
     // Into the stage, not the host: writing to the host would take the stage
@@ -159,6 +163,9 @@ function steer(
   stage: HTMLElement,
   seed: Frame,
   save: (at: Frame | null) => void,
+  // In the maximised view a plain wheel zooms too: there is no document
+  // behind the frame for the scroll to have meant.
+  plainWheel = false,
 ): { home: () => void } {
   let { k, x, y } = seed;
 
@@ -200,7 +207,7 @@ function steer(
   frame.addEventListener(
     "wheel",
     (e) => {
-      if (!e.ctrlKey && !e.metaKey) return;
+      if (!plainWheel && !e.ctrlKey && !e.metaKey) return;
       e.preventDefault();
       e.stopPropagation();
       // A notched mouse wheel reports lines, not pixels; unnormalised, every
@@ -311,7 +318,7 @@ function maximise(source: string) {
 
   // Always opens at a fit, never at whatever the small copy was showing:
   // maximising is a request to see the whole thing.
-  const at = steer(frame, stage, { k: 1, x: 0, y: 0 }, () => {});
+  const at = steer(frame, stage, { k: 1, x: 0, y: 0 }, () => {}, true);
   reset.addEventListener("click", (e) => {
     e.preventDefault();
     e.stopPropagation();
@@ -344,7 +351,7 @@ function maximise(source: string) {
     if (e.target === scrim) shut();
   });
 
-  void draw(frame, stage, source);
+  void draw(frame, stage, source, true);
   document.body.append(scrim);
 }
 

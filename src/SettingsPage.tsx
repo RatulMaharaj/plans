@@ -409,11 +409,18 @@ export function SettingsPage({
             onInstall={onInstallAgent}
           />
           <Area
-            label="Handoff prompt"
-            hint="What the agent is told when you hand a plan to it, from the tree's right-click menu or the palette. {file} is the plan's path. Yours to argue with — it is the one part of this that is about your house style."
+            label="Handoff prompt: complete"
+            hint="What the agent is told by “Hand off to agent: complete this plan”, from the tree's right-click menu or the palette — flesh the plan out until it is ready. {file} is the plan's path. Yours to argue with — it is the one part of this that is about your house style."
             value={s.handoffPrompt}
             onChange={(handoffPrompt) => onChange({ handoffPrompt })}
             onReset={() => onChange({ handoffPrompt: DEFAULTS.handoffPrompt })}
+          />
+          <Area
+            label="Handoff prompt: implement"
+            hint="What the agent is told by “Hand off to agent: implement this plan” — claim it as busy, build what it describes, mark it done. {file} is the plan's path."
+            value={s.implementPrompt}
+            onChange={(implementPrompt) => onChange({ implementPrompt })}
+            onReset={() => onChange({ implementPrompt: DEFAULTS.implementPrompt })}
           />
           <Field
             label="Copyable command"

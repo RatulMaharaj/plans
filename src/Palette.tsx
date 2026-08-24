@@ -7,6 +7,7 @@
  */
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { AgentFound, PlanFile, RepoInfo } from "./api";
+import type { HandoffKind } from "./agent";
 import { displayName } from "./FileTree";
 import { FONTS, MONO_FONTS } from "./fonts";
 import { DEFAULTS, RANGES, type Settings } from "./settings";
@@ -76,7 +77,7 @@ type Props = {
   canEdit: boolean;
   /** False when there is no tmux, so the action is absent rather than broken. */
   canHandOff: boolean;
-  onHandOff: () => void;
+  onHandOff: (kind: HandoffKind) => void;
   /** The active repository's conversations, and the two things you do with them. */
   chats: ChatIndex;
   onNewChat: () => void;
@@ -105,15 +106,27 @@ type Props = {
   onCopyAgentCommand: () => void;
   onMatter: () => void;
   /**
-   * The bundled skills' installed copies in the active repository, openable
-   * like any other file. Empty when no repository is active.
+   * The bundled skills, openable like any other file. Empty when no
+   * repository is active. App resolves where each skill's installed copy
+   * actually lives — per-skill file or fenced section — when it is asked for.
    */
-  skillFiles: { name: string; label: string; path: string }[];
+  skillFiles: { name: string; label: string }[];
+  onOpenSkill: (name: string) => void;
   /** From settings: what `status:` may be set to from here. */
   statuses: string[];
   /** The open file's current status, so it is not offered again. */
   currentStatus: string | null;
   onSetStatus: (value: string | null) => void;
+  /** The routing keys on the open file, so the current value is not offered. */
+  routing: { model: string | null; effort: string | null };
+  /**
+   * What may be offered for each routing key: the live session's advertised
+   * options (ACP `model` / `thought_level`), or empty when no agent is
+   * advertising — in which case no commands appear and the keys are set by
+   * hand. The vocabulary is the agent's, never this app's.
+   */
+  routingChoices: { model: string[]; effort: string[] };
+  onSetRouting: (key: "model" | "effort", value: string | null) => void;
   onScaffoldMatter: () => void;
   /**
    * The merged keymap. Where a command's id has a binding, its hint is
@@ -184,11 +197,20 @@ function buildCommands(p: Props): Command[] {
   });
   if (p.canHandOff) {
     add({
-      id: "agent.handoff",
+      id: "agent.handoff.complete",
       group: "Agent",
-      label: "Hand off this plan to an agent",
-      terms: "claude agent run tmux write expand",
-      run: p.onHandOff,
+      label: "Hand off to agent: complete this plan",
+      hint: "flesh it out towards ready",
+      terms: "claude agent run write expand draft flesh out",
+      run: () => p.onHandOff("complete"),
+    });
+    add({
+      id: "agent.handoff.implement",
+      group: "Agent",
+      label: "Hand off to agent: implement this plan",
+      hint: "build it, busy then done",
+      terms: "claude agent run build code ready busy",
+      run: () => p.onHandOff("implement"),
     });
     add({
       id: "agent.copy",
@@ -288,6 +310,37 @@ function buildCommands(p: Props): Command[] {
         run: () => p.onSetStatus(null),
       });
     }
+    // Same shape for the routing keys: "opus" is two keys from anywhere —
+    // offering only what the live agent advertised, so the palette never
+    // writes a value the dispatching agent would not recognise.
+    const routing: ["model" | "effort", string[]][] = [
+      ["model", p.routingChoices.model],
+      ["effort", p.routingChoices.effort],
+    ];
+    for (const [key, values] of routing) {
+      if (!values.length) continue;
+      const current = p.routing[key]?.toLowerCase() ?? null;
+      for (const v of values) {
+        if (current === v.toLowerCase()) continue;
+        add({
+          id: `${key}.${v}`,
+          group: "Plans",
+          label: `${key === "model" ? "Model" : "Effort"}: ${v}`,
+          hint: "routes the dispatched run",
+          terms: "route dispatch worker frontmatter model effort brain think",
+          run: () => p.onSetRouting(key, v),
+        });
+      }
+      if (p.routing[key]) {
+        add({
+          id: `${key}.clear`,
+          group: "Plans",
+          label: `Clear ${key}`,
+          hint: `now ${p.routing[key]} — dispatcher default applies`,
+          run: () => p.onSetRouting(key, null),
+        });
+      }
+    }
   }
   if (p.canNewFolder) {
     add({
@@ -343,7 +396,7 @@ function buildCommands(p: Props): Command[] {
       label: `Open the ${k.label}`,
       hint: "replaced on update — edit upstream, not here",
       terms: "conventions skill installed review plans manage",
-      run: () => p.activeRepoPath && p.onOpenFile(p.activeRepoPath, k.path),
+      run: () => p.onOpenSkill(k.name),
     });
   }
   add({
