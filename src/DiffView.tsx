@@ -25,9 +25,44 @@ type Props = {
  * as they're typed rather than after a save. The patch is built in the browser
  * with jsdiff and handed to @pierre/diffs to render.
  */
+/**
+ * Committed text by `repo::relPath`, so a diff can paint before its fetch
+ * returns. Filled by prefetch when the status lists a changed file, and by
+ * every fetch the view itself makes; always revalidated in the background,
+ * so a stale entry costs one repaint, never a wrong diff left standing.
+ */
+const headCache = new Map<string, string>();
+
+/** Warm the cache for a changed file, so clicking it shows the diff at once. */
+export async function prefetchHead(repo: string, relPath: string): Promise<void> {
+  try {
+    headCache.set(`${repo}::${relPath}`, await api.gitHeadText(repo, relPath));
+  } catch {
+    /* the view's own fetch will report the problem */
+  }
+}
+
+/**
+ * A content fingerprint for @pierre/diffs' `cacheKey`, which its worker uses
+ * to skip re-highlighting. The contract is that a key names exact contents —
+ * "if you modify the contents of the diff in any way, you will need to update
+ * the cacheKey" — and a stale key left a freshly-switched diff rendering as
+ * the previous file's, or as nothing at all.
+ */
+function fingerprint(text: string): string {
+  let h = 0;
+  for (let i = 0; i < text.length; i++) h = (h * 31 + text.charCodeAt(i)) | 0;
+  return `${text.length}.${h >>> 0}`;
+}
+
 export function DiffView({ repo, relPath, buffer, settings, epoch, onEdit }: Props) {
-  const [head, setHead] = useState<string | null>(null);
-  const [disk, setDisk] = useState("");
+  // The component is keyed by file where it is mounted, so state initialises
+  // per document — which is what lets a prefetched committed side paint on
+  // the very first render, with no "Reading…" beat.
+  const [head, setHead] = useState<string | null>(
+    () => headCache.get(`${repo}::${relPath}`) ?? null,
+  );
+  const [disk, setDisk] = useState<string | null>(null);
   const [settled, setSettled] = useState(buffer);
   const timer = useRef<number | null>(null);
   const onEditRef = useRef(onEdit);
@@ -40,17 +75,24 @@ export function DiffView({ repo, relPath, buffer, settings, epoch, onEdit }: Pro
     [],
   );
 
+  // Revalidate on mount and after every git action (epoch). A cached head
+  // stays on screen while the fresh one is read, so an epoch bump repaints
+  // in place instead of blanking to "Reading…". Two independent reads: the
+  // committed side gates the diff, the disk copy only matters with live diff
+  // off, so neither waits for the other.
   useEffect(() => {
     let live = true;
-    setHead(null);
-    Promise.all([
-      api.gitHeadText(repo, relPath).catch(() => ""),
-      api.readPlan(repo, relPath).then((r) => r.content, () => ""),
-    ]).then(([h, d]) => {
-      if (!live) return;
-      setHead(h);
-      setDisk(d);
-    });
+    void api
+      .gitHeadText(repo, relPath)
+      .catch(() => "")
+      .then((h) => {
+        headCache.set(`${repo}::${relPath}`, h);
+        if (live) setHead(h);
+      });
+    void api.readPlan(repo, relPath).then(
+      (r) => live && setDisk(r.content),
+      () => live && setDisk(""),
+    );
     return () => {
       live = false;
     };
@@ -66,6 +108,8 @@ export function DiffView({ repo, relPath, buffer, settings, epoch, onEdit }: Pro
     };
   }, [buffer, settings.diffLive]);
 
+  // Null until the disk copy arrives: diffing against "" would paint one
+  // giant deletion for a beat. The live buffer needs no such wait.
   const working = settings.diffLive ? settled : disk;
 
   /**
@@ -75,11 +119,11 @@ export function DiffView({ repo, relPath, buffer, settings, epoch, onEdit }: Pro
    * in. Passing full contents gives the editor something to edit.
    */
   const fileDiff = useMemo<FileDiffMetadata | null>(() => {
-    if (head === null) return null;
+    if (head === null || working === null) return null;
     try {
       const diff = parseDiffFromFile(
-        { name: relPath, contents: head, cacheKey: `${relPath}:committed` },
-        { name: relPath, contents: working, cacheKey: `${relPath}:working` },
+        { name: relPath, contents: head, cacheKey: `${relPath}:committed:${fingerprint(head)}` },
+        { name: relPath, contents: working, cacheKey: `${relPath}:working:${fingerprint(working)}` },
       );
       return diff.hunks.length ? diff : null;
     } catch {
@@ -87,7 +131,7 @@ export function DiffView({ repo, relPath, buffer, settings, epoch, onEdit }: Pro
     }
   }, [head, working, relPath]);
 
-  if (head === null) {
+  if (head === null || working === null) {
     return <Empty line="Reading the committed version…" />;
   }
 

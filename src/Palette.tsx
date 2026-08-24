@@ -553,14 +553,12 @@ function buildCommands(p: Props): Command[] {
       id: key,
       group,
       /*
-       * Panels are shown or hidden; everything else is turned on or off. A
-       * panel that has been "turned off" sounds like it stopped working,
-       * which for the agent chat is exactly the wrong thing to imply.
+       * The name stays fixed; the state lives in the value chip. A label that
+       * flips ("Show all files" / "Hide all files") makes the same setting
+       * read as two different commands, and muscle memory types the name.
+       * Panels are shown or hidden; everything else is on or off.
        */
-      label:
-        group === "Panels"
-          ? `${s[key] ? "Hide" : "Show"} ${label.toLowerCase()}`
-          : `${label}: turn ${s[key] ? "off" : "on"}`,
+      label,
       value: group === "Panels" ? (s[key] ? "shown" : "hidden") : onOff(s[key]),
       hint,
       terms,
@@ -582,35 +580,35 @@ function buildCommands(p: Props): Command[] {
   toggle("showMux", "Panels", "Agent chat", undefined, "chat agent talk ask");
   toggle("showStatusBar", "Panels", "Status bar");
 
-  // Not `toggle`: "turn off" says nothing about what happens to the plans.
-  // Shown and hidden are the two states, so those are the words.
+  // Not `toggle` only because shown/hidden are its words, not on/off —
+  // "turned off" says nothing about what happens to the plans.
   add({
     id: "showCompleted",
     group: "Files",
-    label: `Show finished plans: ${s.showCompleted ? "hidden" : "shown"}`,
+    label: "Finished plans",
     value: s.showCompleted ? "shown" : "hidden",
-    terms: "done completed archive hide",
+    terms: "done completed archive hide show",
     run: () => set({ showCompleted: !s.showCompleted }),
   });
 
-  // Show/Hide rather than on/off, for the same reason as finished plans:
-  // "turn off all files" sounds like the tree goes dark.
+  // Shown/hidden for the same reason as finished plans: "all files: off"
+  // sounds like the tree goes dark. The name matches the Settings page.
   add({
     id: "showAllFiles",
     group: "Files",
-    label: `${s.showAllFiles ? "Hide" : "Show"} all files`,
+    label: "All files",
     value: s.showAllFiles ? "shown" : "hidden",
-    terms: "every file text source code extensions markdown only",
+    terms: "every file text source code extensions markdown only show hide",
     run: () => set({ showAllFiles: !s.showAllFiles }),
   });
 
-  // Not a `toggle`: the label has to name where it is going, not what it is.
+  // Not a `toggle`: its two states are places, not on and off.
   add({
     id: "chatPlace",
     group: "Panels",
-    label: `Move the chat ${s.chatPlace === "side" ? "below the page" : "beside the page"}`,
-    value: s.chatPlace === "side" ? "beside" : "below",
-    terms: "sidebar terminal bottom column row",
+    label: "Chat position",
+    value: s.chatPlace === "side" ? "beside the page" : "below the page",
+    terms: "move sidebar terminal bottom column row beside below",
     run: () => set({ chatPlace: s.chatPlace === "side" ? "bottom" : "side" }),
   });
 
@@ -620,9 +618,9 @@ function buildCommands(p: Props): Command[] {
   add({
     id: "treeSort",
     group: "Files",
-    label: `Order files by ${s.treeSort === "status" ? "name" : "status"}`,
-    value: s.treeSort,
-    terms: "sort tree sequence order status alphabetical",
+    label: "File order",
+    value: s.treeSort === "status" ? "by status" : "by name",
+    terms: "sort tree sequence order status name alphabetical",
     run: () => set({ treeSort: s.treeSort === "status" ? "name" : "status" }),
   });
 
@@ -630,9 +628,9 @@ function buildCommands(p: Props): Command[] {
   add({
     id: "chatScope",
     group: "Agent",
-    label: `Search chats ${s.chatScope === "all" ? "in this repository" : "across every repository"}`,
-    value: s.chatScope === "all" ? "all repos" : "this repo",
-    terms: "palette hash conversation scope everywhere across",
+    label: "Chat search scope",
+    value: s.chatScope === "all" ? "every repository" : "this repository",
+    terms: "palette hash conversation scope everywhere across search chats",
     run: () => set({ chatScope: s.chatScope === "all" ? "repo" : "all" }),
   });
 
@@ -776,7 +774,7 @@ export function Palette(props: Props) {
       clearTimeout(t);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isText, term]);
+  }, [isText, term, props.settings.showAllFiles]);
 
   type Row =
     | { kind: "file"; key: string; label: string; sub: string; run: () => void }
@@ -977,6 +975,24 @@ export function Palette(props: Props) {
                     ? "Chats · all repositories"
                     : "Chats"
                   : "Files"}
+            {/* The markdown/all switch, right where its effect is visible. It
+                is the same setting as the tree's "show all files", so the two
+                can never disagree about what a "file" is. */}
+            {!isCmd && !isChat && (
+              <button
+                className="palette-scope"
+                // Keep the keyboard in the search box across the click.
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => props.set({ showAllFiles: !props.settings.showAllFiles })}
+                title={
+                  props.settings.showAllFiles
+                    ? "Searching every file — click for markdown only"
+                    : "Searching markdown only — click for every file"
+                }
+              >
+                {props.settings.showAllFiles ? "all files" : "markdown"}
+              </button>
+            )}
           </span>
           <span>↑↓ move · ⏎ run · esc close</span>
         </div>

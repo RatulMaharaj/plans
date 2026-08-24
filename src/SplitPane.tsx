@@ -498,7 +498,9 @@ export function SplitPane({
         </>
       ) : (
         <div className="editor-host">
+          {/* Keyed by file, as in the main pane: all diff state per document. */}
           <DiffView
+            key={`${repo}::${relPath}`}
             repo={repo}
             relPath={relPath}
             buffer={source}

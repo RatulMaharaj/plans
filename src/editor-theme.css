@@ -2,10 +2,6 @@
 @import "@milkdown/crepe/theme/frame.css";
 @import "./fonts/fonts.css";
 
-/* ---------------------------------------------------------------------------
-   Crepe exposes its whole palette as custom properties, so the editor is
-   repainted from our three papers rather than shipping its own light/dark.
-   --------------------------------------------------------------------------- */
 .editor-host .milkdown {
   --crepe-color-background: var(--paper);
   --crepe-color-on-background: var(--ink);

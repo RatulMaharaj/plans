@@ -36,6 +36,7 @@ pub enum Op {
 /// `argv[0]` is an absolute program — resolution happened before we got here,
 /// so a missing agent is reported as "not installed" rather than as a session
 /// that starts and immediately fails.
+#[allow(clippy::too_many_arguments)]
 pub async fn run(
     app: AppHandle,
     repo: String,

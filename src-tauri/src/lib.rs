@@ -352,7 +352,7 @@ fn walk_files(root: &Path, include_ignored: bool, only_markdown: bool) -> Vec<Pl
 }
 
 #[tauri::command]
-fn list_plans(
+async fn list_plans(
     repo: String,
     dirs: Vec<String>,
     include_ignored: bool,
@@ -532,20 +532,26 @@ fn link_from(doc: &str, target: &str) -> String {
     format!("{}{}", "../".repeat(depth), target)
 }
 
-/// Search inside the markdown of a repository./// Search inside the markdown of a repository.
+/// Search inside the files of a repository.
 ///
 /// Filenames answer "which file was that", and are already searchable. This
 /// answers the other question — "where did I write about X" — which for notes
 /// is the one asked more often. Plain substring, case-insensitive: a regular
 /// expression is a different feature, and most searches are neither.
 #[tauri::command]
-fn search_plans(repo: String, query: String, include_ignored: bool, limit: u32) -> R<Vec<Hit>> {
+async fn search_plans(
+    repo: String,
+    query: String,
+    include_ignored: bool,
+    only_markdown: bool,
+    limit: u32,
+) -> R<Vec<Hit>> {
     let needle = query.trim().to_lowercase();
     if needle.is_empty() {
         return Ok(Vec::new());
     }
     let root = PathBuf::from(&repo);
-    let files = walk_files(&root, include_ignored, true);
+    let files = walk_files(&root, include_ignored, only_markdown);
     let cap = limit.max(1) as usize;
 
     let mut hits = Vec::new();
@@ -870,7 +876,11 @@ fn open_in_terminal(repo: String) -> R<()> {
     }
     #[cfg(target_os = "windows")]
     {
-        exec("cmd", &["/C", "start", "cmd", "/K", &format!("cd /d {path}")]).map(|_| ())
+        exec(
+            "cmd",
+            &["/C", "start", "cmd", "/K", &format!("cd /d {path}")],
+        )
+        .map(|_| ())
     }
 }
 
@@ -1014,13 +1024,12 @@ fn parse_ahead_behind(repo: &str) -> (u32, u32, bool) {
 }
 
 #[tauri::command]
-fn git_status(repo: String, scope: Vec<String>) -> R<GitStatus> {
-    // Only markdown. Enumerating every untracked file in a large repository is
-    // most of what this command costs, and none of it is ever shown.
+async fn git_status(repo: String, scope: Vec<String>) -> R<GitStatus> {
+    // The whole tree by default: the panel shows every change, markdown or
+    // not. A scope narrows it when a caller only cares about part of the repo.
     let mut args = vec!["status", "--porcelain=v1", "-uall", "--"];
     if scope.is_empty() {
-        args.push("*.md");
-        args.push("*.markdown");
+        args.push(".");
     } else {
         for s in &scope {
             args.push(s.as_str());
@@ -1062,7 +1071,7 @@ fn git_status(repo: String, scope: Vec<String>) -> R<GitStatus> {
 }
 
 #[tauri::command]
-fn git_diff(repo: String, rel_path: String, staged: bool) -> R<String> {
+async fn git_diff(repo: String, rel_path: String, staged: bool) -> R<String> {
     let mut args: Vec<&str> = vec!["diff"];
     if staged {
         args.push("--cached");
@@ -1090,7 +1099,7 @@ fn git_diff(repo: String, rel_path: String, staged: bool) -> R<String> {
 /// The committed text of a file, for the live redline. An untracked or newly
 /// added file has no committed side yet, which is an empty string, not an error.
 #[tauri::command]
-fn git_head_text(repo: String, rel_path: String) -> R<String> {
+async fn git_head_text(repo: String, rel_path: String) -> R<String> {
     safe_join(&repo, &rel_path)?;
     match git(&repo, &["show", &format!("HEAD:{rel_path}")]) {
         Ok(text) => Ok(text),

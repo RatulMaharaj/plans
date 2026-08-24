@@ -25,7 +25,7 @@ import {
   type Index as ChatIndex,
 } from "./chats";
 import { agentCommandLine, HANDOFF_PROMPT } from "./agent";
-import { DiffView } from "./DiffView";
+import { DiffView, prefetchHead } from "./DiffView";
 import { SettingsPage } from "./SettingsPage";
 import { installConventions, skillState, SKILLS, type SkillState } from "./skill";
 import { CHORD_MS, matchChordPrefix, matchKeys, mergeKeys, renderKeys } from "./keys";
@@ -438,6 +438,29 @@ export default function App() {
   const activeRepoOrPath = activeRepo?.path ?? activeRepoPath ?? "";
 
   const status = activeRepoPath ? (statusByRepo[activeRepoPath] ?? null) : null;
+
+  /**
+   * Warm the diff's committed side for every changed file, so clicking down
+   * the git panel's list shows each diff at once instead of a "Reading…"
+   * beat per file. One `git show` each, sequential so a long list never
+   * floods the backend; `sameStatus` keeps the entries object stable, so
+   * this only re-runs when the list itself (or HEAD, via epoch) moves.
+   */
+  useEffect(() => {
+    const entries = status?.entries ?? [];
+    if (!activeRepoPath || !entries.length) return;
+    const repo = activeRepoPath;
+    let live = true;
+    void (async () => {
+      for (const e of entries.slice(0, 100)) {
+        if (!live) return;
+        await prefetchHead(repo, e.path);
+      }
+    })();
+    return () => {
+      live = false;
+    };
+  }, [activeRepoPath, status?.entries, epoch]);
 
   /** Whoever git says is here, as the `@name` a comment carries. */
   const author = activeRepoPath ? (identityByRepo[activeRepoPath] ?? "") : "";
@@ -1480,7 +1503,9 @@ export default function App() {
   const onSourceChange = useCallback(
     (text: string) => {
       if (!activeRepoPath || activeRepoPath === MEMORY || !activePath) return;
-      const split = settings.showFrontmatter
+      // The same rule as opening: frontmatter is a markdown convention, so a
+      // YAML file that happens to start with `---` keeps its header in the body.
+      const split = settings.showFrontmatter && isMarkdownPath(activePath)
         ? splitFrontmatter(text)
         : { matter: null, body: text };
       setMatter(split.matter);
@@ -1779,7 +1804,16 @@ export default function App() {
 
   /** Opening a file in another repository makes that repository the active one. */
   const openFile = useCallback(
-    async (repoPath: string, relPath: string, retrying = false, direct = false) => {
+    async (
+      repoPath: string,
+      relPath: string,
+      retrying = false,
+      direct = false,
+      // The mode to land in. Without it, opening from the git panel mounted
+      // the writing surface first — a full markdown parse — only to tear it
+      // down when the tab flipped to Diff a beat later.
+      mode?: View,
+    ) => {
       if (!direct && !retrying) {
         const r = paneRoute.current;
         if (r.split && r.paneFocus === "split") {
@@ -1846,6 +1880,10 @@ export default function App() {
           const next = prev.some((t) => t.repo === repoPath && t.path === relPath)
             ? prev
             : [...prev, { repo: repoPath, path: relPath }];
+          if (mode)
+            return next.map((t) =>
+              t.repo === repoPath && t.path === relPath ? { ...t, view: mode } : t,
+            );
           return md
             ? next
             : next.map((t) =>
@@ -3001,7 +3039,6 @@ export default function App() {
     const repo = activeRepo.path;
     const entries = status?.entries ?? [];
     const staged = entries.filter((e) => e.index !== " " && e.index !== "?");
-    const mine = entries.filter((e) => /\.(md|markdown)$/i.test(e.path));
     return [
       { id: "git.pull", label: "Pull", hint: "--ff-only", run: () => onRun("Pulled", () => api.gitPull(repo)) },
       { id: "git.push", label: "Push", run: () => onRun("Pushed", () => api.gitPush(repo)) },
@@ -3048,10 +3085,10 @@ export default function App() {
       },
       {
         id: "git.stage",
-        label: "Stage every changed markdown file",
+        label: "Stage every changed file",
         run: () =>
           onRun("Staged", () =>
-            api.gitStage(repo, mine.filter((e) => e.worktree !== " ").map((e) => e.path)),
+            api.gitStage(repo, entries.filter((e) => e.worktree !== " ").map((e) => e.path)),
           ),
       },
       {
@@ -4065,7 +4102,12 @@ export default function App() {
                 </>
               ) : (
                 <div className="editor-host">
+                  {/* Keyed by file: every piece of diff state — committed
+                      side, disk copy, settled buffer — must belong to one
+                      document, or a click on the next changed file diffs one
+                      file's head against another's text for a beat. */}
                   <DiffView
+                    key={`${activeRepoOrPath}::${activePath}`}
                     repo={activeRepoOrPath}
                     relPath={activePath}
                     buffer={source}
@@ -4182,13 +4224,7 @@ export default function App() {
               // Set the mode on that tab, not on whichever buffer was active
               // when the click happened.
               const repo = activeRepoOrPath;
-              void openFile(repo, p).then(() =>
-                setTabs((prev) =>
-                  prev.map((t) =>
-                    t.repo === repo && t.path === p ? { ...t, view: "diff" } : t,
-                  ),
-                ),
-              );
+              void openFile(repo, p, false, false, "diff");
             }}
           />
         )}
@@ -4401,7 +4437,7 @@ export default function App() {
         searchRepo={activeRepoPath}
         onSearch={(query) =>
           activeRepoPath
-            ? api.searchPlans(activeRepoPath, query, settings.showIgnored)
+            ? api.searchPlans(activeRepoPath, query, settings.showIgnored, !settings.showAllFiles)
             : Promise.resolve([])
         }
         onOpenAt={(r, f, line, q) =>

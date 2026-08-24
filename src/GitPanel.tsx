@@ -28,10 +28,9 @@ export function GitPanel({ repo, status, busy, onRun, notify, onOpen }: Props) {
     );
   }
 
-  // This app edits markdown, so the panel only ever acts on markdown. A repo's
-  // source changes are none of its business, and "stage all" must never mean
-  // "git add ." — it stages exactly the files listed above it.
-  const mine = status.entries.filter((e) => /\.(md|markdown)$/i.test(e.path));
+  // Every change in the repository, markdown or not. "Stage all" still means
+  // exactly the files listed above it, never "git add .".
+  const mine = status.entries;
   /**
    * Conflicted files are neither staged nor merely modified: both sides are
    * still sitting in the file. They come out of the two lists and into their
@@ -46,7 +45,6 @@ export function GitPanel({ repo, status, busy, onRun, notify, onOpen }: Props) {
   const settled = mine.filter((e) => !isConflict(e));
   const staged = settled.filter((e) => e.index !== " " && e.index !== "?");
   const unstaged = settled.filter((e) => e.worktree !== " ");
-  const others = status.entries.length - mine.length;
 
   /**
    * An unfinished merge or rebase. The app cannot finish one — that is a
@@ -202,13 +200,6 @@ export function GitPanel({ repo, status, busy, onRun, notify, onOpen }: Props) {
             : undefined
         }
       />
-
-      {others > 0 && (
-        <p className="git-aside">
-          {others} other change{others > 1 ? "s" : ""} in this repository, outside
-          markdown. Not shown, and not touched by anything here.
-        </p>
-      )}
 
     </aside>
   );

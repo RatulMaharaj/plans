@@ -12,7 +12,8 @@ Remember to add changesets for any patched bugs - fixed bugs belong in the chang
 ## Open
 
 - [ ] Stop button does nothing
-- [ ] comments should be allowed to go in between bullet points alsos
+- [ ] Scroll position should remain in sync between write mode and source mode for the same file
+- [ ] Can’t open the skills from the command palette
 
 ## Watch for
 

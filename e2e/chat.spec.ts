@@ -343,8 +343,11 @@ test("the placement can be changed without reaching for settings", async ({ page
   const before = await box(page, ".mux");
 
   await page.keyboard.press("Meta+p");
-  await page.locator(".palette-input").fill(">chat beside");
-  await expect(page.locator(".palette-row").first()).toContainText(/beside/i);
+  await page.locator(".palette-input").fill(">chat position");
+  // The name is fixed; the value chip names where the chat is now.
+  const row = page.locator(".palette-row").first();
+  await expect(row).toContainText(/chat position/i);
+  await expect(row.locator(".palette-value")).toHaveText(/below the page/i);
   await page.keyboard.press("Enter");
 
   await expect.poll(async () => (await box(page, ".mux")).x).toBeGreaterThan(before.x);
@@ -501,7 +504,7 @@ test("moving the chat to the side gives way for it", async ({ page }) => {
   await expect(page.locator(".git")).toBeVisible();
 
   await page.keyboard.press("Meta+p");
-  await page.locator(".palette-input").fill(">chat beside");
+  await page.locator(".palette-input").fill(">chat position");
   await page.keyboard.press("Enter");
 
   // The chat is what moved, so the chat is what keeps the column.
@@ -893,7 +896,7 @@ test("finished plans can be hidden, by status and by folder", async ({ page }) =
   expect((await names(page)).length).toBe(3);
 
   await page.keyboard.press("Meta+p");
-  await page.locator(".palette-input").fill(">show finished plans");
+  await page.locator(".palette-input").fill(">finished plans");
   await page.keyboard.press("Enter");
 
   // Both ways a plan says it is over: the status, and the folder it sits in.
@@ -910,7 +913,7 @@ test("hiding them does not close one that is open", async ({ page }) => {
   await expect(page.locator(".page-path")).toContainText("second.md");
 
   await page.keyboard.press("Meta+p");
-  await page.locator(".palette-input").fill(">show finished plans");
+  await page.locator(".palette-input").fill(">finished plans");
   await page.keyboard.press("Enter");
 
   // Out of the tree, still on screen: the setting is a view, not a close.
@@ -966,7 +969,7 @@ test("marking a plan done hides it at once, not at the next poll", async ({ page
 
   // Hide finished plans, then finish one.
   await page.keyboard.press("Meta+p");
-  await page.locator(".palette-input").fill(">show finished plans");
+  await page.locator(".palette-input").fill(">finished plans");
   await page.keyboard.press("Enter");
   await expect(page.locator(".row.file", { hasText: "first" })).toBeVisible();
 
@@ -2033,10 +2036,12 @@ test("panels are shown and hidden, not turned on and off", async ({ page }) => {
   await page.keyboard.press("Meta+p");
   await page.locator(".palette-input").fill(">agent chat");
 
-  // "Turned off" sounds like it stopped working, which for a panel is the
-  // wrong thing to imply.
-  await expect(page.locator(".palette-row").first()).toContainText(/show agent chat/i);
-  await expect(page.locator(".palette-row").first()).not.toContainText(/turn/i);
+  // The name stays fixed; the state sits in the value chip. And "turned off"
+  // sounds like it stopped working, which for a panel is the wrong thing to
+  // imply — its states are shown and hidden.
+  const row = page.locator(".palette-row", { hasText: "Agent chat" }).first();
+  await expect(row.locator(".palette-value")).toHaveText(/hidden|shown/i);
+  await expect(row).not.toContainText(/turn/i);
 });
 
 test("the agent can be switched from the palette", async ({ page }) => {

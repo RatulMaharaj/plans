@@ -24,6 +24,9 @@ export type FakeRepo = {
   conflicted?: string[];
   /** An unfinished "merge" or "rebase", as git_status reports one. */
   operation?: string;
+  /** The committed version of a path, for `git_head_text`. Falls back to the
+   *  working copy, which reads as "no changes" in the diff. */
+  heads?: Record<string, string>;
 };
 
 /** A version the feed should claim is available, for the updater's own tests. */
@@ -229,12 +232,13 @@ export function installFakeBackend(repos: FakeRepo[], update?: FakeUpdate) {
       b.files[String(toRel)] = text;
       return toRel;
     },
-    search_plans: ({ repo: p, query, limit }) => {
+    search_plans: ({ repo: p, query, onlyMarkdown, limit }) => {
       const r = repo(p);
       const needle = String(query ?? "").trim().toLowerCase();
       if (!r || !needle) return [];
       const out: { rel_path: string; line: number; text: string }[] = [];
       for (const [rel, text] of Object.entries(r.files)) {
+        if (onlyMarkdown !== false && !/\.(md|markdown)$/i.test(rel)) continue;
         text.split("\n").forEach((line, i) => {
           if (out.length >= (limit ?? 60)) return;
           if (line.toLowerCase().includes(needle)) {
@@ -252,6 +256,10 @@ export function installFakeBackend(repos: FakeRepo[], update?: FakeUpdate) {
       // The link climbs out of the document's own folder, as markdown needs.
       const depth = (relPath.match(/\//g) ?? []).length;
       return `${"../".repeat(depth)}${dir}/${name}`;
+    },
+    git_head_text: ({ repo: p, relPath }) => {
+      const r = repo(p);
+      return r?.heads?.[String(relPath)] ?? r?.files[String(relPath)] ?? "";
     },
     git_status: ({ repo: p }) => {
       const r = repo(p);

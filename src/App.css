@@ -1264,6 +1264,23 @@ input[type="range"]::-webkit-slider-thumb {
   color: var(--ink-3);
 }
 
+.palette-scope {
+  margin-left: 10px;
+  padding: 1px 6px;
+  border: 1px solid var(--rule);
+  border-radius: 999px;
+  background: none;
+  font: inherit;
+  letter-spacing: inherit;
+  text-transform: inherit;
+  color: var(--ink-2);
+  cursor: pointer;
+}
+
+.palette-scope:hover {
+  border-color: var(--ink-3);
+}
+
 /* ===========================================================================
    Dropdown — the app's own, in place of native <select>
    =========================================================================== */

@@ -168,12 +168,19 @@ export const api = {
     bytes: number[],
   ) => invoke<string>("write_asset", { repo, relPath, folder, stem, ext, bytes }),
 
-  /** Lines inside the repository's markdown that contain `query`. */
-  searchPlans: (repo: string, query: string, includeIgnored = false, limit = 60) =>
+  /** Lines inside the repository's files that contain `query`. */
+  searchPlans: (
+    repo: string,
+    query: string,
+    includeIgnored = false,
+    onlyMarkdown = true,
+    limit = 60,
+  ) =>
     invoke<{ relPath: string; line: number; text: string }[]>("search_plans", {
       repo,
       query,
       includeIgnored,
+      onlyMarkdown,
       limit,
     }).then((hits) =>
       hits.map((h: any) => ({ relPath: h.rel_path, line: h.line, text: h.text })),

@@ -1,14 +1,3 @@
-/**
- * A small profiler, in the app.
- *
- * The webview inspector can do all of this and more, but it has to be opened,
- * recorded and read — and the interesting cases here are ambient: a poll that
- * fires every few seconds, a render that happens on every keystroke. This keeps
- * rolling figures for anything worth naming, and the HUD shows them live.
- *
- * Overhead is a Map lookup and a subtraction per sample, so it can be left in.
- */
-
 export type Stat = {
   name: string;
   count: number;

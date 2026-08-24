@@ -19,6 +19,7 @@ const REPOS: FakeRepo[] = [
       "a-plan.md": "# A plan\n\nSome prose.\n",
       "util.ts": "export const answer = () => 42;\n",
     },
+    modified: ["a-plan.md", "util.ts"],
   },
 ];
 
@@ -84,4 +85,54 @@ test("a .ts file cannot reach the writing surface", async ({ page }) => {
   await fileRow(page, "a-plan.md").click();
   await expect(page.locator(".view-switch button", { hasText: "Write" })).toBeVisible();
   await expect(page.locator(".surface")).toHaveCount(2);
+});
+
+test("the source of a non-markdown file is editable, and saves as typed", async ({ page }) => {
+  await boot(page, { showAllFiles: true, autosave: "afterDelay", autosaveDelay: 0.05 });
+  await fileRow(page, "util.ts").click();
+  const src = page.locator(".surface:not(.aside) .cm-content");
+  await expect(src).toContainText("export const answer");
+
+  await src.click();
+  await page.keyboard.press("Meta+ArrowDown");
+  await page.keyboard.type("export const question = () => 6 * 7;\n");
+  // The buffer reached disk unchanged — no markdown round trip in the way.
+  await expect
+    .poll(async () =>
+      page.evaluate(
+        () =>
+          (window as any).__fake.repos.find((r: any) => r.path === "/repo/plans")
+            .files["util.ts"],
+      ),
+    )
+    .toContain("export const question");
+});
+
+test("the palette search scope toggles between markdown and every file", async ({ page }) => {
+  await boot(page);
+  await page.keyboard.press("Meta+p");
+
+  // File names: markdown by default, with the switch on show in the footer.
+  await expect(page.locator(".palette-scope")).toHaveText(/markdown/i);
+  await page.locator(".palette-input").fill("util");
+  await expect(page.locator(".palette-empty")).toBeVisible();
+
+  await page.locator(".palette-scope").click();
+  await expect(page.locator(".palette-scope")).toHaveText(/all files/i);
+  await expect(page.locator(".palette-row").first()).toContainText(/util\.ts/i);
+
+  // Inside files: the same switch governs which files are read.
+  await page.locator(".palette-scope").click();
+  await page.locator(".palette-input").fill("*answer");
+  await expect(page.locator(".palette-empty")).toContainText(/nothing matches/i);
+  await page.locator(".palette-scope").click();
+  await expect(page.locator(".palette-row").first()).toContainText(/answer/i);
+});
+
+test("the git panel lists every changed file, whatever the tree shows", async ({ page }) => {
+  // The tree is still markdown-only here; the panel reports the repository.
+  await boot(page, { showGit: true });
+  await expect(page.locator(".git")).toBeVisible();
+  await expect(page.locator(".git")).toContainText("a-plan.md");
+  await expect(page.locator(".git")).toContainText("util.ts");
 });

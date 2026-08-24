@@ -431,8 +431,8 @@ test("files can be ordered by status instead of by name", async ({ page }) => {
   expect(await names()).toEqual(["aardvark.md", "plain.md", "zebra.md"]);
 
   await page.keyboard.press("Meta+p");
-  await page.locator(".palette-input").fill(">order files by status");
-  await expect(page.locator(".palette-row").first()).toContainText(/order files by status/i);
+  await page.locator(".palette-input").fill(">file order");
+  await expect(page.locator(".palette-row").first()).toContainText(/file order/i);
   await page.keyboard.press("Enter");
 
   // draft before done, per the configured vocabulary; the file with no status
