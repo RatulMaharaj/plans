@@ -1,0 +1,98 @@
+# The factory's second host: the same PR skill the local worker dispatches,
+# driven by anthropics/claude-code-action instead of ~/.plans-worker.
+#
+# Dispatch is the status flip: a push to main that flips a plan (or a feature
+# folder member) to `ready` runs one matrix job per unit, routed by the
+# plan's `model`/`effort` frontmatter (invalid values degrade to the defaults
+# below). A push with no flip skips the paid job entirely.
+#
+# Loop safety: the claim flip this job pushes to main uses GITHUB_TOKEN, and
+# GitHub's recursion guard means such pushes never retrigger workflows. Keep
+# it that way — substituting a PAT here reopens the loop hazard the plan
+# warned about (plans/github-actions-agents.md). The same guard means a
+# draft fleshed out *by an action* would not auto-trigger this; local pushes
+# by humans and the local worker do.
+#
+# Auth is the Claude subscription, not an API key: run `claude setup-token`
+# locally and save the result as the CLAUDE_CODE_OAUTH_TOKEN Actions secret.
+name: Factory
+
+on:
+  push:
+    branches: [main]
+    paths: ["plans/**"]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+env:
+  DEFAULT_MODEL: sonnet
+  DEFAULT_EFFORT: medium
+
+jobs:
+  gate:
+    name: Which units became ready?
+    runs-on: ubuntu-latest
+    outputs:
+      units: ${{ steps.detect.outputs.units }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - id: detect
+        run: |
+          units="$(node scripts/detect-ready-units.mjs '${{ github.event.before }}' '${{ github.sha }}')"
+          echo "units=$units" >> "$GITHUB_OUTPUT"
+          echo "Units to dispatch: $units"
+
+  implement:
+    name: ${{ matrix.unit.unit }}
+    needs: gate
+    if: needs.gate.outputs.units != '[]'
+    runs-on: macos-latest # matches ci.yml, so the skill's verify step can run the real suite
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        unit: ${{ fromJSON(needs.gate.outputs.units) }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # git-push.sh reads origin/HEAD to enforce its default-branch rule; a CI
+      # clone doesn't have it set, and silently skipping the guard is not an
+      # option we ship.
+      - name: Set origin/HEAD for the push guard
+        run: git remote set-head origin --auto
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Implement the unit
+        uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          prompt: |
+            You are a headless dispatched run: nobody is watching and nothing
+            can answer a question, so never ask one. Read skills/pr/SKILL.md
+            and follow it exactly. Your unit of work has already been picked
+            for you: ${{ matrix.unit.unit }} (files: ${{ matrix.unit.files }}).
+            You are on the default branch at its tip. The ONLY way you may
+            push is: scripts/git-push.sh origin <branch> — plain git push
+            will be denied.
+          claude_args: |
+            --model ${{ matrix.unit.model }}
+            --effort ${{ matrix.unit.effort }}
+            --max-turns 80
+            --permission-mode acceptEdits
+            --allowedTools "Glob,Grep,LS,Read,Bash(git status:*),Bash(git diff:*),Bash(git log:*),Bash(git show:*),Bash(git branch:*),Bash(git add:*),Bash(git commit:*),Bash(git rm:*),Bash(git worktree:*),Bash(git fetch:*),Bash(git checkout:*),Bash(scripts/git-push.sh:*),Bash(gh pr create:*),Bash(gh pr list:*),Bash(pnpm install:*),Bash(pnpm test:*),Bash(pnpm run:*),Bash(pnpm exec tsc:*),Bash(pnpm exec playwright:*)"
+            --disallowedTools "WebSearch,WebFetch"

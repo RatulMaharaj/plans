@@ -9,7 +9,7 @@ the implementation of a plan gets done.
 My ideal scenario is something like this:
 
 ```mermaid
-flowchart LR
+flowchart TD
      A["I want short summary prompt/plan"]
      B["structured & researched plan done by an agent"]
      C["pushed to a branch on github"]
@@ -360,31 +360,39 @@ to the default branch, and the agent's branches never contain status flips to
 ## Next
 
 - [x] Write `skills/pr/SKILL.md` — the unit rule (one plan or one feature
-      folder), the pushed `busy` claim as first act and lock, worktree from
-      the default branch's tip, PR into the default branch, fail-loudly —
-      and register it in `SKILLS` (`skill.ts:32`)
+  folder), the pushed `busy` claim as first act and lock, worktree from
+  the default branch's tip, PR into the default branch, fail-loudly —
+  and register it in `SKILLS` (`skill.ts:32`)
 - [x] Document the feature-folder convention and the `model` / `effort`
-      frontmatter keys in `skills/plans/SKILL.md`
+  frontmatter keys in `skills/plans/SKILL.md`
 - [ ] Drive the skill by hand on a real small plan in this repo, through to
-      the merged PR; tune until a run needs no questions
+  the merged PR; tune until a run needs no questions
 - [x] Read `anthropics/claude-code-action`'s source for its headless
-      invocation — permission strategy (bypass vs allowlist), tool config,
-      model and prompt plumbing, run bounds — and write down the local
-      translation before the worker exists →
-      [`claude-code-action-findings.md`](./claude-code-action-findings.md):
-      allowlist + `--permission-mode acceptEdits`, never bypass; a
-      `git-push.sh` wrapper instead of `Bash(git push:*)`; `--max-turns`
-      enforced twice; `--effort` is a real CLI flag
-- [ ] The worker as a script in `scripts/`: config of repo paths + default
-      model/effort, fetch–scan–pick–spawn loop around `claude -p`, one repo
-      first — pinning down how `effort` is passed against the real CLI
+  invocation — permission strategy (bypass vs allowlist), tool config,
+  model and prompt plumbing, run bounds — and write down the local
+  translation before the worker exists →
+  [`claude-code-action-findings.md`](./claude-code-action-findings.md):
+  allowlist + `--permission-mode acceptEdits`, never bypass; a
+  `git-push.sh` wrapper instead of `Bash(git push:*)`; `--max-turns`
+  enforced twice; `--effort` is a real CLI flag
+- [x] The worker as a script in `scripts/`: config of repo paths + default
+  model/effort, fetch–scan–pick–spawn loop around `claude -p`, one repo
+  first — pinning down how `effort` is passed against the real CLI →
+  `scripts/worker.mjs` + `scripts/git-push.sh`. It went one step past
+  the plan: it also dispatches `draft` plans as flesh-out runs (plans
+  skill, plans-only push to the default branch), so the human's whole
+  gesture is "commit a draft" — the worker carries it draft → ready →
+  PR. Config at `~/.plans-worker.json`, clones and logs under
+  `~/.plans-worker/`; the push wrapper mechanically enforces
+  "default branch takes plans/ changes only"
 - [ ] Run a `plans/feature-name/` folder through as a single PR
 - [ ] Per-run log files, then the read-only `/state` + `/logs/{run}`
-      endpoint on localhost — `curl` is the monitor until the app grows a
-      panel for it
+  endpoint on localhost — `curl` is the monitor until the app grows a
+  panel for it
 - [ ] Run the same worker on a second machine against a scratch repo and
-      watch the pushed claim's push-rejection arbitrate the race for real
+  watch the pushed claim's push-rejection arbitrate the race for real
 - [ ] Later: an editor for the worker's config file in the app, beside
-      Settings
+  Settings
 - [ ] Decide the review-feedback loop (with `forge-pr-integration.md`)
 - [ ] Only then: the GitHub Action as a second host for the same skill
+

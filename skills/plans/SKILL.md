@@ -44,6 +44,12 @@ effort: high
 - `model` and `effort` say which model tier picks the plan up and how long it
   may think. The vocabulary is the agent's own (the values pass straight
   through to the invocation, e.g. `claude -p --model opus`), not this app's.
+  The vocabulary belongs to whichever agent dispatches the plan — one
+  agent's `opus` is another's `gpt-5.6-sol`. The bundled Claude Code
+  dispatchers recognise, ranked lowest to highest, `model: haiku | sonnet |
+  opus` and `effort: low | medium | high | xhigh | max`; a value a
+  dispatcher does not recognise is treated as absent — it warns and falls
+  back to its default rather than failing the run.
 - A key that is present is respected; a key that is missing falls back to the
   dispatcher's configured default. No heuristics about what the plan "looks
   like it needs".
