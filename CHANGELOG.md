@@ -1,5 +1,60 @@
 # plans
 
+## 0.6.0
+
+### Minor Changes
+
+- 4ead37e: ⌘K chords (⌘K W closes all, ⌘K ⌘1/⌘2 override a pane's view), a Settings → Keyboard page for rebinding everything, and opt-in VS Code and Vim keybinding packs. The palette now lives on ⌘P/⌘⇧P alone.
+- 4ead37e: ⌘F finds inside the open file — one bar over the focused pane, working in both Write and Source, and a palette `*` hit now opens the file with the find seeded at the match.
+- 4ead37e: An "All files" toggle shows every text file in the tree, not only markdown; non-markdown files open in Source only and can never be rewritten by the writing surface.
+
+### Patch Changes
+
+- d52b1b7: The file tree can now be toggled from the rail. A Files button sits with Git
+  and Chat, lit while the sidebar is open — the same switch ⌘B has always been,
+  now visible and clickable.
+- c8d1a60: Search follows the "all files" switch, and the git panel stops filtering.
+  The palette's footer carries the search scope — markdown by default, one
+  click for every file — and both searches obey it: file names and the `*`
+  search inside files. The git panel now always reports the whole repository:
+  every changed file is listed, stageable, and openable in the diff view,
+  whatever the tree shows. The source of any file is editable as typed: the
+  frontmatter splitter no longer peels a `---` header off a non-markdown file
+  mid-edit. Settings commands in the palette keep fixed names — "All files",
+  "Finished plans", "Chat position" — with the current state in the value
+  chip, instead of labels that flip between show and hide. And the diff view
+  got faster where it counts: the heavy backend commands moved off the main
+  IPC thread so "Reading the committed version" no longer waits behind a
+  repository walk, and a git action refreshes the diff in place instead of
+  blanking it while the committed side is re-read. Clicking through the git
+  panel is instant now, twice over: the file opens straight into Diff instead
+  of mounting the writing surface first and tearing it down, and the committed
+  side of every changed file is prefetched as soon as the panel's list is
+  known, so the diff paints from cache and revalidates behind it. That work
+  also surfaced a real bug: switching between changed files could pair one
+  file's committed side with another's working copy under a stale highlight
+  cache key, leaving the diff showing the previous file — or nothing. The diff
+  view is now keyed per document and its cache keys carry a content
+  fingerprint, and a regression test clicks down a panel of changed files
+  asserting each diff is its own and paints within budget.
+- 917c684: Two chat fixes. The transcript keeps the order things happened in: streamed
+  text grows its bubble only while that bubble is still the last message, so
+  an answer written after tool calls lands _below_ them instead of being glued
+  onto earlier prose above — the closing answer is now always the last thing
+  on screen. And Stop moved out of the header, where long chat titles ran into
+  it, to float just above the composer: the answer is stopped where the next
+  message is typed, which Esc already did.
+- d52b1b7: Diff is no longer a mode you switch an editor into. The Diff button, ⌘3 and
+  the palette entry are gone; the view switch is Write and Source. The diff
+  still exists where it means something — click a changed file in the git panel
+  and it opens as that file's diff, and a conflict's "See the diff" still shows
+  yours against the last commit. While a buffer is showing a diff, a lit Diff
+  segment appears on the switch so there is a way to read the state and a way
+  back out.
+
+  Comments also now land at the cursor — in whichever paragraph it sits, right
+  where you pointed — rather than being appended after the paragraph's end.
+
 ## 0.5.0
 
 ### Minor Changes

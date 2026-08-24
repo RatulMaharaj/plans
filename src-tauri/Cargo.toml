@@ -1,6 +1,6 @@
 [package]
 name = "plans"
-version = "0.5.0"
+version = "0.6.0"
 description = "WYSIWYG editor for plan folders across your local git repositories"
 authors = ["Ratul Maharaj"]
 edition = "2021"
