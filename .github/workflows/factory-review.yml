@@ -62,7 +62,12 @@ jobs:
           BASE: ${{ github.base_ref }}
           HEAD: ${{ github.head_ref }}
         run: |
-          codex exec --sandbox read-only --output-last-message "$RUNNER_TEMP/review.md" \
+          # danger-full-access: Codex's own sandbox (bwrap) cannot start
+          # inside the runner ("bwrap: loopback: Operation not permitted"),
+          # and adds nothing there anyway — the runner is an ephemeral VM
+          # that is discarded after the job. The prompt keeps the review
+          # read-only in intent; the VM's disposability covers the rest.
+          codex exec --sandbox danger-full-access --output-last-message "$RUNNER_TEMP/review.md" \
             "You are reviewing a pull request produced by an automated agent. \
           Review the diff between origin/$BASE and origin/$HEAD (git diff origin/$BASE...origin/$HEAD) for CORRECTNESS BUGS ONLY: \
           logic errors, broken edge cases, regressions, unsafe operations, contract violations with the surrounding code. \
