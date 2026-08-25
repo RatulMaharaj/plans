@@ -112,7 +112,7 @@ jobs:
             --model "${{ matrix.unit.model }}" \
             --effort "${{ matrix.unit.effort }}" \
             --output-format stream-json --verbose \
-            --max-turns 80 \
+            --max-turns 250 \
             --permission-mode acceptEdits \
             --allowedTools "Glob,Grep,LS,Read,Bash(git status:*),Bash(git diff:*),Bash(git log:*),Bash(git show:*),Bash(git branch:*),Bash(git add:*),Bash(git commit:*),Bash(git rm:*),Bash(git worktree:*),Bash(git fetch:*),Bash(git checkout:*),Bash(scripts/git-push.sh:*),Bash(gh pr create:*),Bash(gh pr list:*),Bash(pnpm install:*),Bash(pnpm test:*),Bash(pnpm run:*),Bash(pnpm exec tsc:*),Bash(pnpm exec playwright:*)" \
             --disallowedTools "WebSearch,WebFetch" \

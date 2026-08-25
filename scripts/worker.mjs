@@ -66,7 +66,7 @@ const DEFAULTS = {
   model: config.model ?? "opus",
   effort: config.effort ?? "medium",
   pollSeconds: config.pollSeconds ?? 60,
-  maxTurns: config.maxTurns ?? 80,
+  maxTurns: config.maxTurns ?? 250,
   timeoutMinutes: config.timeoutMinutes ?? 45,
 };
 const repos = (config.repos ?? []).map((r) => (typeof r === "string" ? { url: r } : r));
