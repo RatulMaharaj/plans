@@ -37,6 +37,11 @@ jobs:
       - name: Version is the same everywhere
         run: pnpm run version:check
 
+      # The settings schema is generated from the Settings type. A copy that
+      # drifts is a schema that lies, which is worse than no schema at all.
+      - name: Settings schema is current
+        run: pnpm run schema:check
+
       - name: Types
         run: pnpm exec tsc --noEmit
 
