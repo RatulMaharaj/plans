@@ -11,7 +11,10 @@ Remember to add changesets for any patched bugs - fixed bugs belong in the chang
 
 ## Open
 
-Nothing at the moment.
+- Dropdowns in modals don’t overflow and get cut-off.
+- A message sent when the agent is busy or almost finished seems to get dropped
+- We should be able to press the up arrow to see the last typed messages to an agent
+- Last selected new plan folder per repo should be remembered
 
 ## Watch for
 
