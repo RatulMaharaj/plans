@@ -29,7 +29,11 @@ permissions:
 jobs:
   review:
     name: Codex reviews the diff
-    if: startsWith(github.head_ref, 'impl/')
+    # Factory PRs come two ways: impl/** branches (plan flipped on the
+    # default branch) and plan branches whose PR the factory opened as the
+    # github-actions bot. Human PRs from ordinary branches stay unreviewed
+    # by this workflow.
+    if: startsWith(github.head_ref, 'impl/') || github.event.pull_request.user.login == 'github-actions[bot]'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     outputs:

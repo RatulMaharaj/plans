@@ -64,8 +64,9 @@ retrigger the workflow. Substituting a PAT there reopens that loop.
 
 ## Review and merge (optional fourth artifact)
 
-`.github/workflows/factory-review.yml` closes the loop: PRs from `impl/**`
-branches get a headless correctness review from Codex — a second vendor on
+`.github/workflows/factory-review.yml` closes the loop: factory PRs — from
+`impl/**` branches or opened by the Actions bot from a plan's own branch —
+get a headless correctness review from Codex — a second vendor on
 purpose, so the reviewer is independent of the model that wrote the code —
 and a clean verdict plus green CI merges the PR. Adapting it: the merge
 step watches the repository's CI workflow *by name*; point it at this

@@ -26,6 +26,11 @@ plans folder and stop there.
 
 ## Claim it first — and push the claim
 
+When the unit lives on its own branch, the branch is the claim: flip the
+plan to `busy` in your first commit *on that branch* and push it there —
+nothing touches the default branch. The rest of this section is for units
+picked from the default branch.
+
 The very first act of the run, before any implementation:
 
 1. Flip the unit's status to `busy` — every plan in a feature folder.
@@ -49,14 +54,21 @@ never showed `busy`.
 This is the one deliberate exception to "never push to the default branch."
 Nothing else in the run touches it.
 
-## Work in a worktree
+## Where the work happens: the plan's branch, or a worktree
 
-`git worktree add` from the *latest commit of the default branch*, on a fresh
-branch named `impl/<plan-name>` (or `impl/<folder-name>` for a feature
-folder) — the prefix is load-bearing: automated review and merge trigger on
-`impl/**` branches. All implementation happens
-in the worktree: the human's checkout is never dirtied, parallel units cannot
-collide, and a failed run is discarded by deleting a directory.
+Two modes, decided by where the unit's `ready` flip lives:
+
+- **The plan is on its own branch** (not the default branch): that branch is
+  the workbench. Implement directly on it — the plan travels with its code,
+  the branch's existence is the claim, and no flip is pushed anywhere else.
+  The PR at the end goes from this branch into the default branch: one
+  branch, one PR, per feature.
+- **The plan is on the default branch**: you cannot commit to the base, so
+  `git worktree add` from the *latest commit of the default branch*, on a
+  fresh branch named `impl/<plan-name>` (or `impl/<folder-name>` for a
+  feature folder) — the prefix is load-bearing: automated review and merge
+  key on it. The worktree keeps the human's checkout clean, parallel units
+  apart, and a failed run discardable by deleting a directory.
 
 ## Finish into a PR
 
