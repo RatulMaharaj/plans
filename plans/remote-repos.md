@@ -145,3 +145,5 @@ this binary on a small screen.
 - [ ] Removal that knows about un-pushed work before deleting a clone
 - [ ] Later, separately: the phone plan — likely a web reader over the
       origin tip, feeding the worker's draft pipeline
+
+<!-- factory wiring check: the reusable gate should run and skip -->
