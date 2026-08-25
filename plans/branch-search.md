@@ -1,5 +1,5 @@
 ---
-status: busy
+status: done
 ---
 # Branch Search
 
@@ -120,17 +120,35 @@ Searching a list sharpens questions the scroll let us ignore:
 
 ## Next
 
-- [ ] Extract the subsequence scorer from `Palette.tsx:158` into a shared
+- [x] Extract the subsequence scorer from `Palette.tsx:158` into a shared
       module; palette and dropdown both import it
-- [ ] `Dropdown` grows a filter row above the choices, on by threshold from
+- [x] `Dropdown` grows a filter row above the choices, on by threshold from
       `choices.length` — no call-site changes; filter-aware keyboard
-      handling, two-step Escape, `apart` rows exempt from scoring
-- [ ] Check each call site inherits sensibly: branches, repos, folders
+      handling, two-step Escape, action rows exempt from scoring
+- [x] Check each call site inherits sensibly: branches, repos, folders
       (`MoveSheet.tsx:50`, `NameSheet.tsx:77`), chats (`ChatPanel.tsx:721`),
       agent options (`AgentOptions.tsx:72`)
-- [ ] Show the stale branch list with a refreshing note while the lazy fetch
+- [x] Show the stale branch list with a refreshing note while the lazy fetch
       runs
-- [ ] `git_branches` gains remotes (deduped against local, set `apart`) and
+- [x] `git_branches` gains remotes (deduped against local, set `apart`) and
       recency ordering; `git_checkout` learns to create a tracking branch
-- [ ] Decide the threshold, by feel, across the call sites it will actually
+- [x] Decide the threshold, by feel, across the call sites it will actually
       bite
+
+## What the building decided
+
+- **Ten.** Below it a menu is a glance and the select's type-ahead is right;
+  at ten the branch list, a repository's folders and an agent's model list are
+  all already past it, and three papers are nowhere near. `FILTER_AT` in
+  `Dropdown.tsx`, exported so a test can say the number out loud.
+- **`apart` was doing two jobs.** The plan said `apart` rows are actions and
+  should be exempt from scoring, and also that remote branches should be
+  `apart` — but remote branches are content, and exempting two hundred of them
+  from the filter would defeat the search. So the two meanings were split:
+  `apart` is the rule that separates a group, `always` is the row that survives
+  a query. "Add a repository…" is both; a remote branch is only the first.
+  Under a filter the `apart` rows sort to the foot so their rule still
+  separates a group rather than falling between two arbitrary rows.
+- **The move sheet had to be told.** It cancels on Escape and moves on Enter
+  from a capture-phase window listener, which would have eaten the filter's own
+  keys; it now stands back while a dropdown is open (`MoveSheet.tsx:29`).

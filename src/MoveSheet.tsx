@@ -25,6 +25,9 @@ export function MoveSheet({ relPath, folders, onCancel, onMove }: Props) {
 
   useEffect(() => {
     const keys = (e: KeyboardEvent) => {
+      // An open dropdown owns Escape and Enter: they back out of its filter or
+      // pick a folder, and the sheet only hears them once the menu has closed.
+      if ((e.target as HTMLElement | null)?.closest?.(".dd.open")) return;
       if (e.key === "Escape") {
         e.preventDefault();
         e.stopPropagation();
