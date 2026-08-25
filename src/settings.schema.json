@@ -1,0 +1,289 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://plans.ratulmaharaj.com/settings.schema.json",
+  "title": "Plans settings",
+  "description": "Everything the reader can change in Plans, in one file. Generated from the app's own Settings type — do not edit by hand.",
+  "type": "object",
+  "additionalProperties": true,
+  "properties": {
+    "$schema": {
+      "type": "string",
+      "description": "Where this file's schema lives. Written by Plans, and rewritten on every launch so it always describes the build you are running."
+    },
+    "theme": {
+      "type": "string",
+      "enum": [
+        "day",
+        "sepia",
+        "night"
+      ],
+      "default": "day"
+    },
+    "fontId": {
+      "type": "string",
+      "default": "work-sans"
+    },
+    "monoId": {
+      "type": "string",
+      "description": "The monospaced face used by the chrome and code blocks.",
+      "default": "space-mono"
+    },
+    "size": {
+      "type": "number",
+      "description": "Body size in px, before the per-face optical correction.",
+      "minimum": 15,
+      "maximum": 23,
+      "default": 16
+    },
+    "measure": {
+      "type": "number",
+      "description": "Line length, in characters.",
+      "minimum": 52,
+      "maximum": 88,
+      "default": 70
+    },
+    "leading": {
+      "type": "number",
+      "description": "Line height as a multiple of the font size.",
+      "minimum": 1.35,
+      "maximum": 2,
+      "default": 1.5
+    },
+    "codeSize": {
+      "type": "number",
+      "description": "Code block text size in px — code has its own conventions.",
+      "minimum": 9,
+      "maximum": 18,
+      "default": 12
+    },
+    "spellcheck": {
+      "type": "boolean",
+      "default": true
+    },
+    "autosave": {
+      "type": "string",
+      "enum": [
+        "afterDelay",
+        "onBlur",
+        "manual"
+      ],
+      "description": "When edits reach disk, in the manner of an IDE: after a pause, when the window loses focus, or only on ⌘S.",
+      "default": "afterDelay"
+    },
+    "autosaveDelay": {
+      "type": "number",
+      "description": "The pause, in seconds, for \"afterDelay\".",
+      "minimum": 0.5,
+      "maximum": 10,
+      "default": 2
+    },
+    "diffStyle": {
+      "type": "string",
+      "enum": [
+        "unified",
+        "split"
+      ],
+      "default": "unified"
+    },
+    "diffLineNumbers": {
+      "type": "boolean",
+      "default": true
+    },
+    "diffWrap": {
+      "type": "boolean",
+      "default": true
+    },
+    "diffExpandUnchanged": {
+      "type": "boolean",
+      "description": "Show the whole file, or only the changed hunks with a little context.",
+      "default": false
+    },
+    "diffLive": {
+      "type": "boolean",
+      "description": "Re-diff as you type, versus only against what's saved on disk.",
+      "default": true
+    },
+    "showIgnored": {
+      "type": "boolean",
+      "description": "Show markdown that .gitignore excludes.",
+      "default": false
+    },
+    "showExtensions": {
+      "type": "boolean",
+      "description": "Filenames as they are on disk, extension and all.",
+      "default": true
+    },
+    "showFrontmatter": {
+      "type": "boolean",
+      "description": "Hold YAML frontmatter apart from the prose, above the page.",
+      "default": true
+    },
+    "showCompleted": {
+      "type": "boolean",
+      "description": "Whether finished plans stay in the tree. Off hides anything whose status reads as done, and anything inside a `completed/`-style folder — the two ways this app's own repository says a plan is over.",
+      "default": true
+    },
+    "showAllFiles": {
+      "type": "boolean",
+      "description": "Every text file in the tree, not only the markdown. Off is the default: a plans repository wants plans, not the machinery around them.",
+      "default": false
+    },
+    "statuses": {
+      "type": "string",
+      "description": "The choices the palette offers for `status:`, comma-separated. A convention, not a schema — a file may say anything; these are only what the app offers to write.",
+      "default": "draft, ready, busy, done"
+    },
+    "imageFolder": {
+      "type": "string",
+      "description": "Where a pasted image is written, relative to the repository root.",
+      "default": "assets"
+    },
+    "sourceLineNumbers": {
+      "type": "boolean",
+      "description": "Line numbers down the side of the raw markdown.",
+      "default": true
+    },
+    "sourceWrap": {
+      "type": "boolean",
+      "description": "Wrap long lines, or run them on and scroll sideways.",
+      "default": true
+    },
+    "treeSize": {
+      "type": "number",
+      "description": "Tree text size in px — ⌘+ / ⌘− while the tree has focus.",
+      "minimum": 9,
+      "maximum": 16,
+      "default": 12.5
+    },
+    "treeWidth": {
+      "type": "number",
+      "readOnly": true,
+      "description": "Sidebar width in px, dragged by its edge. Managed by Plans — edit it here and the app will write over you.",
+      "minimum": 170,
+      "maximum": 480,
+      "default": 232
+    },
+    "agentCommand": {
+      "type": "string",
+      "description": "The copyable agent command, as a template. `{prompt}` is the instruction, `{file}` the plan's repo-relative path. A template rather than a binary name because no two agents take a prompt the same way, and this app has no business preferring one.",
+      "default": "claude {prompt}"
+    },
+    "chatCommand": {
+      "type": "string",
+      "description": "Which agent from the catalogue the chat talks to. An id, not a command line. Every entry speaks ACP, so the argv is the app's business and what the agent can do is the agent's — there is nothing left here to configure but the choice.",
+      "default": "claude"
+    },
+    "handoffPrompt": {
+      "type": "string",
+      "description": "The instruction \"Hand off to agent: complete this plan\" sends. Editable because it is the one piece of the feature that is about *your* house style, and a prompt you cannot see is a prompt you cannot argue with."
+    },
+    "implementPrompt": {
+      "type": "string",
+      "description": "The instruction \"Hand off to agent: implement this plan\" sends. Kept apart from the completion prompt because they ask for different moves: one writes the plan, the other builds from it."
+    },
+    "chatScope": {
+      "type": "string",
+      "enum": [
+        "repo",
+        "all"
+      ],
+      "description": "Whether `#` in the palette reaches the conversations of the repository you are in, or of every repository open. Per-repo by default, because a chat is usually about the plans next to it and a list that changes as you move between repositories is that list being right. \"All\" is for the other habit — one train of thought that outlives which window happens to be focused. A setting rather than a guess, because both are correct and which one you want is a fact about you.",
+      "default": "repo"
+    },
+    "treeSort": {
+      "type": "string",
+      "enum": [
+        "name",
+        "status"
+      ],
+      "description": "What orders the files in the tree. By name is the order a tree is read in, and the one to fall back to. By status is the cheap answer to wanting a plans folder sequenced some other way: the status is already read on every file during the walk, so it costs a comparison rather than a new field to maintain by hand — and unlike a number typed into every file, it cannot drift out of step with itself. Files with an unrecognised status, or none, come last either way.",
+      "default": "name"
+    },
+    "showIndex": {
+      "type": "boolean",
+      "description": "The file tree down the left.",
+      "default": true
+    },
+    "showGit": {
+      "type": "boolean",
+      "default": false
+    },
+    "showMux": {
+      "type": "boolean",
+      "description": "The agent chat. Nothing runs while it is closed.",
+      "default": false
+    },
+    "showStatusBar": {
+      "type": "boolean",
+      "default": true
+    },
+    "chatPlace": {
+      "type": "string",
+      "enum": [
+        "bottom",
+        "side"
+      ],
+      "description": "Where the chat sits: a column on the right, or a row under the document. Beside by default. A conversation is read down, so height is what it wants, and the plan stays fully visible next to it rather than being squeezed into the top half of the window.",
+      "default": "side"
+    },
+    "muxHeight": {
+      "type": "number",
+      "description": "Height of the chat in px, when it is the bottom row.",
+      "minimum": 120,
+      "maximum": 600,
+      "default": 260
+    },
+    "chatWidth": {
+      "type": "number",
+      "description": "Width of the chat in px, when it is the right column.",
+      "minimum": 340,
+      "maximum": 720,
+      "default": 420
+    },
+    "watchSeconds": {
+      "type": "number",
+      "description": "Poll interval for picking up outside edits, in seconds. 0 turns it off.",
+      "minimum": 0,
+      "maximum": 30,
+      "default": 4
+    },
+    "keyOverrides": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string"
+      },
+      "description": "Rebound shortcuts, by command id, merged over the registry's defaults the way this whole blob merges over `DEFAULTS`. \"\" means unbound. The shortcut sheet (⌘/) is the easy way in; the settings file is the other, and with a schema completing command ids it is a respectable one.",
+      "default": {}
+    },
+    "keyPreset": {
+      "type": "string",
+      "enum": [
+        "default",
+        "vscode",
+        "vim"
+      ],
+      "description": "The preset keybinding pack merged between the registry's defaults and `keyOverrides` — personal rebinds survive switching packs. Strictly opt-in: \"default\" is the app's own bindings, untouched.",
+      "default": "default"
+    },
+    "updates": {
+      "type": "string",
+      "enum": [
+        "notify",
+        "off"
+      ],
+      "description": "Whether the app looks for a new version of itself. There is no \"auto\": replacing a running editor's binary without being asked is not a thing to do to someone who has unsaved text in it.",
+      "default": "notify"
+    },
+    "telemetry": {
+      "type": "boolean",
+      "description": "Anonymous usage counts, so the app can be improved by something other than guesswork. Never file names, paths, or text. Off means nothing is sent.",
+      "default": true
+    },
+    "lastSeenVersion": {
+      "type": "string",
+      "readOnly": true,
+      "description": "The version whose release notes have been shown. Anything older than what is running means the notes open once, by themselves, after an update. Managed by Plans — edit it here and the app will write over you.",
+      "default": ""
+    }
+  }
+}

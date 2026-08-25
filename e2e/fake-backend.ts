@@ -59,6 +59,18 @@ export function installFakeBackend(repos: FakeRepo[], update?: FakeUpdate) {
     options: [] as Record<string, unknown>[],
     /** The installed `plans` script, null until one is installed. */
     cli: null as { path: string; current: boolean } | null,
+    /**
+     * settings.json in the config directory, as a fake filesystem holds it.
+     *
+     * `text` null is "no file yet", which is what first launch sees. A test
+     * plays the part of an outside editor by assigning both fields — the stamp
+     * is what the app's poll watches, so it has to move for a write to count.
+     */
+    settingsFile: { text: null as string | null, stamp: 0 },
+    /** The schema the app wrote beside it, for asserting it is kept fresh. */
+    settingsSchema: null as string | null,
+    /** How many times "Open settings file" reached the system editor. */
+    settingsOpened: 0,
     /** Whether the machine has tmux at all. */
     mux: true,
     /** Panes the fake tmux server is running. */
@@ -185,6 +197,26 @@ export function installFakeBackend(repos: FakeRepo[], update?: FakeUpdate) {
       for (const d of state.dirs) {
         if (d === `${p}::${relPath}` || d.startsWith(`${p}::${relPath}/`)) state.dirs.delete(d);
       }
+      return null;
+    },
+    // The settings file lives outside every repository, so it gets its own
+    // little filesystem of one.
+    settings_read: () => ({
+      path: "/config/plans/settings.json",
+      text: state.settingsFile.text,
+      modified: state.settingsFile.stamp,
+    }),
+    settings_write: ({ text }) => {
+      state.settingsFile = { text, stamp: state.settingsFile.stamp + 1 };
+      return state.settingsFile.stamp;
+    },
+    settings_stat: () => state.settingsFile.stamp,
+    settings_write_schema: ({ text }) => {
+      state.settingsSchema = text;
+      return null;
+    },
+    settings_open: () => {
+      state.settingsOpened++;
       return null;
     },
     reveal_in_finder: () => null,

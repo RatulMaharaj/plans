@@ -69,11 +69,15 @@ import {
 import {
   applySettings,
   DEFAULTS,
+  type Extras,
   loadSettings,
+  parseSettingsFile,
   RANGES,
   saveSettings,
+  serializeSettings,
   type Settings,
 } from "./settings";
+import SETTINGS_SCHEMA from "./settings.schema.json";
 import {
   resumeAnalytics,
   setRepoCount,
@@ -540,10 +544,145 @@ export default function App() {
     setRepoCount(repos.length);
   }, [repos.length]);
 
+  /* --- the settings file ------------------------------------------------- */
+  //
+  // settings.json in the platform's config directory is where the settings
+  // actually live; localStorage above is a warm start, so the theme is right on
+  // the first frame instead of after an async round trip. The file wins any
+  // disagreement, and every save writes both.
+
+  /** Where it is, for the settings page's footer. Empty until the first read. */
+  const [settingsPath, setSettingsPath] = useState("");
+  /** Keys this build has no field for, written back untouched on every save. */
+  const settingsExtras = useRef<Extras>({});
+  /** The stamp of our own last write, so the poll can ignore it. */
+  const settingsStamp = useRef(0);
+  /** The text last known to be on disk — a save that would change nothing
+   *  writes nothing, which is what keeps the poll quiet. */
+  const settingsText = useRef<string | null>(null);
+  /** One toast per broken save, not one per poll. */
+  const settingsBroken = useRef(false);
+  /** Until the first read lands, the file has not had its say. */
+  const [settingsBooted, setSettingsBooted] = useState(false);
+  const settingsRef = useRef(settings);
+  settingsRef.current = settings;
+
+  useEffect(() => {
+    let gone = false;
+    void (async () => {
+      try {
+        const file = await api.settingsRead();
+        if (gone) return;
+        setSettingsPath(file.path);
+        if (file.text === null) {
+          // No file yet: migration is this same code path with the arrow
+          // reversed — whatever localStorage was holding becomes the file.
+          const text = serializeSettings(settingsRef.current);
+          settingsText.current = text;
+          settingsStamp.current = await api.settingsWrite(text);
+        } else {
+          const { settings: onDisk, extras } = parseSettingsFile(file.text);
+          settingsExtras.current = extras;
+          settingsStamp.current = file.modified;
+          settingsText.current = serializeSettings(onDisk, extras);
+          setSettings(onDisk);
+        }
+      } catch (e) {
+        // A file that will not read or parse is not a reason to start with
+        // someone else's settings; the warm start stands, and they get told.
+        if (!gone) notify(`Settings file: ${String(e)}`, "error");
+      } finally {
+        if (!gone) setSettingsBooted(true);
+      }
+    })();
+    return () => {
+      gone = true;
+    };
+  }, [notify]);
+
+  // The schema beside the file, rewritten on every launch — that is what keeps
+  // it describing the build actually running rather than the one that first
+  // wrote it. Nothing depends on it succeeding.
+  useEffect(() => {
+    void api
+      .settingsWriteSchema(`${JSON.stringify(SETTINGS_SCHEMA, null, 2)}\n`)
+      .catch(() => {});
+  }, []);
+
   useEffect(() => {
     applySettings(settings);
     saveSettings(settings);
-  }, [settings]);
+    if (!settingsBooted) return;
+    const text = serializeSettings(settings, settingsExtras.current);
+    if (text === settingsText.current) return;
+    settingsText.current = text;
+    void api
+      .settingsWrite(text)
+      .then((stamp) => {
+        settingsStamp.current = stamp;
+      })
+      .catch((e) => notify(`Settings file: ${String(e)}`, "error"));
+  }, [settings, settingsBooted, notify]);
+
+  /**
+   * The file joins the same rhythm as everything else read from disk: poll the
+   * stamp, reload when it moves. Editing the theme in another editor and
+   * watching the window change on save is the moment this feature proves
+   * itself — and it is how the agent in the chat panel changes your settings
+   * when asked, with no new tool surface at all.
+   *
+   * A file that does not parse keeps the last good settings and says so. "You
+   * have a typo" is recoverable; "your settings reset" is rage.
+   */
+  useEffect(() => {
+    if (!settingsBooted || settings.watchSeconds <= 0) return;
+    const id = setInterval(() => {
+      void (async () => {
+        try {
+          const stamp = await api.settingsStat();
+          if (!stamp || stamp === settingsStamp.current) return;
+          const file = await api.settingsRead();
+          settingsStamp.current = file.modified;
+          if (file.text === null) return;
+          let parsed;
+          try {
+            parsed = parseSettingsFile(file.text);
+          } catch {
+            if (!settingsBroken.current) {
+              settingsBroken.current = true;
+              notify("settings.json doesn't parse — keeping the last settings", "error");
+            }
+            return;
+          }
+          settingsBroken.current = false;
+          settingsExtras.current = parsed.extras;
+          // The text on disk is theirs, not ours: recording what we would have
+          // written stops the save effect from reformatting it straight back.
+          settingsText.current = serializeSettings(parsed.settings, parsed.extras);
+          // A knob turned in a text editor is a knob turned. Which ones matter
+          // is the whole point of the counter, and a shallow compare over the
+          // known keys is all the diffing that honesty needs here.
+          for (const key of Object.keys(DEFAULTS) as (keyof Settings)[]) {
+            const was = settingsRef.current[key];
+            const now = parsed.settings[key];
+            const same =
+              was !== null && typeof was === "object"
+                ? JSON.stringify(was) === JSON.stringify(now)
+                : was === now;
+            if (!same) noteSettingChange(key);
+          }
+          setSettings(parsed.settings);
+        } catch {
+          // Offline, mid-write, gone for a moment — the next tick asks again.
+        }
+      })();
+    }, Math.max(1, settings.watchSeconds) * 1000);
+    return () => clearInterval(id);
+  }, [settingsBooted, settings.watchSeconds, notify]);
+
+  const openSettingsFile = useCallback(() => {
+    void api.settingsOpen().catch((e) => notify(String(e), "error"));
+  }, [notify]);
 
   // The toggle takes effect on the press, not on the next launch: someone who
   // turns it off has usually just decided they want it off now.
@@ -4006,6 +4145,8 @@ export default function App() {
               onCheckUpdates={() => void lookForUpdate(true)}
               onReleaseNotes={() => void showNotes()}
               onKeyboard={() => setKeyboardOpen(true)}
+              settingsFilePath={settingsPath}
+              onOpenSettingsFile={openSettingsFile}
             />
           ) : (
             <>
@@ -4580,6 +4721,7 @@ export default function App() {
             setSettingsOpen(true);
           } else goto(v);
         }}
+        onOpenSettingsFile={openSettingsFile}
         zen={zen}
         onZen={() => setZen((z) => !z)}
         canInsertHtml={view === "write" && !!activePath}

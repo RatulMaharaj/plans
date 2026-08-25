@@ -5,7 +5,9 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc && vite build",
+    "build": "pnpm run schema && tsc && vite build",
+    "schema": "node scripts/settings-schema.mjs",
+    "schema:check": "node scripts/settings-schema.mjs --check",
     "preview": "vite preview",
     "tauri": "tauri",
     "app": "tauri dev",
