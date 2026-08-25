@@ -1,140 +1,17 @@
-# The factory's second host: the same PR skill the local worker dispatches,
-# driven by anthropics/claude-code-action instead of ~/.plans-worker.
-#
-# Dispatch is the status flip: a push to any branch that flips a plan (or a
-# feature folder member) to `ready` runs one matrix job per unit, routed by
-# the plan's `model`/`effort` frontmatter (invalid values degrade to the
-# defaults below). A push with no flip skips the paid job entirely. A plan
-# flipped on its own branch is implemented directly on that branch — the
-# branch is the workbench and the claim, and the PR goes from it into the
-# default branch: one branch, one PR, per feature. A plan flipped on the
-# default branch builds in a worktree on an impl/ branch instead.
-#
-# Loop safety: the claim flip this job pushes to main uses GITHUB_TOKEN, and
-# GitHub's recursion guard means such pushes never retrigger workflows. Keep
-# it that way — substituting a PAT here reopens the loop hazard the plan
-# warned about (plans/github-actions-agents.md). The same guard means a
-# draft fleshed out *by an action* would not auto-trigger this; local pushes
-# by humans and the local worker do.
-#
-# Auth is the Claude subscription, not an API key: run `claude setup-token`
-# locally and save the result as the CLAUDE_CODE_OAUTH_TOKEN Actions secret.
+# The factory: a plan flipped to `ready` becomes a pull request.
+# The machinery lives in RatulMaharaj/factory; this is the thin caller.
 name: Factory
-
 on:
   push:
     paths: ["plans/**"]
-
 permissions:
   contents: write
   pull-requests: write
-
-env:
-  DEFAULT_MODEL: opus
-  DEFAULT_EFFORT: medium
-
 jobs:
-  gate:
-    name: Which units became ready?
-    runs-on: ubuntu-latest
-    outputs:
-      units: ${{ steps.detect.outputs.units }}
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - id: detect
-        run: |
-          units="$(node scripts/detect-ready-units.mjs '${{ github.event.before }}' '${{ github.sha }}')"
-          echo "units=$units" >> "$GITHUB_OUTPUT"
-          echo "Units to dispatch: $units"
-
-  implement:
-    name: ${{ matrix.unit.unit }}
-    needs: gate
-    if: needs.gate.outputs.units != '[]'
-    runs-on: macos-latest # matches ci.yml, so the skill's verify step can run the real suite
-    timeout-minutes: 60
-    strategy:
-      fail-fast: false
-      matrix:
-        unit: ${{ fromJSON(needs.gate.outputs.units) }}
-    steps:
-      # FACTORY_PAT (optional): a fine-grained PAT for the machine account
-      # (LoopedAgent) — this repo only, Contents + Pull requests read/write,
-      # the account a collaborator with write access. With it, pushes and
-      # PRs act as that account: PRs need no run approval (write access),
-      # commits attribute to the machine, and the reviewing bot is a
-      # different actor from the author, so real review states work. Loop
-      # safety survives the substitution because the gate dispatches only on
-      # a became-ready transition: the busy and done flips a PAT push
-      # retriggers cost one gate-only run each, which skips. Without the
-      # secret, everything falls back to github.token: bot-authored PRs,
-      # one approval click each, comment-style reviews.
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-          token: ${{ secrets.FACTORY_PAT || github.token }}
-
-      # git-push.sh reads origin/HEAD to enforce its default-branch rule; a CI
-      # clone doesn't have it set, and silently skipping the guard is not an
-      # option we ship.
-      - name: Set origin/HEAD for the push guard
-        run: git remote set-head origin --auto
-
-      - uses: pnpm/action-setup@v4
-        with:
-          version: 11
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: pnpm
-
-      # Not anthropics/claude-code-action: it refuses push-triggered events
-      # ("Unsupported event type: push"). The CLI underneath has no such
-      # restriction and takes the same OAuth token, so this is the worker's
-      # own invocation, verbatim, on a runner.
-      - name: Install Claude Code
-        run: npm install -g @anthropic-ai/claude-code
-
-      - name: Implement the unit
-        env:
-          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-          GH_TOKEN: ${{ secrets.FACTORY_PAT || secrets.GITHUB_TOKEN }}
-          PROMPT: |
-            You are a headless dispatched run: nobody is watching and nothing
-            can answer a question, so never ask one. Read skills/pr/SKILL.md
-            and follow it exactly. Your unit of work has already been picked
-            for you: ${{ matrix.unit.unit }} (files: ${{ matrix.unit.files }}).
-            You are on branch ${{ github.ref_name }} at its tip. If that is
-            the default branch, follow the skill's worktree mode. Otherwise
-            this is the plan's own branch and the skill's branch mode
-            applies: implement directly on this checkout, commit to this
-            branch, and open the PR from it into the default branch. The
-            ONLY way you may push is: scripts/git-push.sh origin <branch> —
-            plain git push will be denied.
-        # stream-json + verbose: `claude -p` buffers its answer to the very
-        # end, which reads as a hung job in the live log. Streaming makes the
-        # run watchable turn by turn, and the tee'd transcript survives as an
-        # artifact — the flight recorder for runs that fail.
-        run: |
-          git config user.name "factory"
-          git config user.email "factory@users.noreply.github.com"
-          claude -p "$PROMPT" \
-            --model "${{ matrix.unit.model }}" \
-            --effort "${{ matrix.unit.effort }}" \
-            --output-format stream-json --verbose \
-            --max-turns 250 \
-            --permission-mode acceptEdits \
-            --allowedTools "Glob,Grep,LS,Read,Bash(git status:*),Bash(git diff:*),Bash(git log:*),Bash(git show:*),Bash(git branch:*),Bash(git add:*),Bash(git commit:*),Bash(git rm:*),Bash(git worktree:*),Bash(git fetch:*),Bash(git checkout:*),Bash(scripts/git-push.sh:*),Bash(gh pr create:*),Bash(gh pr list:*),Bash(pnpm install:*),Bash(pnpm test:*),Bash(pnpm run:*),Bash(pnpm exec tsc:*),Bash(pnpm exec playwright:*)" \
-            --disallowedTools "WebSearch,WebFetch" \
-            | tee "$RUNNER_TEMP/transcript.jsonl"
-
-      - name: Keep the transcript
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: transcript-${{ strategy.job-index }}
-          path: ${{ runner.temp }}/transcript.jsonl
-          retention-days: 14
+  factory:
+    uses: RatulMaharaj/factory/.github/workflows/dispatch.yml@main
+    secrets: inherit
+    with:
+      runner: macos-latest # matches ci.yml, so the skill's verify step can run the real suite
+      verify_tools: "Bash(pnpm install:*),Bash(pnpm test:*),Bash(pnpm run:*),Bash(pnpm exec tsc:*),Bash(pnpm exec playwright:*)"
+      default_model: opus
