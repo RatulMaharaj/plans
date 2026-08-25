@@ -67,29 +67,27 @@ jobs:
           # and adds nothing there anyway — the runner is an ephemeral VM
           # that is discarded after the job. The prompt keeps the review
           # read-only in intent; the VM's disposability covers the rest.
-          codex exec --sandbox danger-full-access --output-last-message "$RUNNER_TEMP/review.md" \
+          codex exec --sandbox danger-full-access --output-last-message "$RUNNER_TEMP/review.json" \
             "You are reviewing a pull request produced by an automated agent. \
           Review the diff between origin/$BASE and origin/$HEAD (git diff origin/$BASE...origin/$HEAD) for CORRECTNESS BUGS ONLY: \
           logic errors, broken edge cases, regressions, unsafe operations, contract violations with the surrounding code. \
           Read enough of the surrounding files to judge in context. Do not report style, naming, or taste. \
           Only include findings you are confident are real; if you are unsure, leave it out. \
-          Your final message is the review that will be posted to the PR: for each finding give file:line, \
-          what breaks, and the concrete failing scenario. \
-          The LAST line of your final message must be exactly VERDICT: CLEAN (no findings) or VERDICT: FINDINGS."
+          Your final message must be PURE JSON, no fences, no prose around it: \
+          {\"summary\": \"one-paragraph overall assessment\", \"findings\": [{\"path\": \"repo/relative/file\", \"line\": 123, \"body\": \"what breaks, with the concrete failing scenario\", \"suggestion\": \"exact replacement for that one line, only when a one-line fix is certain\"}]}. \
+          line MUST be a line that appears on the new side of the diff (added or context), because the finding is posted as an inline PR comment there. \
+          suggestion is optional and must be a drop-in replacement for exactly that line, matching its indentation. \
+          A clean review is {\"summary\": \"...\", \"findings\": []}."
 
       - name: Post the review
         id: verdict
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          v=$(tail -n 1 "$RUNNER_TEMP/review.md" | grep -o 'CLEAN\|FINDINGS' || echo FINDINGS)
+          n=$(node -e 'try{const r=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8").replace(/^\s*```(?:json)?\s*|\s*```\s*$/g,""));console.log((r.findings??[]).length)}catch{console.log("unparsed")}' "$RUNNER_TEMP/review.json")
+          if [ "$n" = "0" ]; then v=CLEAN; else v=FINDINGS; fi
           echo "verdict=$v" >> "$GITHUB_OUTPUT"
-          {
-            echo "### Factory review (Codex)"
-            echo
-            cat "$RUNNER_TEMP/review.md"
-          } > "$RUNNER_TEMP/body.md"
-          gh pr comment ${{ github.event.pull_request.number }} --body-file "$RUNNER_TEMP/body.md"
+          node scripts/post-review.mjs ${{ github.event.pull_request.number }} "$RUNNER_TEMP/review.json"
 
   merge:
     name: Merge when clean and green
