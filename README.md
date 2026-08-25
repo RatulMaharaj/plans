@@ -170,6 +170,7 @@ pnpm app:build   # produces a bundled .app / installer under src-tauri/target/re
 | `src/settings.ts`                         | Every setting, its range, and how it is applied                    |
 | `src/update.ts`                           | Checking the feed, downloading, and relaunching into the new one   |
 | `scripts/sync-version.mjs`                | One version across four files, and the bundled release notes       |
+| `scripts/settings-schema.mjs`             | The settings JSON Schema, generated from the `Settings` type       |
 | `src/fonts.ts`, `scripts/fetch-fonts.mjs` | Typeface registry and the vendoring script                         |
 
 ## Notes
@@ -182,6 +183,10 @@ pnpm app:build   # produces a bundled .app / installer under src-tauri/target/re
   touched. Deleting a file does delete it.
 - `Pull` uses `--ff-only`, so a diverged branch fails loudly instead of
   auto-merging behind your back.
-- Settings live in `localStorage`, not a file on disk — so they are not
-  inspectable or checked in, and clearing the app's data resets them.
+- Settings live in `settings.json` in the platform's config directory, with a
+  generated `settings.schema.json` beside it. Open it from Settings or the
+  palette; edits made outside are picked up on the watch interval, and a file
+  that does not parse keeps the last good settings rather than resetting them.
+  `localStorage` still holds a copy, but only as a warm start for the first
+  frame — the file is what counts.
 

@@ -247,6 +247,27 @@ export const api = {
   existingDirs: (repo: string, relPaths: string[]) =>
     invoke<string[]>("existing_dirs", { repo, relPaths }),
 
+  /**
+   * The settings file in the platform's config directory: its text, where it
+   * is, and when it last changed. `text` is null when there is none yet, which
+   * is the first-launch migration's cue.
+   */
+  settingsRead: () =>
+    invoke<{ path: string; text: string | null; modified: number }>("settings_read"),
+
+  /** Write it, and report the stamp — so a poll can tell our write from theirs. */
+  settingsWrite: (text: string) => invoke<number>("settings_write", { text }),
+
+  /** Just the stamp: what the watcher asks for, every `watchSeconds`. */
+  settingsStat: () => invoke<number>("settings_stat"),
+
+  /** Refresh `settings.schema.json` beside the file. Generated per build. */
+  settingsWriteSchema: (text: string) =>
+    invoke<void>("settings_write_schema", { text }),
+
+  /** Open settings.json in whatever edits JSON on this machine. */
+  settingsOpen: () => invoke<void>("settings_open"),
+
   /** Show the file or folder in Finder (or the platform's file manager). */
   revealInFinder: (repo: string, relPath: string) =>
     invoke<void>("reveal_in_finder", { repo, relPath }),

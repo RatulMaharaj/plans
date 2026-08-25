@@ -849,6 +849,127 @@ fn sync_user_skills(skills: Vec<(String, String)>) -> R<String> {
     Ok(root.display().to_string())
 }
 
+// ---------------------------------------------------------------------------
+// the settings file
+// ---------------------------------------------------------------------------
+//
+// `settings.json` in the platform's config directory, with its generated
+// schema beside it. Deliberately not routed through the commands above: those
+// are repo-relative by construction, and this file belongs to the app rather
+// than to any repository someone happens to have open.
+
+const SETTINGS_NAME: &str = "settings.json";
+const SCHEMA_NAME: &str = "settings.schema.json";
+
+fn config_dir(app: &tauri::AppHandle) -> R<PathBuf> {
+    use tauri::Manager;
+    app.path().app_config_dir().map_err(|e| e.to_string())
+}
+
+/// Milliseconds since the epoch, or 0 for a file that is not there. 0 is the
+/// honest answer for "no file" and also the one the watcher wants: it never
+/// equals a real stamp, so appearing and disappearing both read as a change.
+fn mtime_ms(p: &Path) -> u64 {
+    std::fs::metadata(p)
+        .and_then(|m| m.modified())
+        .ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
+
+#[derive(Serialize)]
+struct SettingsFile {
+    /// Where it is — shown in the settings page, because the answer to "where
+    /// is my file" differs per platform.
+    path: String,
+    /// The file's text, or null when there is none yet.
+    text: Option<String>,
+    modified: u64,
+}
+
+#[tauri::command]
+fn settings_read(app: tauri::AppHandle) -> R<SettingsFile> {
+    let p = config_dir(&app)?.join(SETTINGS_NAME);
+    let text = match std::fs::read_to_string(&p) {
+        Ok(t) => Some(t),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+        Err(e) => return Err(e.to_string()),
+    };
+    Ok(SettingsFile {
+        path: p.display().to_string(),
+        text,
+        modified: mtime_ms(&p),
+    })
+}
+
+/// Write the file and report its new stamp, so the caller can tell its own
+/// write apart from someone else's.
+///
+/// Through a temporary file and a rename: the watcher polls this path every few
+/// seconds, and a truncated read is a parse error the reader did not cause.
+#[tauri::command]
+fn settings_write(app: tauri::AppHandle, text: String) -> R<u64> {
+    let dir = config_dir(&app)?;
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let p = dir.join(SETTINGS_NAME);
+    let tmp = dir.join(format!("{SETTINGS_NAME}.tmp"));
+    std::fs::write(&tmp, text).map_err(|e| e.to_string())?;
+    std::fs::rename(&tmp, &p).map_err(|e| e.to_string())?;
+    Ok(mtime_ms(&p))
+}
+
+/// The stamp alone — what the poll asks for, so an unchanged file costs a
+/// `stat` rather than a read of the whole file.
+#[tauri::command]
+fn settings_stat(app: tauri::AppHandle) -> R<u64> {
+    Ok(mtime_ms(&config_dir(&app)?.join(SETTINGS_NAME)))
+}
+
+/// The schema, rewritten beside the file on every launch. App-owned: it is
+/// generated from this build's own `Settings` type, and a stale copy is a
+/// schema that lies.
+#[tauri::command]
+fn settings_write_schema(app: tauri::AppHandle, text: String) -> R<()> {
+    let dir = config_dir(&app)?;
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    std::fs::write(dir.join(SCHEMA_NAME), text).map_err(|e| e.to_string())
+}
+
+/// Open `settings.json` in whatever edits JSON on this machine.
+///
+/// The app is a markdown editor; teaching its buffers about an absolute-path
+/// JSON file outside every repository's save machinery is real cost for a file
+/// visited four times a year. Handing it to the system editor is the same
+/// bridge `reveal_in_finder` already crosses — and if it turns out people live
+/// in this file, an in-app JSON buffer is a later plan with its own argument.
+#[tauri::command]
+fn settings_open(app: tauri::AppHandle) -> R<()> {
+    let dir = config_dir(&app)?;
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let p = dir.join(SETTINGS_NAME);
+    // A file that is not there yet cannot be opened, and "nothing happened" is
+    // the worst possible answer to a press.
+    if !p.exists() {
+        std::fs::write(&p, "{}\n").map_err(|e| e.to_string())?;
+    }
+    let path = p.to_string_lossy().into_owned();
+    #[cfg(target_os = "macos")]
+    {
+        exec("open", &[path.as_str()]).map(|_| ())
+    }
+    #[cfg(target_os = "linux")]
+    {
+        exec("xdg-open", &[path.as_str()]).map(|_| ())
+    }
+    #[cfg(target_os = "windows")]
+    {
+        // The empty string is `start`'s window title, which it otherwise takes
+        // the path for — and then opens nothing.
+        exec("cmd", &["/C", "start", "", path.as_str()]).map(|_| ())
+    }
+}
+
 /// Show the file or folder in the platform's file manager, selected.
 #[tauri::command]
 fn reveal_in_finder(repo: String, rel_path: String) -> R<()> {
@@ -1359,6 +1480,11 @@ pub fn run() {
             folder_census,
             delete_folder,
             existing_dirs,
+            settings_read,
+            settings_write,
+            settings_stat,
+            settings_write_schema,
+            settings_open,
             reveal_in_finder,
             open_in_terminal,
             sync_user_skills,
