@@ -2,10 +2,13 @@
 # Codex reviews it, so the review is independent of the model that wrote the
 # code and bills the Codex subscription rather than drawing down the Claude
 # one. A clean verdict plus green CI merges the PR; any finding leaves it
-# open with the review posted for the human.
+# open with a Request-changes review, line-anchored, suggestions applyable
+# with one click.
 #
-# Triggers on PRs from impl/** branches — the branch prefix the pr skill
-# mandates for factory implementation branches.
+# Three ways in: automatically for factory PRs (impl/** heads, or authored
+# by the machine account / the Actions bot); on demand for ANY PR via a
+# `/factory review` comment (factory-commands.yml calls this workflow); and
+# by hand from the Actions tab (workflow_dispatch with a PR number).
 #
 # Auth: run `codex login` locally, then save the contents of
 # ~/.codex/auth.json as the CODEX_AUTH_JSON Actions secret.
@@ -21,6 +24,18 @@ name: Factory Review
 on:
   pull_request:
     types: [opened, synchronize, reopened]
+  workflow_call:
+    inputs:
+      pr:
+        description: "Pull request number to review"
+        required: true
+        type: number
+  workflow_dispatch:
+    inputs:
+      pr:
+        description: "Pull request number to review"
+        required: true
+        type: number
 
 permissions:
   contents: write
@@ -29,19 +44,36 @@ permissions:
 jobs:
   review:
     name: Codex reviews the diff
-    # Factory PRs come two ways: impl/** branches (plan flipped on the
-    # default branch) and plan branches whose PR the factory opened as the
-    # github-actions bot. Human PRs from ordinary branches stay unreviewed
-    # by this workflow.
-    if: startsWith(github.head_ref, 'impl/') || github.event.pull_request.user.login == 'github-actions[bot]' || github.event.pull_request.user.login == 'LoopedAgent'
+    # Factory PRs review automatically; called/dispatched runs were asked
+    # for explicitly, so no filter applies to them.
+    if: >-
+      github.event_name != 'pull_request' ||
+      startsWith(github.head_ref, 'impl/') ||
+      github.event.pull_request.user.login == 'github-actions[bot]' ||
+      github.event.pull_request.user.login == 'LoopedAgent'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     outputs:
       verdict: ${{ steps.verdict.outputs.verdict }}
+      pr: ${{ steps.pr.outputs.pr }}
+      sha: ${{ steps.pr.outputs.sha }}
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+
+      - name: Resolve the pull request
+        id: pr
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR: ${{ inputs.pr || github.event.pull_request.number }}
+        run: |
+          data=$(gh pr view "$PR" --json baseRefName,headRefName,headRefOid,state)
+          echo "pr=$PR" >> "$GITHUB_OUTPUT"
+          echo "base=$(jq -r .baseRefName <<<"$data")" >> "$GITHUB_OUTPUT"
+          echo "head=$(jq -r .headRefName <<<"$data")" >> "$GITHUB_OUTPUT"
+          echo "sha=$(jq -r .headRefOid <<<"$data")" >> "$GITHUB_OUTPUT"
+          [ "$(jq -r .state <<<"$data")" = "OPEN" ] || { echo "::error::PR #$PR is not open."; exit 1; }
 
       - name: Install Codex
         run: npm install -g @openai/codex
@@ -59,8 +91,8 @@ jobs:
 
       - name: Review
         env:
-          BASE: ${{ github.base_ref }}
-          HEAD: ${{ github.head_ref }}
+          BASE: ${{ steps.pr.outputs.base }}
+          HEAD: ${{ steps.pr.outputs.head }}
         run: |
           # danger-full-access: Codex's own sandbox (bwrap) cannot start
           # inside the runner ("bwrap: loopback: Operation not permitted"),
@@ -68,7 +100,7 @@ jobs:
           # that is discarded after the job. The prompt keeps the review
           # read-only in intent; the VM's disposability covers the rest.
           codex exec --sandbox danger-full-access --output-last-message "$RUNNER_TEMP/review.json" \
-            "You are reviewing a pull request produced by an automated agent. \
+            "You are reviewing a pull request. \
           Review the diff between origin/$BASE and origin/$HEAD (git diff origin/$BASE...origin/$HEAD) for CORRECTNESS BUGS ONLY: \
           logic errors, broken edge cases, regressions, unsafe operations, contract violations with the surrounding code. \
           Read enough of the surrounding files to judge in context. Do not report style, naming, or taste. \
@@ -87,12 +119,15 @@ jobs:
           n=$(node -e 'try{const r=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8").replace(/^\s*```(?:json)?\s*|\s*```\s*$/g,""));console.log((r.findings??[]).length)}catch{console.log("unparsed")}' "$RUNNER_TEMP/review.json")
           if [ "$n" = "0" ]; then v=CLEAN; else v=FINDINGS; fi
           echo "verdict=$v" >> "$GITHUB_OUTPUT"
-          node scripts/post-review.mjs ${{ github.event.pull_request.number }} "$RUNNER_TEMP/review.json"
+          node scripts/post-review.mjs "${{ steps.pr.outputs.pr }}" "$RUNNER_TEMP/review.json"
 
   merge:
     name: Merge when clean and green
     needs: review
-    if: needs.review.outputs.verdict == 'CLEAN'
+    # Auto-merge is for the factory's own PRs. An on-demand review of a
+    # human's PR posts its verdict and stops — asking for a review is not
+    # asking for a merge.
+    if: needs.review.outputs.verdict == 'CLEAN' && github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -104,7 +139,7 @@ jobs:
       - name: Wait for CI, then merge
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          SHA: ${{ github.event.pull_request.head.sha }}
+          SHA: ${{ needs.review.outputs.sha }}
         run: |
           for i in $(seq 1 56); do
             state=$(gh run list --commit "$SHA" --workflow CI --json status,conclusion \
@@ -120,4 +155,4 @@ jobs:
             esac
           done
           [ "$state" = "success" ] || { echo "::error::CI did not finish in time."; exit 1; }
-          gh pr merge ${{ github.event.pull_request.number }} --squash --delete-branch
+          gh pr merge ${{ needs.review.outputs.pr }} --squash --delete-branch

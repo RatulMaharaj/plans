@@ -1,0 +1,131 @@
+# The factory's comment commands — dispatch from where the conversation is.
+#
+#   /factory review                     on a pull request: run the Codex
+#                                       review on it (verdict posts to the
+#                                       PR; no auto-merge for on-demand
+#                                       reviews of human PRs)
+#   /factory implement [model] [effort] on an issue: treat the issue as the
+#                                       work order — the run writes it into
+#                                       a plan file, implements it, and
+#                                       opens a PR that closes the issue
+#
+# Only comments from users with write access count: a comment is the spend
+# button here, exactly like the ready flip on the board, and it should not
+# be pressable by drive-by accounts.
+name: Factory Commands
+
+on:
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+jobs:
+  route:
+    name: Parse the command
+    if: >-
+      startsWith(github.event.comment.body, '/factory') &&
+      contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association)
+    runs-on: ubuntu-latest
+    outputs:
+      cmd: ${{ steps.parse.outputs.cmd }}
+      model: ${{ steps.parse.outputs.model }}
+      effort: ${{ steps.parse.outputs.effort }}
+    steps:
+      - id: parse
+        env:
+          BODY: ${{ github.event.comment.body }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -- $BODY
+          cmd="${2:-}"
+          case "$cmd" in review|implement) ;; *) echo "::notice::Unknown factory command '$cmd' — ignoring."; cmd="" ;; esac
+          model=""; effort=""
+          case "${3:-}" in haiku|sonnet|opus) model="$3" ;; esac
+          case "${4:-}" in low|medium|high|xhigh|max) effort="$4" ;; esac
+          echo "cmd=$cmd" >> "$GITHUB_OUTPUT"
+          echo "model=$model" >> "$GITHUB_OUTPUT"
+          echo "effort=$effort" >> "$GITHUB_OUTPUT"
+          # An eyes reaction is the cheap acknowledgement that the button press registered.
+          gh api -X POST "repos/${{ github.repository }}/issues/comments/${{ github.event.comment.id }}/reactions" -f content=eyes || true
+
+  review:
+    name: Review this PR
+    needs: route
+    if: needs.route.outputs.cmd == 'review' && github.event.issue.pull_request
+    uses: ./.github/workflows/factory-review.yml
+    secrets: inherit
+    with:
+      pr: ${{ github.event.issue.number }}
+
+  implement:
+    name: "Implement issue #${{ github.event.issue.number }}"
+    needs: route
+    if: needs.route.outputs.cmd == 'implement' && !github.event.issue.pull_request
+    runs-on: macos-latest # matches ci.yml, so the skill's verify step can run the real suite
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.FACTORY_PAT || github.token }}
+
+      - name: Set origin/HEAD for the push guard
+        run: git remote set-head origin --auto
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install Claude Code
+        run: npm install -g @anthropic-ai/claude-code
+
+      - name: Implement the issue
+        env:
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          GH_TOKEN: ${{ secrets.FACTORY_PAT || secrets.GITHUB_TOKEN }}
+          ISSUE: ${{ github.event.issue.number }}
+          TITLE: ${{ github.event.issue.title }}
+          PROMPT: |
+            You are a headless dispatched run: nobody is watching and nothing
+            can answer a question, so never ask one. Read skills/pr/SKILL.md
+            and follow it exactly, in worktree mode from the default branch's
+            tip. Your unit of work is GitHub issue #${{ github.event.issue.number }} —
+            read it with: gh issue view ${{ github.event.issue.number }}.
+            First act, in the worktree: write the issue into a plan file
+            plans/issue-${{ github.event.issue.number }}.md (status: busy, a
+            link to the issue, the issue's intent in its own words) so the
+            board records this work like any other — the plan file travels
+            in your branch, and its done flip does too; push no claim to the
+            default branch, the dispatch is the claim. Branch
+            impl/issue-${{ github.event.issue.number }}. The PR body must
+            include "Closes #${{ github.event.issue.number }}". The ONLY way
+            you may push is: scripts/git-push.sh origin <branch> — plain git
+            push will be denied.
+        run: |
+          git config user.name "factory"
+          git config user.email "factory@users.noreply.github.com"
+          claude -p "$PROMPT" \
+            --model "${{ needs.route.outputs.model || 'opus' }}" \
+            --effort "${{ needs.route.outputs.effort || 'medium' }}" \
+            --output-format stream-json --verbose \
+            --max-turns 250 \
+            --permission-mode acceptEdits \
+            --allowedTools "Glob,Grep,LS,Read,Bash(git status:*),Bash(git diff:*),Bash(git log:*),Bash(git show:*),Bash(git branch:*),Bash(git add:*),Bash(git commit:*),Bash(git rm:*),Bash(git worktree:*),Bash(git fetch:*),Bash(git checkout:*),Bash(scripts/git-push.sh:*),Bash(gh pr create:*),Bash(gh pr list:*),Bash(gh issue view:*),Bash(pnpm install:*),Bash(pnpm test:*),Bash(pnpm run:*),Bash(pnpm exec tsc:*),Bash(pnpm exec playwright:*)" \
+            --disallowedTools "WebSearch,WebFetch" \
+            | tee "$RUNNER_TEMP/transcript.jsonl"
+
+      - name: Keep the transcript
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: transcript-issue-${{ github.event.issue.number }}
+          path: ${{ runner.temp }}/transcript.jsonl
+          retention-days: 14

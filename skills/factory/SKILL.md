@@ -76,6 +76,18 @@ allowing Actions to create and approve pull requests. Installing it changes
 the oversight contract from "a human clicks merge" to "a human reads what
 merged" — say so to the owner rather than letting the default decide.
 
+## Comment commands (optional fifth artifact)
+
+`.github/workflows/factory-commands.yml` adds dispatch from conversations:
+`/factory review` on any pull request runs the Codex review on demand
+(verdict posts to the PR; on-demand reviews never auto-merge), and
+`/factory implement [model] [effort]` on an issue treats the issue as the
+work order — the run writes it into a plan file in its branch, implements
+it, and opens a PR that closes the issue. Commands only count from users
+with write access: a comment is the spend button, and it must not be
+pressable by drive-by accounts. It calls the review workflow via
+`workflow_call`, so install the review workflow with it.
+
 ## Auth
 
 The action bills the Claude subscription, not an API key: the owner runs
