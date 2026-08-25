@@ -42,6 +42,70 @@ export const IMPLEMENT_PROMPT =
   "short account of what landed and where. Do not commit.";
 
 /**
+ * What the agent is told when a passage is handed to it to be rewritten.
+ *
+ * The quote is the address. A line number is a claim about a file that moves
+ * the moment the agent edits above it; text the agent can find with its own
+ * eyes does not rot. `{lines}` rides along only when the quote occurs exactly
+ * once in the file, and is empty otherwise — a hint that might be wrong is
+ * worse than no hint.
+ *
+ * The "nothing outside" clause is the seatbelt: handing a whole file to an
+ * agent with a local instruction invites a helpful global rewrite.
+ */
+export const REWRITE_PROMPT =
+  "In {file}, rewrite only the passage quoted below{lines}. {ask}\n" +
+  "Keep the surrounding voice and formatting, change nothing outside the " +
+  "quoted text, and do not touch any other file.\n\n" +
+  "> {quote}";
+
+/** Past this many lines, a selection is quoted by its ends rather than whole. */
+export const QUOTE_MAX_LINES = 50;
+/** How many lines of each end survive the elision. */
+const QUOTE_EDGE_LINES = 3;
+
+/**
+ * The selection, as the body of a markdown blockquote.
+ *
+ * A long selection truncates rather than switching to some other way of
+ * pointing: the two ends still pin the region uniquely, and the marker between
+ * them says out loud that the passage runs from the first quoted line to the
+ * last. Three pages of quote in a prompt buy nothing.
+ */
+export function quoteBlock(text: string): string {
+  const lines = text.split("\n");
+  const kept =
+    lines.length <= QUOTE_MAX_LINES
+      ? lines
+      : [
+          ...lines.slice(0, QUOTE_EDGE_LINES),
+          "",
+          "… the selection continues; it runs from the first quoted line to the last …",
+          "",
+          ...lines.slice(-QUOTE_EDGE_LINES),
+        ];
+  // Every line of a blockquote carries the marker; the template writes the first.
+  return kept.join("\n> ");
+}
+
+/**
+ * "around lines N–M", when that is a thing we actually know.
+ *
+ * Only for a quote that occurs exactly once in the file as it stands. Twice
+ * and the number is a guess; not at all — the write surface's serialisation
+ * differs from the markdown often enough — and it is a fiction. Either way the
+ * answer is silence, because the quote locates itself and a hint that might be
+ * wrong is worse than no hint.
+ */
+export function lineHint(source: string, text: string): string {
+  const at = source.indexOf(text);
+  if (at < 0 || source.indexOf(text, at + 1) !== -1) return "";
+  const start = source.slice(0, at).split("\n").length;
+  const end = start + text.split("\n").length - 1;
+  return start === end ? `, around line ${start}` : `, around lines ${start}–${end}`;
+}
+
+/**
  * Split a command line into an argv, honouring quotes.
  *
  * The template is a string because that is what people type, but tmux is given

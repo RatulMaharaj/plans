@@ -25,7 +25,15 @@ import {
   without as chatWithout,
   type Index as ChatIndex,
 } from "./chats";
-import { agentCommandLine, HANDOFF_PROMPT, IMPLEMENT_PROMPT, type HandoffKind } from "./agent";
+import {
+  agentCommandLine,
+  HANDOFF_PROMPT,
+  IMPLEMENT_PROMPT,
+  lineHint,
+  quoteBlock,
+  REWRITE_PROMPT,
+  type HandoffKind,
+} from "./agent";
 import { DiffView, prefetchHead } from "./DiffView";
 import { SettingsPage } from "./SettingsPage";
 import {
@@ -387,8 +395,16 @@ export default function App() {
 
   /** A fragment of HTML open for editing, or null. */
   const [htmlEdit, setHtmlEdit] = useState<HtmlEdit | null>(null);
-  /** Right-click on the page: one item, patterned on the tree's menu. */
-  const [pageMenu, setPageMenu] = useState<null | { x: number; y: number }>(null);
+  /**
+   * Right-click on the page, patterned on the tree's menu.
+   *
+   * The selection is read when the menu opens and kept here, so the menu
+   * offers what was true at the moment of the click rather than at the moment
+   * of the press — clicking an item moves focus, and the selection with it.
+   */
+  const [pageMenu, setPageMenu] = useState<null | { x: number; y: number; selection: string }>(
+    null,
+  );
   useEffect(() => {
     if (!pageMenu) return;
     const close = () => setPageMenu(null);
@@ -1762,6 +1778,53 @@ export default function App() {
   );
 
   const source = useMemo(() => assemble(matter, content), [assemble, matter, content]);
+
+  /**
+   * Rewrite the selected passage, by asking the agent to.
+   *
+   * A third seed on the path handoff already walks: the turn names the file,
+   * quotes the passage and carries the instruction, and the agent edits the
+   * file the way every other handoff does — the stamp poll notices the write
+   * and reloads a clean buffer. Nothing splices text into the document behind
+   * the save-and-watch machinery's back.
+   *
+   * The buffer is flushed first. `handOff` gets away without it because it
+   * points at the whole file; this points *into* one, and a quote from a file
+   * the agent cannot see is a quote it cannot find.
+   */
+  const rewriteSelection = useCallback(
+    (selection: string) => {
+      const text = selection.replace(/\s+$/, "");
+      const f = activePath;
+      if (!text || !f) return;
+      setAsking({
+        title: "Rewrite",
+        placeholder: "What should change about it?",
+        note: "Sent to the agent, which edits the file — the page reloads when it lands.",
+        confirm: "Rewrite",
+        multiline: true,
+        run: (value) => {
+          const ask = value.trim();
+          if (!ask) return;
+          void (async () => {
+            await flush();
+            const fields: Record<string, string> = {
+              file: f,
+              lines: lineHint(source, text),
+              ask,
+              quote: quoteBlock(text),
+            };
+            const template = settings.rewritePrompt || REWRITE_PROMPT;
+            // One pass, and through a function: the quote is someone's prose,
+            // and `$&` in it must not turn into a substitution of its own.
+            setChatSeed(template.replace(/\{(file|lines|ask|quote)\}/g, (m, k) => fields[k] ?? m));
+            set({ showMux: true });
+          })();
+        },
+      });
+    },
+    [activePath, flush, set, settings.rewritePrompt, source],
+  );
 
   const onSourceChange = useCallback(
     (text: string) => {
@@ -3460,6 +3523,8 @@ export default function App() {
   const findReturn = useRef<HTMLElement | null>(null);
   /** The engines: each surface registers one while mounted. */
   const mainWriteFind = useRef<FindHandle | null>(null);
+  /** The main write surface's selection, registered the same way. */
+  const mainWriteSelection = useRef<(() => string) | null>(null);
   const mainSourceFind = useRef<FindHandle | null>(null);
   const splitFind = useRef<FindHandle | null>(null);
   /** The engine last driven, so switching surfaces clears the old paint. */
@@ -4411,7 +4476,11 @@ export default function App() {
                     onContextMenu={(e) => {
                       if (view !== "write") return;
                       e.preventDefault();
-                      setPageMenu({ x: e.clientX, y: e.clientY });
+                      setPageMenu({
+                        x: e.clientX,
+                        y: e.clientY,
+                        selection: mainWriteSelection.current?.() ?? "",
+                      });
                     }}
                   >
                     <Editor
@@ -4429,6 +4498,7 @@ export default function App() {
                         followLink(activeRepoPath, activePath, href)
                       }
                       findRef={mainWriteFind}
+                      selectionRef={mainWriteSelection}
                       onFindCount={reportFind}
                     />
                   </div>
@@ -4645,7 +4715,6 @@ export default function App() {
           style={{ left: pageMenu.x, top: pageMenu.y }}
           onMouseDown={(e) => e.stopPropagation()}
         >
-          {/* One item, until something else earns a place on it. */}
           <button
             className="ctx-item"
             onClick={() => {
@@ -4655,6 +4724,21 @@ export default function App() {
           >
             New comment…
           </button>
+          {/* Only with something selected, and only where there is an agent
+              to send it to: a menu item that scolds you for not selecting
+              first is worse than one that is absent. */}
+          {pageMenu.selection.trim() !== "" && chat !== false && (
+            <button
+              className="ctx-item"
+              onClick={() => {
+                const selection = pageMenu.selection;
+                setPageMenu(null);
+                rewriteSelection(selection);
+              }}
+            >
+              Rewrite…
+            </button>
+          )}
         </div>
       )}
 

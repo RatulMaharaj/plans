@@ -1,5 +1,5 @@
 ---
-status: ready
+status: done
 ---
 # Selected text rewrite prompt
 
@@ -131,17 +131,55 @@ mode is where prose gets reworked; start there.
 
 ## Next
 
-- [ ] `htmlBridge.selection` registered in Editor, returning
+- [x] The selection registered in Editor, returning
       `textBetween(from, to, "\n")`; cleared on unmount like its neighbours
-- [ ] Page menu state grows `selection: string`; "Rewrite…" item shown when
-      non-empty (src/App.tsx:4611–4628)
-- [ ] `REWRITE_PROMPT` in src/agent.ts; `rewritePrompt` in settings defaults;
+- [x] Page menu state grows `selection: string`; "Rewrite…" item shown when
+      non-empty (src/App.tsx:4715–4740)
+- [x] `REWRITE_PROMPT` in src/agent.ts; `rewritePrompt` in settings defaults;
       Settings → Agents textarea beside the other two prompts
-- [ ] `rewriteSelection` in App: flush → compute quote (truncate past ~50
+- [x] `rewriteSelection` in App: flush → compute quote (truncate past ~50
       lines) → line-range hint only on a unique match in `source` → `asking`
       prompt → `setChatSeed` + `set({ showMux: true })`
-- [ ] e2e: select in write mode, right-click, rewrite, assert the
+- [x] e2e: select in write mode, right-click, rewrite, assert the
       `agent_prompt` call contains the quote and the typed ask (pattern:
       e2e/chat.spec.ts's handoff tests)
-- [ ] e2e: no selection → no Rewrite item; dirty buffer → flushed before the
+- [x] e2e: no selection → no Rewrite item; dirty buffer → flushed before the
       seed is sent
+
+## What landed
+
+The feature is the frontend prompt assembly the plan argued for, and nothing
+else: no API call, no splice into the document, no accept/reject overlay.
+
+- **The selection is a per-surface capability, not a bridge entry.** The plan
+  asked for `htmlBridge.selection`; the split-pane open question then asked who
+  owns a module-level singleton when two editors are mounted. Rather than ship
+  the hazard and note it, Editor takes a `selectionRef` prop and registers a
+  reader into it — exactly the shape `findRef` already has for ⌘F, and for the
+  same reason (src/Editor.tsx:40–48, 195–225). App holds `mainWriteSelection`
+  beside `mainWriteFind`; the split pane passes nothing, so the page menu can
+  only ever quote the document that was right-clicked. The open question is
+  answered rather than inherited.
+- **The elision marker lives inside the quote**, not in the prompt's prose:
+  past 50 lines the blockquote keeps three lines of each end with
+  "… the selection continues; it runs from the first quoted line to the last …"
+  between them (`quoteBlock`, src/agent.ts). `{lines}` stays purely the
+  line-range hint, and stays empty unless `source.indexOf` finds the quote
+  exactly once (`lineHint`).
+- **The menu item is also gated on there being an agent** (`chat !== false`),
+  the same rule the tree's handoff items follow — an item that cannot work is
+  worse than one that is absent.
+- Placeholders are filled in one pass through a replacer function: someone's
+  prose containing `$&` must not become a substitution of its own.
+
+Settled from the open questions: the seed lands in the file's current chat, as
+handoff's does; scroll restoration is left to the existing by-position reload;
+`{lines}` earns its keep because it is one `indexOf` and it stays silent when
+it cannot be sure.
+
+Not verified here: this run had no package manager available, so `tsc`, the
+settings-schema generator and Playwright could not be run — the two
+`settings.schema.json` copies were updated by hand to match what the generator
+emits for a new prompt field (a `string` with the doc comment flattened into
+`description`, and no `default`, exactly as the other two prompts have it). CI
+runs `schema:check` and the e2e suite over this branch.

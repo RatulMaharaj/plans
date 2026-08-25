@@ -29,6 +29,8 @@ type Boot = {
   repos?: FakeRepo[];
   /** A second agent this machine has, for the switching tests. */
   codex?: boolean;
+  /** Settings the test needs decided before the app boots — autosave, say. */
+  settings?: Record<string, unknown>;
 };
 
 async function open(page: Page, boot: Boot = {}) {
@@ -46,7 +48,13 @@ async function open(page: Page, boot: Boot = {}) {
       s.chat = (b as Boot).chat ?? true;
       if ((b as Boot).codex) s.codex = "codex 1.0";
       const place = (b as Boot).place;
-      if (place) localStorage.setItem("plans.settings.v1", JSON.stringify({ chatPlace: place }));
+      const extra = (b as Boot).settings;
+      if (place || extra) {
+        localStorage.setItem(
+          "plans.settings.v1",
+          JSON.stringify({ ...(place ? { chatPlace: place } : {}), ...(extra ?? {}) }),
+        );
+      }
       localStorage.setItem(
         "plans.repos.v1",
         JSON.stringify((list as FakeRepo[]).map((r) => r.path)),
@@ -831,6 +839,103 @@ test("the implement prompt is editable, and is what gets sent", async ({ page })
   const [sent] = await argsOf(page, "agent_prompt");
   expect(sent.text).toContain("Build plans/first.md, quietly.");
   expect(sent.text).not.toContain("Implement the plan at");
+});
+
+/** Select a paragraph of the write surface the way a reader would. */
+async function selectParagraph(page: Page, text: string) {
+  const para = page.locator(".milkdown .ProseMirror p", { hasText: text });
+  await para.click({ clickCount: 3 });
+  return para;
+}
+
+test("a selected passage reaches the agent as a quote, with the ask", async ({ page }) => {
+  await open(page);
+  await openPlan(page);
+  await expect(page.locator(".milkdown .ProseMirror")).toBeVisible();
+
+  const para = await selectParagraph(page, "A plan");
+  await para.click({ button: "right" });
+  await page.locator(".ctx-item", { hasText: "Rewrite" }).click();
+
+  await expect(page.locator(".matter-sheet")).toBeVisible();
+  await page.locator(".matter-sheet textarea").fill("say it in fewer words");
+  await page.locator(".matter-sheet .act", { hasText: "Rewrite" }).click();
+
+  await expect(page.locator(".chat")).toBeVisible();
+  await expect.poll(() => calls(page, "agent_prompt")).toBe(1);
+  const [sent] = await argsOf(page, "agent_prompt");
+  // The file, the instruction, and the passage itself — quoted, so the agent
+  // can find it with its own eyes rather than trusting a line number.
+  expect(sent.text).toContain("In plans/first.md, rewrite only the passage quoted below");
+  expect(sent.text).toContain("say it in fewer words");
+  expect(sent.text).toContain("> A plan.");
+  expect(sent.text).toContain("change nothing outside the quoted text");
+});
+
+test("with nothing selected there is no Rewrite to click", async ({ page }) => {
+  await open(page);
+  await openPlan(page);
+  await expect(page.locator(".milkdown .ProseMirror")).toBeVisible();
+
+  // A caret, not a selection.
+  const para = page.locator(".milkdown .ProseMirror p", { hasText: "A plan" });
+  await para.click();
+  await para.click({ button: "right" });
+
+  await expect(page.locator(".ctx")).toBeVisible();
+  await expect(page.locator(".ctx-item", { hasText: "New comment" })).toBeVisible();
+  await expect(page.locator(".ctx-item", { hasText: "Rewrite" })).toHaveCount(0);
+});
+
+test("the buffer is on disk before the quote is sent", async ({ page }) => {
+  // Manual autosave, so nothing but the rewrite itself can have written the
+  // file — otherwise the test proves the timer rather than the flush.
+  await open(page, { settings: { autosave: "manual" } });
+  await openPlan(page);
+  const editor = page.locator(".milkdown .ProseMirror");
+  await editor.click();
+
+  await page.locator(".milkdown .ProseMirror p", { hasText: "A plan" }).click();
+  await page.keyboard.press("End");
+  await page.keyboard.type(" Edited here.");
+  await expect(editor).toContainText("Edited here.");
+
+  const para = await selectParagraph(page, "Edited here.");
+  await para.click({ button: "right" });
+  await page.locator(".ctx-item", { hasText: "Rewrite" }).click();
+  await page.locator(".matter-sheet textarea").fill("tighten it");
+  await page.locator(".matter-sheet .act", { hasText: "Rewrite" }).click();
+
+  await expect.poll(() => calls(page, "agent_prompt")).toBe(1);
+  // The agent is about to read the file. What was quoted is in it.
+  const onDisk = await page.evaluate(
+    () => (window as any).__fake.repos[0].files["plans/first.md"] as string,
+  );
+  expect(onDisk).toContain("Edited here.");
+  const [sent] = await argsOf(page, "agent_prompt");
+  expect(sent.text).toContain("Edited here.");
+});
+
+test("the rewrite prompt is editable, and is what gets sent", async ({ page }) => {
+  await open(page);
+  await openPlan(page);
+  await page.keyboard.press("Meta+,");
+  await page.locator(".settings-filter").fill("rewrite");
+  const area = page.locator('textarea[aria-label="Rewrite prompt"]');
+  await area.fill("In {file}: {ask}\n> {quote}");
+  await page.keyboard.press("Escape");
+
+  const para = await selectParagraph(page, "A plan");
+  await para.click({ button: "right" });
+  await page.locator(".ctx-item", { hasText: "Rewrite" }).click();
+  await page.locator(".matter-sheet textarea").fill("shorter");
+  await page.locator(".matter-sheet .act", { hasText: "Rewrite" }).click();
+
+  await expect.poll(() => calls(page, "agent_prompt")).toBe(1);
+  const [sent] = await argsOf(page, "agent_prompt");
+  expect(sent.text).toContain("In plans/first.md: shorter");
+  expect(sent.text).toContain("> A plan.");
+  expect(sent.text).not.toContain("change nothing outside");
 });
 
 test("no agent means no handoff in the menu, rather than one that fails", async ({ page }) => {
