@@ -1,6 +1,39 @@
 ---
 status: busy
 ---
+> **Implemented, but the PR could not be opened — a human has to press the
+> button.** The work is finished and pushed as `impl/settings-json` (commit
+> `f307ad4`, branched from this branch's tip). `gh pr create` fails with
+> *"GitHub Actions is not permitted to create or approve pull requests"*, which
+> is a repository setting, not anything about this plan: **Settings → Actions →
+> General → Workflow permissions → "Allow GitHub Actions to create and approve
+> pull requests"**. Until then, open it by hand:
+>
+> ```
+> gh pr create --base plans/settings-json --head impl/settings-json \
+>   --title "Settings as a file"
+> ```
+>
+> Two other things that need a hand, both for the same reason — the run's token
+> may not push `.github/workflows/`:
+>
+> - The CI step that runs `pnpm run schema:check` had to be dropped from the
+>   commit. It belongs immediately before the "Types" step in `ci.yml`:
+>
+>   ```yaml
+>         # The settings schema is generated from the Settings type. A copy that
+>         # drifts is a schema that lies, which is worse than no schema at all.
+>         - name: Settings schema is current
+>           run: pnpm run schema:check
+>   ```
+>
+> - `cargo fmt` / `clippy` / `test` were not runnable in the run's environment;
+>   CI covers them once the PR exists.
+>
+> Left at `busy` rather than returned to `ready` on purpose: the implementation
+> exists, so a second worker picking this up would duplicate it. Flip it to
+> `ready` only if the branch is abandoned.
+
 # Settings As a File
 
 We currently save our settings to localStorage. Instead we should save them to
