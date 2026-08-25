@@ -152,8 +152,9 @@ export type Settings = {
 
   /**
    * Rebound shortcuts, by command id, merged over the registry's defaults the
-   * way this whole blob merges over `DEFAULTS`. "" means unbound. Edited from
-   * the shortcut sheet (⌘/), not by hand.
+   * way this whole blob merges over `DEFAULTS`. "" means unbound. The shortcut
+   * sheet (⌘/) is the easy way in; the settings file is the other, and with a
+   * schema completing command ids it is a respectable one.
    */
   keyOverrides: Record<string, string>;
   /**
@@ -247,25 +248,46 @@ export const RANGES = {
 
 const KEY = "plans.settings.v1";
 
+/**
+ * A blob of anything into the settings this build understands.
+ *
+ * Shared by both readers — the localStorage warm start and the file on disk —
+ * because the two carry the same shape and want the same forgiveness. In
+ * particular the statuses fix-up below outlived the move to a file: a blob
+ * from an older build can arrive through either door, and now also from
+ * another machine, so the day the file landed was not the day it could retire.
+ */
+export function mergeSettings(raw: Partial<Settings> | null | undefined): Settings {
+  // Merge over defaults so a settings file from an older build still opens.
+  const s = raw ? { ...DEFAULTS, ...raw } : { ...DEFAULTS };
+  // A saved list that still matches an earlier default hasn't been
+  // customised; move it to the current default. Edited lists are untouched.
+  const normalized = String(s.statuses ?? "")
+    .split(",")
+    .map((t) => t.trim().toLowerCase())
+    .filter(Boolean)
+    .join(",");
+  if (
+    normalized === "draft,active,done,blocked" ||
+    normalized === "draft,triage,active,done,blocked" ||
+    normalized === "draft,triage,active,busy,done,blocked"
+  )
+    s.statuses = DEFAULTS.statuses;
+  return s;
+}
+
+/**
+ * The warm start.
+ *
+ * The file is canonical, but a Tauri command is async and the theme is wanted
+ * before the first paint — so launch reads this synchronously, exactly as it
+ * always did, and the file reconciles a moment later. Nothing but the app ever
+ * writes it, so the reconciliation has no third author to fear.
+ */
 export function loadSettings(): Settings {
   try {
     const raw = localStorage.getItem(KEY);
-    // Merge over defaults so a settings file from an older build still opens.
-    const s = raw ? { ...DEFAULTS, ...(JSON.parse(raw) as Partial<Settings>) } : DEFAULTS;
-    // A saved list that still matches an earlier default hasn't been
-    // customised; move it to the current default. Edited lists are untouched.
-    const normalized = s.statuses
-      .split(",")
-      .map((t) => t.trim().toLowerCase())
-      .filter(Boolean)
-      .join(",");
-    if (
-      normalized === "draft,active,done,blocked" ||
-      normalized === "draft,triage,active,done,blocked" ||
-      normalized === "draft,triage,active,busy,done,blocked"
-    )
-      s.statuses = DEFAULTS.statuses;
-    return s;
+    return mergeSettings(raw ? (JSON.parse(raw) as Partial<Settings>) : null);
   } catch {
     return DEFAULTS;
   }
@@ -273,6 +295,61 @@ export function loadSettings(): Settings {
 
 export function saveSettings(s: Settings) {
   localStorage.setItem(KEY, JSON.stringify(s));
+}
+
+/* --- the file ------------------------------------------------------------ */
+
+/**
+ * Keys in the file that this build has no `Settings` field for.
+ *
+ * Kept rather than dropped, and written back on every save. VS Code does the
+ * same, and the reason is the same: a file edited by a newer build, or by a
+ * hand that got ahead of the release, should survive being opened by this one.
+ * The cost is that a save writes the parsed file rather than the app's own
+ * object — which is this type, threaded through `parseSettingsFile` and
+ * `serializeSettings`.
+ */
+export type Extras = Record<string, unknown>;
+
+/** The schema written beside the file, so completion works offline. */
+export const SCHEMA_REF = "./settings.schema.json";
+
+const KNOWN = new Set<string>(Object.keys(DEFAULTS));
+
+/**
+ * Read the file. Throws on anything that is not a JSON object — the caller
+ * keeps the last good settings and says so, because "you have a typo" is
+ * recoverable and "your settings reset" is rage.
+ *
+ * Plain JSON, not JSONC: a lenient parser and a comment-preserving writer are
+ * real machinery, and the schema's hover-help carries the prose that comments
+ * would have. If annotating the file turns out to matter, it is its own plan.
+ */
+export function parseSettingsFile(text: string): { settings: Settings; extras: Extras } {
+  const parsed: unknown = JSON.parse(text);
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error("settings.json is not a JSON object");
+  }
+  const known: Partial<Settings> = {};
+  const extras: Extras = {};
+  for (const [k, v] of Object.entries(parsed as Record<string, unknown>)) {
+    // `$schema` is the app's to write, not a setting and not an extra.
+    if (k === "$schema") continue;
+    if (KNOWN.has(k)) (known as Record<string, unknown>)[k] = v;
+    else extras[k] = v;
+  }
+  return { settings: mergeSettings(known), extras };
+}
+
+/**
+ * The file as this app writes it: the schema reference first, then the settings
+ * in the order the type declares them, then anything it did not recognise.
+ */
+export function serializeSettings(s: Settings, extras: Extras = {}): string {
+  const out: Record<string, unknown> = { $schema: SCHEMA_REF };
+  for (const k of Object.keys(DEFAULTS)) out[k] = (s as Record<string, unknown>)[k];
+  for (const [k, v] of Object.entries(extras)) if (!(k in out)) out[k] = v;
+  return `${JSON.stringify(out, null, 2)}\n`;
 }
 
 export function applySettings(s: Settings) {

@@ -1,5 +1,5 @@
 ---
-status: busy
+status: done
 ---
 > **Implemented, but the PR could not be opened — a human has to press the
 > button.** The work is finished and pushed as `impl/settings-json` (commit
@@ -148,37 +148,38 @@ the shortcut sheet (⌘/), not by hand" (`settings.ts:156`). A schema-completed
 JSON file makes by-hand editing respectable — the comment, and the stance,
 should soften to match.
 
-## Open questions
+## Open questions, answered
 
-- Does the statuses-list normalisation hack (`settings.ts:257-267`, rewriting
-  three historical defaults) survive the move, or is migration day the day it
-  finally retires?
-- Should an outside edit count in telemetry as `setting_changed`
-  (`App.tsx:182` fires only from the UI's setter)? Probably yes for honesty
-  about which settings matter, but the diff-the-blob machinery it needs may
-  not be worth it.
-- The config-dir path differs per platform. Do we show it in the settings page
-  footer so "where is my file" has an answer without a doc?
-- Frontmatter says the app reads conventions rather than owning a vocabulary —
-  same question here: do we tolerate unknown keys in the file (a forward-compat
-  merge already ignores them, `settings.ts:254`) and keep them on rewrite, or
-  drop them? VS Code keeps them; keeping them means the app must write back
-  the parsed file, not its own `Settings` object.
-- JSONC? VS Code's settings allow comments. Ours would need a lenient parser
-  and a comment-preserving writer, which is real cost — but a settings file
-  you cannot annotate is a little less yours.
+- **The statuses normalisation hack survives.** It is not localStorage's
+  quirk, it is a blob's: one can arrive from an older build through the cache,
+  through the file, or now from another machine entirely. It moved into
+  `mergeSettings`, which is the one door both readers come through.
+- **An outside edit does count as `setting_changed`.** The "diff the blob"
+  machinery turned out to be a shallow compare over `Object.keys(DEFAULTS)` in
+  the watcher — ten lines, not a project — and a knob turned in a text editor
+  is a knob turned.
+- **The path is shown**, in a "Settings file" group on the settings page, beside
+  the button that opens it. The config directory differs per platform, so
+  "where is my file" gets an answer without a document.
+- **Unknown keys are kept**, VS Code's way. They are parsed aside as `Extras`
+  and written back on every save, so a file edited by a newer build survives
+  being opened by an older one. The cost named here was real and paid: a save
+  writes the parsed file's keys plus the app's, not the `Settings` object alone.
+- **No JSONC.** A lenient parser plus a comment-preserving writer is real
+  machinery, and the schema's hover-help carries the prose comments would have.
+  If annotating the file turns out to matter, it is its own plan.
 
 ## Next
 
-- [ ] Rust: `settings_read` / `settings_write` against `app_config_dir`, plus
+- [x] Rust: `settings_read` / `settings_write` against `app_config_dir`, plus
       the file's mtime for the watcher
-- [ ] Boot: cache-then-file reconciliation; file canonical, localStorage warm
+- [x] Boot: cache-then-file reconciliation; file canonical, localStorage warm
       start; first-run migration from the existing blob
-- [ ] Save path: the one effect at `App.tsx:544` writes both destinations
-- [ ] Watch: settings file joins the `watchSeconds` poll; last-good-plus-toast
+- [x] Save path: the one effect at `App.tsx:544` writes both destinations
+- [x] Watch: settings file joins the `watchSeconds` poll; last-good-plus-toast
       on a parse error, never a silent reset
-- [ ] Schema generation from the `Settings` type at build, `RANGES` folded in;
+- [x] Schema generation from the `Settings` type at build, `RANGES` folded in;
       written beside the file, `$schema` wired, published on the site
-- [ ] "Open settings file" palette command and settings-page button, opening
+- [x] "Open settings file" palette command and settings-page button, opening
       in the system editor
-- [ ] Decide the unknown-keys and JSONC questions before writing the writer
+- [x] Decide the unknown-keys and JSONC questions before writing the writer

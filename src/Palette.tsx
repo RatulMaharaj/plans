@@ -50,6 +50,8 @@ type Props = {
   onNewPlan: () => void;
   onSave: () => void;
   onView: (v: "write" | "source" | "diff" | "settings") => void;
+  /** Hand settings.json to the system's JSON editor. */
+  onOpenSettingsFile: () => void;
   zen: boolean;
   onZen: () => void;
   onReload: () => void;
@@ -465,6 +467,14 @@ function buildCommands(p: Props): Command[] {
     group: "Go",
     label: "Settings",
     run: () => p.onView("settings"),
+  });
+  add({
+    id: "settings.file",
+    group: "Go",
+    label: "Open settings file (JSON)",
+    hint: "In your JSON editor",
+    terms: "settings json file config preferences edit by hand schema",
+    run: p.onOpenSettingsFile,
   });
   add({ id: "repo.add", group: "Repositories", label: "Add a repository…", run: p.onAddRepo });
   for (const r of p.repos) {

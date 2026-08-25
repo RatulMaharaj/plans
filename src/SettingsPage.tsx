@@ -30,6 +30,10 @@ type Props = {
   onReleaseNotes: () => void;
   /** Open the Keyboard page, which lives beside this one. */
   onKeyboard: () => void;
+  /** Where settings.json is on this machine — empty until it has been read. */
+  settingsFilePath: string;
+  /** Hand settings.json to whatever edits JSON here. */
+  onOpenSettingsFile: () => void;
 };
 
 /**
@@ -66,6 +70,8 @@ export function SettingsPage({
   onCheckUpdates,
   onReleaseNotes,
   onKeyboard,
+  settingsFilePath,
+  onOpenSettingsFile,
 }: Props) {
   const [q, setQ] = useState("");
 
@@ -653,6 +659,26 @@ export function SettingsPage({
                 {cli ? "Update" : "Install"}
               </button>
             )}
+          </div>
+        </Group>
+
+        {/* ---- the file ------------------------------------------------- */}
+        <Group
+          name="Settings file"
+          hint="Everything on this page is one JSON file, with a schema beside it — so an editor completes the keys and explains them, and the agent in the chat can change your settings by editing a file. Saves outside the app are picked up on the same interval as everything else read from disk."
+        >
+          <div className="setting-row static">
+            <span className="setting-label">
+              settings.json
+              {/* The config directory differs per platform, so "where is my
+                  file" gets an answer here rather than in a document. */}
+              <span className="setting-hint">
+                {settingsFilePath || "Reading…"}
+              </span>
+            </span>
+            <button className="act" onClick={onOpenSettingsFile}>
+              Open settings file (JSON)
+            </button>
           </div>
         </Group>
 
