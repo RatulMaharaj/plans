@@ -24,6 +24,10 @@ export type FakeRepo = {
   conflicted?: string[];
   /** An unfinished "merge" or "rebase", as git_status reports one. */
   operation?: string;
+  /** Local heads, when a test cares about the shape of the branch list. */
+  branches?: string[];
+  /** `origin/name` branches with no local counterpart. */
+  remotes?: string[];
   /** The committed version of a path, for `git_head_text`. Falls back to the
    *  working copy, which reads as "no changes" in the diff. */
   heads?: Record<string, string>;
@@ -309,8 +313,20 @@ export function installFakeBackend(repos: FakeRepo[], update?: FakeUpdate) {
     },
     git_branches: ({ repo: p }) => ({
       current: repo(p)?.branch ?? "main",
-      branches: [repo(p)?.branch ?? "main", "other"],
+      branches: repo(p)?.branches ?? [repo(p)?.branch ?? "main", "other"],
+      remotes: repo(p)?.remotes ?? [],
     }),
+    git_checkout: ({ repo: p, branch }) => {
+      const r = repo(p);
+      // A remote name arrives as `origin/thing`; what you end up on is the
+      // local branch it tracks, which is what the real command does too.
+      if (r) {
+        r.branch = (r.remotes ?? []).includes(branch)
+          ? branch.split("/").slice(1).join("/")
+          : branch;
+      }
+      return "";
+    },
     read_asset: () => "data:image/png;base64,iVBORw0KGgo=",
 
     // tmux: present, with whatever panes the test asked for. A test that says

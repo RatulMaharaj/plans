@@ -14,6 +14,7 @@ import { DEFAULTS, RANGES, type Settings } from "./settings";
 import type { ChatRef, Index as ChatIndex } from "./chats";
 import { THEMES } from "./theme";
 import { renderKeys, type KeymapEntry } from "./keys";
+import { score } from "./score";
 
 export type Command = {
   id: string;
@@ -150,28 +151,6 @@ type Props = {
 };
 
 const onOff = (b: boolean) => (b ? "on" : "off");
-
-/**
- * Subsequence match, scored so that earlier and tighter runs win. Returns null
- * when the query doesn't appear at all.
- */
-function score(text: string, query: string): number | null {
-  if (!query) return 0;
-  const t = text.toLowerCase();
-  const q = query.toLowerCase();
-  let ti = 0;
-  let total = 0;
-  let streak = 0;
-  for (const ch of q) {
-    const found = t.indexOf(ch, ti);
-    if (found === -1) return null;
-    streak = found === ti ? streak + 1 : 0;
-    total += found === ti ? 3 + streak : -Math.min(found - ti, 12) / 4;
-    ti = found + 1;
-  }
-  // A hit at the very start of the string is worth more than one buried in it.
-  return total + (t.startsWith(q) ? 12 : 0);
-}
 
 function buildCommands(p: Props): Command[] {
   const { settings: s, set } = p;

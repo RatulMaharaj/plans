@@ -347,6 +347,15 @@ export default function App() {
     run: (value: string) => void;
   }>(null);
   const [branches, setBranches] = useState<string[]>([]);
+  /** `origin/name` branches with no local counterpart — set apart in the menu. */
+  const [remoteBranches, setRemoteBranches] = useState<string[]>([]);
+  /**
+   * True while the lazy fetch is out. The menu keeps showing the list it had
+   * and says it is refreshing, rather than an empty box that fills when git
+   * gets around to it — three seconds is a glance's worth of patience and
+   * nothing like a typist's.
+   */
+  const [branchesLoading, setBranchesLoading] = useState(false);
   /**
    * Set the first time the rail's branch picker is opened. The list is slow
    * enough to be worth not fetching for people who never change branch, and
@@ -1155,10 +1164,20 @@ export default function App() {
   useEffect(() => {
     if (!activeRepoPath || (!palette && !settings.showGit && !wantBranches)) return;
     let live = true;
+    setBranchesLoading(true);
     api
       .gitBranches(activeRepoPath)
-      .then((b) => live && setBranches(b.branches))
-      .catch(() => live && setBranches([]));
+      .then((b) => {
+        if (!live) return;
+        setBranches(b.branches);
+        setRemoteBranches(b.remotes ?? []);
+      })
+      .catch(() => {
+        if (!live) return;
+        setBranches([]);
+        setRemoteBranches([]);
+      })
+      .finally(() => live && setBranchesLoading(false));
     return () => {
       live = false;
     };
@@ -3915,7 +3934,7 @@ export default function App() {
               }}
               choices={[
                 ...repos.map((r) => ({ value: r.path, label: r.name, note: r.branch })),
-                { value: "__add", label: "Add a repository…", apart: true },
+                { value: "__add", label: "Add a repository…", apart: true, always: true },
               ]}
             />
             {activeRepo && (
@@ -3925,13 +3944,25 @@ export default function App() {
                 onOpen={() => setWantBranches(true)}
                 value={branch}
                 disabled={!!busy}
+                status={branchesLoading ? "Refreshing…" : undefined}
                 onChange={(b) =>
                   onRun(`Switched to ${b}`, () => api.gitCheckout(activeRepo.path, b))
                 }
-                choices={(branches.length ? branches : [branch]).map((b) => ({
-                  value: b,
-                  label: b,
-                }))}
+                choices={[
+                  ...(branches.length ? branches : [branch]).map((b) => ({
+                    value: b,
+                    label: b,
+                  })),
+                  // On origin and not here yet: picking one is a checkout that
+                  // creates the tracking branch, which is why it can sit in
+                  // the same menu rather than in a second one.
+                  ...remoteBranches.map((b) => ({
+                    value: b,
+                    label: b.split("/").slice(1).join("/"),
+                    note: b.split("/")[0],
+                    apart: true,
+                  })),
+                ]}
               />
             )}
           </>

@@ -38,7 +38,11 @@ export type GitStatus = {
   operation: string | null;
 };
 
-export type BranchList = { current: string; branches: string[] };
+/**
+ * `remotes` are the `origin/name` branches with no local counterpart. Checking
+ * one out creates the tracking branch, so they are offered alongside the rest.
+ */
+export type BranchList = { current: string; branches: string[]; remotes?: string[] };
 
 /** A tmux pane. `id` is tmux's own `%17`, stable for the pane's whole life. */
 export type Pane = {

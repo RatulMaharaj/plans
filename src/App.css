@@ -1316,7 +1316,7 @@ input[type="range"]::-webkit-slider-thumb {
   min-width: 100%;
   max-width: 320px;
   max-height: 240px;
-  overflow: auto;
+  overflow: hidden;
   display: flex;
   flex-direction: column;
   padding: 3px 0;
@@ -1326,6 +1326,32 @@ input[type="range"]::-webkit-slider-thumb {
   box-shadow: var(--shadow);
 }
 .dd-menu.up { top: auto; bottom: calc(100% + 4px); }
+
+/* The choices scroll; the filter above them does not scroll away. */
+.dd-list { display: flex; flex-direction: column; overflow: auto; min-height: 0; }
+
+.dd-filter {
+  margin: 1px 6px 4px;
+  border: 0;
+  border-bottom: 1px solid var(--rule);
+  background: transparent;
+  padding: 3px 2px 5px;
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  color: var(--ink);
+}
+.dd-filter:focus { outline: none; border-bottom-color: var(--rule-strong); }
+.dd-filter::placeholder { color: var(--ink-3); }
+
+.dd-status,
+.dd-empty {
+  padding: 4px 11px 5px 6px;
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  color: var(--ink-3);
+}
 
 .dd-item {
   display: flex;
@@ -1344,6 +1370,8 @@ input[type="range"]::-webkit-slider-thumb {
 }
 .dd-item.on { background: var(--shade); color: var(--ink); }
 .dd-item.apart { border-top: 1px solid var(--rule); margin-top: 3px; padding-top: 8px; }
+/* A run of them is one group under one rule, not a rule apiece. */
+.dd-item.apart + .dd-item.apart { border-top: 0; margin-top: 0; padding-top: 6px; }
 .dd-tick { width: 9px; flex: 0 0 auto; color: var(--ink); text-align: center; }
 .dd-label { flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; }
 .dd-note { flex: 0 0 auto; font-size: 10px; color: var(--ink-3); }
@@ -2524,6 +2552,7 @@ body.resizing.resizing-row, body.resizing.resizing-row .chat-edge { cursor: row-
   overflow: visible;
   width: max-content;
 }
+.agent-option .dd-list { max-height: none; overflow: visible; }
 .agent-option .dd-trigger {
   color: var(--ink-3);
   font-size: 10px;

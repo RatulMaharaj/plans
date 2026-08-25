@@ -131,6 +131,9 @@ pub struct CliStatus {
 pub struct BranchList {
     current: String,
     branches: Vec<String>,
+    /// Branches that exist only on a remote, full `origin/name` form, deduped
+    /// against the local list. Checking one out creates the tracking branch.
+    remotes: Vec<String>,
 }
 
 // ---------------------------------------------------------------------------
@@ -1317,25 +1320,78 @@ fn git_pull(repo: String) -> R<String> {
     })
 }
 
+/// Newest first: the branch you want is overwhelmingly one you — or the
+/// factory — touched this week, and alphabetical order is missed nowhere once
+/// the list is searchable.
+fn branch_lines(repo: &str, extra: &str) -> Vec<String> {
+    let args = [
+        "branch",
+        extra,
+        "--sort=-committerdate",
+        "--format=%(refname:short)",
+    ];
+    git(repo, &args)
+        .unwrap_or_default()
+        .lines()
+        .map(|l| l.trim().to_string())
+        .filter(|l| !l.is_empty())
+        .collect()
+}
+
+/// Whether a ref exists — how a local branch is told from a remote-only one.
+fn has_ref(repo: &str, name: &str) -> bool {
+    git(repo, &["rev-parse", "--verify", "--quiet", name]).is_ok()
+}
+
 #[tauri::command]
 fn git_branches(repo: String) -> R<BranchList> {
-    let raw = git(&repo, &["branch", "--format=%(refname:short)"])?;
     let current = git(&repo, &["rev-parse", "--abbrev-ref", "HEAD"])?
         .trim()
         .to_string();
+    let branches = branch_lines(&repo, "--list");
+    // Half the time the branch being looked for is a colleague's, or the
+    // factory's, and exists only on origin. A search that silently lacks it
+    // reads as "does not exist", which is worse than the scroll was.
+    let remotes = branch_lines(&repo, "--remotes")
+        .into_iter()
+        .filter(|r| {
+            // `origin/HEAD` is a symref, not somewhere to check out.
+            if r.ends_with("/HEAD") {
+                return false;
+            }
+            // A remote whose local branch already exists is that same branch,
+            // and the list should offer it once.
+            match r.split_once('/') {
+                Some((_, short)) => !branches.iter().any(|b| b == short),
+                None => true,
+            }
+        })
+        .collect();
     Ok(BranchList {
         current,
-        branches: raw
-            .lines()
-            .map(|l| l.trim().to_string())
-            .filter(|l| !l.is_empty())
-            .collect(),
+        branches,
+        remotes,
     })
 }
 
 #[tauri::command]
 fn git_checkout(repo: String, branch: String) -> R<String> {
-    git(&repo, &["checkout", &branch])
+    // A local branch is checked out as asked — local names contain slashes too
+    // (`plans/settings-json`), so the name alone cannot say which kind it is.
+    if has_ref(&repo, &format!("refs/heads/{branch}")) {
+        return git(&repo, &["checkout", &branch]);
+    }
+    // Otherwise `origin/thing` means the branch on origin: create the tracking
+    // branch, or switch to the local one that has appeared under that name
+    // since the list was fetched.
+    let remote = has_ref(&repo, &format!("refs/remotes/{branch}"));
+    match branch.split_once('/') {
+        Some((_, short)) if remote && !has_ref(&repo, &format!("refs/heads/{short}")) => {
+            git(&repo, &["checkout", "-b", short, "--track", &branch])
+        }
+        Some((_, short)) if remote => git(&repo, &["checkout", short]),
+        _ => git(&repo, &["checkout", &branch]),
+    }
 }
 
 /// Branch off the current HEAD and switch to it.
