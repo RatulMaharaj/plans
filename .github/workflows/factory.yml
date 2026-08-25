@@ -61,9 +61,19 @@ jobs:
       matrix:
         unit: ${{ fromJSON(needs.gate.outputs.units) }}
     steps:
+      # FACTORY_PAT (optional): a fine-grained PAT, this repo only, Contents
+      # read/write. Its pushes act as the owner, whose ruleset bypass lets
+      # the claim flip reach a protected default branch — the one thing
+      # GITHUB_TOKEN cannot do on a personal repo. Loop safety survives the
+      # substitution because the gate dispatches only on a became-ready
+      # transition: the busy and done flips a PAT push retriggers cost one
+      # gate-only run each, which skips. PR and merge operations stay on
+      # GITHUB_TOKEN. Without the secret, pushes fall back to github.token
+      # and the skill's unclaimed mode covers protected branches.
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          token: ${{ secrets.FACTORY_PAT || github.token }}
 
       # git-push.sh reads origin/HEAD to enforce its default-branch rule; a CI
       # clone doesn't have it set, and silently skipping the guard is not an
