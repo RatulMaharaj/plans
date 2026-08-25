@@ -61,15 +61,17 @@ jobs:
       matrix:
         unit: ${{ fromJSON(needs.gate.outputs.units) }}
     steps:
-      # FACTORY_PAT (optional): a fine-grained PAT, this repo only, Contents
-      # read/write. Its pushes act as the owner, whose ruleset bypass lets
-      # the claim flip reach a protected default branch — the one thing
-      # GITHUB_TOKEN cannot do on a personal repo. Loop safety survives the
-      # substitution because the gate dispatches only on a became-ready
-      # transition: the busy and done flips a PAT push retriggers cost one
-      # gate-only run each, which skips. PR and merge operations stay on
-      # GITHUB_TOKEN. Without the secret, pushes fall back to github.token
-      # and the skill's unclaimed mode covers protected branches.
+      # FACTORY_PAT (optional): a fine-grained PAT for the machine account
+      # (LoopedAgent) — this repo only, Contents + Pull requests read/write,
+      # the account a collaborator with write access. With it, pushes and
+      # PRs act as that account: PRs need no run approval (write access),
+      # commits attribute to the machine, and the reviewing bot is a
+      # different actor from the author, so real review states work. Loop
+      # safety survives the substitution because the gate dispatches only on
+      # a became-ready transition: the busy and done flips a PAT push
+      # retriggers cost one gate-only run each, which skips. Without the
+      # secret, everything falls back to github.token: bot-authored PRs,
+      # one approval click each, comment-style reviews.
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
@@ -99,7 +101,7 @@ jobs:
       - name: Implement the unit
         env:
           CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.FACTORY_PAT || secrets.GITHUB_TOKEN }}
           PROMPT: |
             You are a headless dispatched run: nobody is watching and nothing
             can answer a question, so never ask one. Read skills/pr/SKILL.md

@@ -62,13 +62,29 @@ const asMarkdown = () =>
     ...findings.map((f) => `- \`${f.path}:${f.line ?? "?"}\` — ${f.body}${f.suggestion ? `\n\n  Suggested: \`${f.suggestion.trim()}\`` : ""}`),
   ].join("\n");
 
+const postReview = (payload) =>
+  execFileSync("gh", ["api", `repos/${repo}/pulls/${pr}/reviews`, "--input", "-"], {
+    input: JSON.stringify(payload),
+    stdio: ["pipe", "ignore", "pipe"],
+  });
+
+// Real review states when the PR author is the machine account (a different
+// actor from this posting bot); when the author IS this bot — no PAT
+// configured — GitHub refuses APPROVE/REQUEST_CHANGES on your own PR, so
+// each event degrades to the next thing that still carries the content.
 if (findings.length === 0) {
-  execFileSync("gh", ["pr", "comment", pr, "--body", `${header}\n\n${summary || "No findings."}\n\nVERDICT: CLEAN`], { stdio: "inherit" });
+  const body = `${header}\n\n${summary || "No findings."}\n\nVERDICT: CLEAN`;
+  try {
+    postReview({ event: "APPROVE", body });
+    console.log("approved");
+  } catch {
+    execFileSync("gh", ["pr", "comment", pr, "--body", body], { stdio: "inherit" });
+  }
   process.exit(0);
 }
 
-const payload = {
-  event: "COMMENT",
+const payload = (event) => ({
+  event,
   body: `${header}\n\n${summary}\n\nVERDICT: FINDINGS`,
   comments: findings.map((f) => ({
     path: f.path,
@@ -76,15 +92,17 @@ const payload = {
     side: "RIGHT",
     body: f.suggestion ? `${f.body}\n\n\`\`\`suggestion\n${f.suggestion.replace(/\n+$/, "")}\n\`\`\`` : f.body,
   })),
-};
+});
 
 try {
-  execFileSync("gh", ["api", `repos/${repo}/pulls/${pr}/reviews`, "--input", "-"], {
-    input: JSON.stringify(payload),
-    stdio: ["pipe", "ignore", "pipe"],
-  });
-  console.log(`posted ${findings.length} inline finding(s)`);
-} catch (e) {
-  console.error(`inline review rejected (${e.message}) — falling back to a plain comment.`);
-  execFileSync("gh", ["pr", "comment", pr, "--body", `${asMarkdown()}\n\nVERDICT: FINDINGS`], { stdio: "inherit" });
+  postReview(payload("REQUEST_CHANGES"));
+  console.log(`requested changes with ${findings.length} inline finding(s)`);
+} catch {
+  try {
+    postReview(payload("COMMENT"));
+    console.log(`posted ${findings.length} inline finding(s) as comments (own-PR fallback)`);
+  } catch (e) {
+    console.error(`inline review rejected (${e.message}) — falling back to a plain comment.`);
+    execFileSync("gh", ["pr", "comment", pr, "--body", `${asMarkdown()}\n\nVERDICT: FINDINGS`], { stdio: "inherit" });
+  }
 }
