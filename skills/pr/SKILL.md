@@ -38,6 +38,14 @@ push rejection is the arbiter: a non-fast-forward on the claim means another
 worker won the race. Do not force, do not retry — pick a different unit or
 stop.
 
+Read the rejection before concluding. A *policy* rejection — branch
+protection requiring pull requests — is not a lost race: no other worker won
+anything, the branch just refuses direct pushes. In that case continue the
+run **without** the pushed claim, relying on your dispatcher's own mutual
+exclusion (a dispatched run is one run per flip), and say in the PR body
+that the unit ran unclaimed so a human reading the board knows why the plan
+never showed `busy`.
+
 This is the one deliberate exception to "never push to the default branch."
 Nothing else in the run touches it.
 
