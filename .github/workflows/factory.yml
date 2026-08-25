@@ -101,13 +101,27 @@ jobs:
             ${{ github.ref_name }}). The ONLY way you may push is:
             scripts/git-push.sh origin <branch> — plain git push will be
             denied.
+        # stream-json + verbose: `claude -p` buffers its answer to the very
+        # end, which reads as a hung job in the live log. Streaming makes the
+        # run watchable turn by turn, and the tee'd transcript survives as an
+        # artifact — the flight recorder for runs that fail.
         run: |
           git config user.name "factory"
           git config user.email "factory@users.noreply.github.com"
           claude -p "$PROMPT" \
             --model "${{ matrix.unit.model }}" \
             --effort "${{ matrix.unit.effort }}" \
+            --output-format stream-json --verbose \
             --max-turns 80 \
             --permission-mode acceptEdits \
             --allowedTools "Glob,Grep,LS,Read,Bash(git status:*),Bash(git diff:*),Bash(git log:*),Bash(git show:*),Bash(git branch:*),Bash(git add:*),Bash(git commit:*),Bash(git rm:*),Bash(git worktree:*),Bash(git fetch:*),Bash(git checkout:*),Bash(scripts/git-push.sh:*),Bash(gh pr create:*),Bash(gh pr list:*),Bash(pnpm install:*),Bash(pnpm test:*),Bash(pnpm run:*),Bash(pnpm exec tsc:*),Bash(pnpm exec playwright:*)" \
-            --disallowedTools "WebSearch,WebFetch"
+            --disallowedTools "WebSearch,WebFetch" \
+            | tee "$RUNNER_TEMP/transcript.jsonl"
+
+      - name: Keep the transcript
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: transcript-${{ strategy.job-index }}
+          path: ${{ runner.temp }}/transcript.jsonl
+          retention-days: 14
