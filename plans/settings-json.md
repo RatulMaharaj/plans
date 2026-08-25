@@ -1,5 +1,5 @@
 ---
-status: busy
+status: ready
 ---
 # Settings As a File
 
