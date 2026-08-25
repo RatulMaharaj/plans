@@ -1,5 +1,5 @@
 ---
-status: ready
+status: draft
 ---
 # Settings As a File
 
