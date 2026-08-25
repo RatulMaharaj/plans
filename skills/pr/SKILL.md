@@ -44,7 +44,9 @@ Nothing else in the run touches it.
 ## Work in a worktree
 
 `git worktree add` from the *latest commit of the default branch*, on a fresh
-branch named for the plan (or the feature folder). All implementation happens
+branch named `impl/<plan-name>` (or `impl/<folder-name>` for a feature
+folder) — the prefix is load-bearing: automated review and merge trigger on
+`impl/**` branches. All implementation happens
 in the worktree: the human's checkout is never dirtied, parallel units cannot
 collide, and a failed run is discarded by deleting a directory.
 

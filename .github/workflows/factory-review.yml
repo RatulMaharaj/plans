@@ -1,0 +1,116 @@
+# The factory's reviewer — a second vendor, on purpose. Claude built the PR;
+# Codex reviews it, so the review is independent of the model that wrote the
+# code and bills the Codex subscription rather than drawing down the Claude
+# one. A clean verdict plus green CI merges the PR; any finding leaves it
+# open with the review posted for the human.
+#
+# Triggers on PRs from impl/** branches — the branch prefix the pr skill
+# mandates for factory implementation branches.
+#
+# Auth: run `codex login` locally, then save the contents of
+# ~/.codex/auth.json as the CODEX_AUTH_JSON Actions secret.
+#
+# Two honest notes. The review-then-merge gate is advisory, not adversarial:
+# a wrong CLEAN merges the PR, so the human's oversight moves from "click
+# merge" to "read what merged" — that trade was chosen deliberately. And a
+# merge performed with GITHUB_TOKEN does not retrigger workflows on the base
+# branch (GitHub's recursion guard): CI ran on the PR, but the base branch
+# gets no fresh run of its own.
+name: Factory Review
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  review:
+    name: Codex reviews the diff
+    if: startsWith(github.head_ref, 'impl/')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    outputs:
+      verdict: ${{ steps.verdict.outputs.verdict }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install Codex
+        run: npm install -g @openai/codex
+
+      - name: Restore Codex auth
+        env:
+          CODEX_AUTH_JSON: ${{ secrets.CODEX_AUTH_JSON }}
+        run: |
+          if [ -z "$CODEX_AUTH_JSON" ]; then
+            echo "::error::CODEX_AUTH_JSON secret is not set — run 'codex login' locally and save ~/.codex/auth.json as the secret."
+            exit 1
+          fi
+          mkdir -p ~/.codex
+          printf '%s' "$CODEX_AUTH_JSON" > ~/.codex/auth.json
+
+      - name: Review
+        env:
+          BASE: ${{ github.base_ref }}
+          HEAD: ${{ github.head_ref }}
+        run: |
+          codex exec --sandbox read-only --output-last-message "$RUNNER_TEMP/review.md" \
+            "You are reviewing a pull request produced by an automated agent. \
+          Review the diff between origin/$BASE and origin/$HEAD (git diff origin/$BASE...origin/$HEAD) for CORRECTNESS BUGS ONLY: \
+          logic errors, broken edge cases, regressions, unsafe operations, contract violations with the surrounding code. \
+          Read enough of the surrounding files to judge in context. Do not report style, naming, or taste. \
+          Only include findings you are confident are real; if you are unsure, leave it out. \
+          Your final message is the review that will be posted to the PR: for each finding give file:line, \
+          what breaks, and the concrete failing scenario. \
+          The LAST line of your final message must be exactly VERDICT: CLEAN (no findings) or VERDICT: FINDINGS."
+
+      - name: Post the review
+        id: verdict
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          v=$(tail -n 1 "$RUNNER_TEMP/review.md" | grep -o 'CLEAN\|FINDINGS' || echo FINDINGS)
+          echo "verdict=$v" >> "$GITHUB_OUTPUT"
+          {
+            echo "### Factory review (Codex)"
+            echo
+            cat "$RUNNER_TEMP/review.md"
+          } > "$RUNNER_TEMP/body.md"
+          gh pr comment ${{ github.event.pull_request.number }} --body-file "$RUNNER_TEMP/body.md"
+
+  merge:
+    name: Merge when clean and green
+    needs: review
+    if: needs.review.outputs.verdict == 'CLEAN'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      # Not `gh pr checks --watch`: that waits on every check on the head
+      # SHA, including this very job — a deadlock. Watch the CI workflow
+      # by name instead.
+      - name: Wait for CI, then merge
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          for i in $(seq 1 56); do
+            state=$(gh run list --commit "$SHA" --workflow CI --json status,conclusion \
+              --jq 'if length == 0 then "waiting"
+                    elif any(.[]; .status != "completed") then "running"
+                    elif all(.[]; .conclusion == "success") then "success"
+                    else "failure" end')
+            echo "CI on $SHA: $state"
+            case "$state" in
+              success) break ;;
+              failure) echo "::error::CI failed — not merging."; exit 1 ;;
+              *) sleep 30 ;;
+            esac
+          done
+          [ "$state" = "success" ] || { echo "::error::CI did not finish in time."; exit 1; }
+          gh pr merge ${{ github.event.pull_request.number }} --squash --delete-branch

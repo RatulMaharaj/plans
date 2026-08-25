@@ -62,6 +62,19 @@ default `GITHUB_TOKEN` as the run's git/`gh` credential — the default token
 is GitHub's recursion guard, so the claim flip the run pushes cannot
 retrigger the workflow. Substituting a PAT there reopens that loop.
 
+## Review and merge (optional fourth artifact)
+
+`.github/workflows/factory-review.yml` closes the loop: PRs from `impl/**`
+branches get a headless correctness review from Codex — a second vendor on
+purpose, so the reviewer is independent of the model that wrote the code —
+and a clean verdict plus green CI merges the PR. Adapting it: the merge
+step watches the repository's CI workflow *by name*; point it at this
+repository's. It needs its own secret (`codex login` locally →
+`~/.codex/auth.json` as `CODEX_AUTH_JSON`) and the repository setting
+allowing Actions to create and approve pull requests. Installing it changes
+the oversight contract from "a human clicks merge" to "a human reads what
+merged" — say so to the owner rather than letting the default decide.
+
 ## Auth
 
 The action bills the Claude subscription, not an API key: the owner runs
