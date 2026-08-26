@@ -15,6 +15,7 @@ Remember to add changesets for any patched bugs - fixed bugs belong in the chang
 - A message sent when the agent is busy or almost finished seems to get dropped
 - We should be able to press the up arrow to see the last typed messages to an agent
 - Last selected new plan folder per repo should be remembered
+- Chat title still overflows into the rename button
 
 ## Watch for
 
