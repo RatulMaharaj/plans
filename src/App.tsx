@@ -25,7 +25,15 @@ import {
   without as chatWithout,
   type Index as ChatIndex,
 } from "./chats";
-import { agentCommandLine, HANDOFF_PROMPT, IMPLEMENT_PROMPT, type HandoffKind } from "./agent";
+import {
+  agentCommandLine,
+  HANDOFF_PROMPT,
+  IMPLEMENT_PROMPT,
+  lineHint,
+  quoteBlock,
+  REWRITE_PROMPT,
+  type HandoffKind,
+} from "./agent";
 import { DiffView, prefetchHead } from "./DiffView";
 import { SettingsPage } from "./SettingsPage";
 import {
@@ -269,6 +277,15 @@ export default function App() {
   const openFileRef = useRef<
     ((repo: string, path: string, retrying?: boolean) => Promise<void>) | null
   >(null);
+  /**
+   * Which buffer is active *now*, readable from inside an awaited callback —
+   * a closure's `activeRepoPath`/`activePath` are whatever they were when it
+   * was made, which is exactly the thing an async path needs to check against.
+   */
+  const activeRef = useRef<{ repo: string | null; path: string | null }>({
+    repo: null,
+    path: null,
+  });
 
   /** Zen: the page alone. Deliberately not persisted — it's a mood, not a setting. */
   const [zen, setZen] = useState(false);
@@ -387,8 +404,16 @@ export default function App() {
 
   /** A fragment of HTML open for editing, or null. */
   const [htmlEdit, setHtmlEdit] = useState<HtmlEdit | null>(null);
-  /** Right-click on the page: one item, patterned on the tree's menu. */
-  const [pageMenu, setPageMenu] = useState<null | { x: number; y: number }>(null);
+  /**
+   * Right-click on the page, patterned on the tree's menu.
+   *
+   * The selection is read when the menu opens and kept here, so the menu
+   * offers what was true at the moment of the click rather than at the moment
+   * of the press — clicking an item moves focus, and the selection with it.
+   */
+  const [pageMenu, setPageMenu] = useState<null | { x: number; y: number; selection: string }>(
+    null,
+  );
   useEffect(() => {
     if (!pageMenu) return;
     const close = () => setPageMenu(null);
@@ -474,6 +499,9 @@ export default function App() {
    * `activeRepo` and taking the window down with them.
    */
   const activeRepoOrPath = activeRepo?.path ?? activeRepoPath ?? "";
+
+  // Kept in step during render, like `openFileRef` below it.
+  activeRef.current = { repo: activeRepoPath, path: activePath };
 
   const status = activeRepoPath ? (statusByRepo[activeRepoPath] ?? null) : null;
 
@@ -1677,9 +1705,12 @@ export default function App() {
   const saveTimer = useRef<number | null>(null);
   const pending = useRef<{ repo: string; path: string; text: string } | null>(null);
 
-  const flush = useCallback(async () => {
+  /** The write that is in the air, if one is: what a second flush has to wait for. */
+  const flushing = useRef<Promise<boolean> | null>(null);
+
+  const writeOut = useCallback(async (): Promise<boolean> => {
     const p = pending.current;
-    if (!p) return;
+    if (!p) return true;
     pending.current = null;
     writing.current = true;
     try {
@@ -1694,6 +1725,7 @@ export default function App() {
       // Only the repository that was written to. Re-reading every open repo's
       // status on each autosave is a lot of work for one file's worth of news.
       void refreshStatusFor(p.repo);
+      return true;
     } catch (e) {
       if (String(e).includes("STALE")) {
         /**
@@ -1706,7 +1738,8 @@ export default function App() {
           stamp.current = await api.writePlan(p.repo, p.path, p.text).catch(() => null);
           setDirty(false);
           void refreshFiles();
-          return;
+          // No stamp means even the unconditional write failed.
+          return stamp.current !== null;
         }
         // Put the edit back so no keystroke is lost while the reader decides.
         pending.current = p;
@@ -1715,13 +1748,41 @@ export default function App() {
           () => "",
         );
         setConflict({ theirs });
-        return;
+        return false;
       }
       notify(String(e), "error");
+      return false;
     } finally {
       writing.current = false;
     }
   }, [notify, refreshStatus, settings.autosave]);
+
+  /**
+   * Write the pending buffer out.
+   *
+   * Answers whether the buffer is on disk: `true` when the write landed (or
+   * there was nothing to write), `false` when it was refused — a conflict, or
+   * an error already shown. Most callers save because it is time to save and
+   * can ignore the answer; one — the rewrite seed — is about to tell an agent
+   * what the file contains, and must not say so when it doesn't.
+   *
+   * An empty pending slot is not on its own proof of anything: the autosave
+   * timer may have taken the buffer a moment ago and still be waiting on the
+   * write. So a flush first waits out the write already in the air and adopts
+   * its answer — only then is "nothing pending" the same as "on disk".
+   */
+  const flush = useCallback(async (): Promise<boolean> => {
+    const inFlight = flushing.current;
+    if (inFlight && !(await inFlight)) return false;
+    if (!pending.current) return true;
+    const run = writeOut();
+    flushing.current = run;
+    try {
+      return await run;
+    } finally {
+      if (flushing.current === run) flushing.current = null;
+    }
+  }, [writeOut]);
 
   const onChange = useCallback(
     (markdown: string) => {
@@ -1762,6 +1823,69 @@ export default function App() {
   );
 
   const source = useMemo(() => assemble(matter, content), [assemble, matter, content]);
+
+  /**
+   * Rewrite the selected passage, by asking the agent to.
+   *
+   * A third seed on the path handoff already walks: the turn names the file,
+   * quotes the passage and carries the instruction, and the agent edits the
+   * file the way every other handoff does — the stamp poll notices the write
+   * and reloads a clean buffer. Nothing splices text into the document behind
+   * the save-and-watch machinery's back.
+   *
+   * The buffer is flushed first. `handOff` gets away without it because it
+   * points at the whole file; this points *into* one, and a quote from a file
+   * the agent cannot see is a quote it cannot find. If the flush is refused —
+   * a conflict, a failed write — there is no turn to send: the quote would
+   * describe a file that doesn't exist, and the agent would go rewrite
+   * whatever it found instead. The conflict bar is already on screen saying
+   * what happened.
+   */
+  const rewriteSelection = useCallback(
+    (selection: string) => {
+      const text = selection.replace(/\s+$/, "");
+      const r = activeRepoPath;
+      const f = activePath;
+      if (!text || !r || !f) return;
+      setAsking({
+        title: "Rewrite",
+        placeholder: "What should change about it?",
+        note: "Sent to the agent, which edits the file — the page reloads when it lands.",
+        confirm: "Rewrite",
+        multiline: true,
+        run: (value) => {
+          const ask = value.trim();
+          if (!ask) return;
+          void (async () => {
+            if (!(await flush())) return;
+            // The sheet closed before the write finished, so the buffer
+            // underneath may have changed while we waited. The chat is
+            // per-file: a seed naming this file has to land in this file's
+            // conversation, so bring it back first — the same thing `handOff`
+            // does when it is asked about a file that isn't open.
+            if (activeRef.current.repo !== r || activeRef.current.path !== f) {
+              // A memory buffer is not on disk, so there is nothing to bring
+              // back and nothing the agent could read: drop the turn instead.
+              if (r === MEMORY) return;
+              await openFileRef.current?.(r, f);
+            }
+            const fields: Record<string, string> = {
+              file: f,
+              lines: lineHint(source, text),
+              ask,
+              quote: quoteBlock(text),
+            };
+            const template = settings.rewritePrompt || REWRITE_PROMPT;
+            // One pass, and through a function: the quote is someone's prose,
+            // and `$&` in it must not turn into a substitution of its own.
+            setChatSeed(template.replace(/\{(file|lines|ask|quote)\}/g, (m, k) => fields[k] ?? m));
+            set({ showMux: true });
+          })();
+        },
+      });
+    },
+    [activeRepoPath, activePath, flush, set, settings.rewritePrompt, source],
+  );
 
   const onSourceChange = useCallback(
     (text: string) => {
@@ -3460,6 +3584,8 @@ export default function App() {
   const findReturn = useRef<HTMLElement | null>(null);
   /** The engines: each surface registers one while mounted. */
   const mainWriteFind = useRef<FindHandle | null>(null);
+  /** The main write surface's selection, registered the same way. */
+  const mainWriteSelection = useRef<(() => string) | null>(null);
   const mainSourceFind = useRef<FindHandle | null>(null);
   const splitFind = useRef<FindHandle | null>(null);
   /** The engine last driven, so switching surfaces clears the old paint. */
@@ -4411,7 +4537,11 @@ export default function App() {
                     onContextMenu={(e) => {
                       if (view !== "write") return;
                       e.preventDefault();
-                      setPageMenu({ x: e.clientX, y: e.clientY });
+                      setPageMenu({
+                        x: e.clientX,
+                        y: e.clientY,
+                        selection: mainWriteSelection.current?.() ?? "",
+                      });
                     }}
                   >
                     <Editor
@@ -4429,6 +4559,7 @@ export default function App() {
                         followLink(activeRepoPath, activePath, href)
                       }
                       findRef={mainWriteFind}
+                      selectionRef={mainWriteSelection}
                       onFindCount={reportFind}
                     />
                   </div>
@@ -4645,7 +4776,6 @@ export default function App() {
           style={{ left: pageMenu.x, top: pageMenu.y }}
           onMouseDown={(e) => e.stopPropagation()}
         >
-          {/* One item, until something else earns a place on it. */}
           <button
             className="ctx-item"
             onClick={() => {
@@ -4655,6 +4785,21 @@ export default function App() {
           >
             New comment…
           </button>
+          {/* Only with something selected, and only where there is an agent
+              to send it to: a menu item that scolds you for not selecting
+              first is worse than one that is absent. */}
+          {pageMenu.selection.trim() !== "" && chat !== false && activeRepoPath !== MEMORY && (
+            <button
+              className="ctx-item"
+              onClick={() => {
+                const selection = pageMenu.selection;
+                setPageMenu(null);
+                rewriteSelection(selection);
+              }}
+            >
+              Rewrite…
+            </button>
+          )}
         </div>
       )}
 

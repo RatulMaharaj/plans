@@ -1,5 +1,5 @@
 ---
-status: ready
+status: done
 ---
 # Selected text rewrite prompt
 
@@ -82,6 +82,18 @@ see. `handOff` gets away without flushing because it points at the whole file;
 this seed points *into* it, so the rewrite path calls `flush()` first — the
 same call `openFile` already makes before switching buffers (src/App.tsx:1906).
 
+And it has to *check* the flush. A refused write — a conflict, a disk error —
+leaves the quote describing a file that does not exist, and an agent handed
+that goes and rewrites whatever it finds instead. So `flush` answers whether
+the buffer reached disk, and the rewrite path sends nothing when it did not;
+the conflict bar is already on screen saying why.
+
+And "nothing pending" is not by itself an answer. The autosave timer may have
+taken the buffer a moment ago and still be waiting on the write, so a flush
+first waits out the write already in the air and adopts its result — otherwise
+the seed goes out in the window where the buffer is claimed but the disk still
+holds the old file.
+
 ## The template
 
 A `REWRITE_PROMPT` in src/agent.ts beside `HANDOFF_PROMPT` and
@@ -131,17 +143,72 @@ mode is where prose gets reworked; start there.
 
 ## Next
 
-- [ ] `htmlBridge.selection` registered in Editor, returning
+- [x] The selection registered in Editor, returning
       `textBetween(from, to, "\n")`; cleared on unmount like its neighbours
-- [ ] Page menu state grows `selection: string`; "Rewrite…" item shown when
-      non-empty (src/App.tsx:4611–4628)
-- [ ] `REWRITE_PROMPT` in src/agent.ts; `rewritePrompt` in settings defaults;
+- [x] Page menu state grows `selection: string`; "Rewrite…" item shown when
+      non-empty (src/App.tsx:4715–4740)
+- [x] `REWRITE_PROMPT` in src/agent.ts; `rewritePrompt` in settings defaults;
       Settings → Agents textarea beside the other two prompts
-- [ ] `rewriteSelection` in App: flush → compute quote (truncate past ~50
+- [x] `rewriteSelection` in App: flush → compute quote (truncate past ~50
       lines) → line-range hint only on a unique match in `source` → `asking`
       prompt → `setChatSeed` + `set({ showMux: true })`
-- [ ] e2e: select in write mode, right-click, rewrite, assert the
+- [x] e2e: select in write mode, right-click, rewrite, assert the
       `agent_prompt` call contains the quote and the typed ask (pattern:
       e2e/chat.spec.ts's handoff tests)
-- [ ] e2e: no selection → no Rewrite item; dirty buffer → flushed before the
+- [x] e2e: no selection → no Rewrite item; dirty buffer → flushed before the
       seed is sent
+- [x] e2e: a file changed underneath the edit → the conflict shows and no
+      `agent_prompt` goes out
+- [x] e2e: an autosave held in flight → the seed waits for it rather than
+      quoting the file as it was
+
+## What landed
+
+The feature is the frontend prompt assembly the plan argued for, and nothing
+else: no API call, no splice into the document, no accept/reject overlay.
+
+- **The selection is a per-surface capability, not a bridge entry.** The plan
+  asked for `htmlBridge.selection`; the split-pane open question then asked who
+  owns a module-level singleton when two editors are mounted. Rather than ship
+  the hazard and note it, Editor takes a `selectionRef` prop and registers a
+  reader into it — exactly the shape `findRef` already has for ⌘F, and for the
+  same reason (src/Editor.tsx:40–48, 195–225). App holds `mainWriteSelection`
+  beside `mainWriteFind`; the split pane passes nothing, so the page menu can
+  only ever quote the document that was right-clicked. The open question is
+  answered rather than inherited.
+- **The elision marker lives inside the quote**, not in the prompt's prose:
+  past 50 lines the blockquote keeps three lines of each end with
+  "… the selection continues; it runs from the first quoted line to the last …"
+  between them (`quoteBlock`, src/agent.ts). `{lines}` stays purely the
+  line-range hint, and stays empty unless `source.indexOf` finds the quote
+  exactly once (`lineHint`).
+- **The menu item is also gated on there being an agent** (`chat !== false`),
+  the same rule the tree's handoff items follow — an item that cannot work is
+  worse than one that is absent.
+- Placeholders are filled in one pass through a replacer function: someone's
+  prose containing `$&` must not become a substitution of its own.
+- **The flush is checked, and the file is held.** `flush` now returns whether
+  the buffer is on disk (`true` also when there was nothing pending), and the
+  rewrite path drops the turn when it isn't — the only caller that cares,
+  because it is the only one about to tell an agent what a file contains. The
+  sheet also closes before the write finishes, so the seed re-opens the file it
+  names if the active buffer moved while the write was in flight (`activeRef`,
+  the same check `handOff` makes for a file that isn't open); a memory buffer
+  has nothing to re-open, so that case drops the turn too. `flush` also waits
+  out a write already in flight instead of reading an empty pending slot as
+  proof of a saved file: the write itself lives in `writeOut`, and `flush` is
+  the gate in front of it that adopts the in-flight answer (src/App.tsx). The
+  e2e for it holds `write_plan` open with `__fake.stallWrites`.
+
+Settled from the open questions: the seed lands in the file's current chat, as
+handoff's does; scroll restoration is left to the existing by-position reload;
+`{lines}` earns its keep because it is one `indexOf` and it stays silent when
+it cannot be sure.
+
+Not verified here (this run, and the review pass that followed it): no package
+manager was available, so `tsc`, the settings-schema generator and Playwright
+could not be run — the two
+`settings.schema.json` copies were updated by hand to match what the generator
+emits for a new prompt field (a `string` with the doc comment flattened into
+`description`, and no `default`, exactly as the other two prompts have it). CI
+runs `schema:check` and the e2e suite over this branch.

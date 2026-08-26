@@ -37,6 +37,15 @@ type Props = {
   /** ⌘F's engine for this surface, registered while the editor is mounted. */
   findRef?: React.MutableRefObject<FindHandle | null>;
   onFindCount?: (current: number, total: number) => void;
+  /**
+   * What is selected in this surface, for whoever asks — the rewrite prompt.
+   *
+   * Per-surface like `findRef`, and for the same reason: the split pane mounts
+   * a second editor, and a module-level singleton would answer for whichever
+   * of the two mounted last. The reader right-clicked in one document, and the
+   * quote has to come from that one.
+   */
+  selectionRef?: React.MutableRefObject<(() => string) | null>;
 };
 
 /**
@@ -108,6 +117,7 @@ export function Editor({
   onOpenLink,
   findRef,
   onFindCount,
+  selectionRef,
 }: Props) {
   const hostRef = useRef<HTMLDivElement | null>(null);
   const instance = useRef<Crepe | null>(null);
@@ -181,6 +191,39 @@ export function Editor({
       if (findRef.current === handle) findRef.current = null;
     };
   }, [findRef]);
+
+  /**
+   * The selected text, asked for at the moment of a right-click.
+   *
+   * The document's own text, not `window.getSelection()`: through decorations,
+   * widgets and mermaid figures the DOM answers with furniture the markdown
+   * does not contain, and the point of the quote is that the agent can find it
+   * in the file. `textBetween` with "\n" between blocks is the closest thing
+   * ProseMirror has to what the serialiser would write.
+   */
+  useEffect(() => {
+    if (!selectionRef) return;
+    const read = () => {
+      const crepe = instance.current;
+      if (!crepe || !created.current) return "";
+      try {
+        let text = "";
+        crepe.editor.action((ctx) => {
+          const view = ctx.get(editorViewCtx);
+          const { from, to } = view.state.selection;
+          if (from !== to) text = view.state.doc.textBetween(from, to, "\n");
+        });
+        return text;
+      } catch (e) {
+        trace("selection read failed", { error: String(e) });
+        return "";
+      }
+    };
+    selectionRef.current = read;
+    return () => {
+      if (selectionRef.current === read) selectionRef.current = null;
+    };
+  }, [selectionRef]);
 
   useEffect(() => {
     const root = hostRef.current;

@@ -53,6 +53,12 @@ export function installFakeBackend(repos: FakeRepo[], update?: FakeUpdate) {
     confirmAnswer: true,
     /** Set to a message to make the next chat_send reject with it. */
     failNextSend: null as string | null,
+    /**
+     * While true, `write_plan` hangs instead of landing — a save held in
+     * flight, which is the only way from a test to stand in the window where
+     * the app has taken the buffer but the disk does not have it yet.
+     */
+    stallWrites: false,
     /** Whether a second agent is installed, when a test wants one. */
     codex: null as string | null,
     /** Whether the agent has been installed globally rather than run via npx. */
@@ -152,7 +158,10 @@ export function installFakeBackend(repos: FakeRepo[], update?: FakeUpdate) {
       const content = r?.files[relPath];
       return content === undefined ? "absent" : hash(content);
     },
-    write_plan: ({ repo: p, relPath, content, expectStamp }) => {
+    write_plan: async ({ repo: p, relPath, content, expectStamp }) => {
+      // Held writes decide nothing until they are let go: the stamp is checked
+      // when the write actually happens, as it would be on disk.
+      while (state.stallWrites) await new Promise((r) => setTimeout(r, 10));
       const r = repo(p);
       if (!r) throw new Error("no such repository");
       const now = r.files[relPath];

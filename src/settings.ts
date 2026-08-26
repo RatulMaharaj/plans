@@ -1,6 +1,6 @@
 import { FONTS, MONO_FONTS } from "./fonts";
 import { applyTheme, DEFAULT_THEME, type ThemeId } from "./theme";
-import { HANDOFF_PROMPT, IMPLEMENT_PROMPT } from "./agent";
+import { HANDOFF_PROMPT, IMPLEMENT_PROMPT, REWRITE_PROMPT } from "./agent";
 
 /** Everything the reader can change, in one place. */
 export type Settings = {
@@ -106,6 +106,12 @@ export type Settings = {
    */
   implementPrompt: string;
   /**
+   * The instruction "Rewrite…" sends for a selected passage. `{file}` is the
+   * file, `{quote}` the selected text, `{ask}` what you typed, and `{lines}`
+   * a line-range hint that is empty unless the quote is unique in the file.
+   */
+  rewritePrompt: string;
+  /**
    * Whether `#` in the palette reaches the conversations of the repository you
    * are in, or of every repository open.
    *
@@ -209,6 +215,7 @@ export const DEFAULTS: Settings = {
   chatCommand: "claude",
   handoffPrompt: HANDOFF_PROMPT,
   implementPrompt: IMPLEMENT_PROMPT,
+  rewritePrompt: REWRITE_PROMPT,
   chatScope: "repo" as const,
   treeSort: "name" as const,
   imageFolder: "assets",

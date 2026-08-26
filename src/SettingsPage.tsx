@@ -428,6 +428,13 @@ export function SettingsPage({
             onChange={(implementPrompt) => onChange({ implementPrompt })}
             onReset={() => onChange({ implementPrompt: DEFAULTS.implementPrompt })}
           />
+          <Area
+            label="Rewrite prompt"
+            hint="What the agent is told by “Rewrite…”, from the right-click menu on selected text. {file} is the file, {quote} the passage you selected, {ask} what you typed, and {lines} a line-range hint that is left out unless the passage appears exactly once."
+            value={s.rewritePrompt}
+            onChange={(rewritePrompt) => onChange({ rewritePrompt })}
+            onReset={() => onChange({ rewritePrompt: DEFAULTS.rewritePrompt })}
+          />
           <Field
             label="Copyable command"
             hint="For running a plan by hand in a terminal instead: {prompt} is the instruction, {file} the plan's path."

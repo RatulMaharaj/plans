@@ -181,6 +181,10 @@
       "type": "string",
       "description": "The instruction \"Hand off to agent: implement this plan\" sends. Kept apart from the completion prompt because they ask for different moves: one writes the plan, the other builds from it."
     },
+    "rewritePrompt": {
+      "type": "string",
+      "description": "The instruction \"Rewrite…\" sends for a selected passage. `{file}` is the file, `{quote}` the selected text, `{ask}` what you typed, and `{lines}` a line-range hint that is empty unless the quote is unique in the file."
+    },
     "chatScope": {
       "type": "string",
       "enum": [
