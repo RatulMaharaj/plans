@@ -404,6 +404,113 @@ test("a file dragged into another repository is copied, not moved", async ({ pag
   ).toContain("first.md");
 });
 
+/** Press a repository heading and drag it to `y`, past the 5px threshold first. */
+async function dragRepoTo(page: Page, name: string, y: number) {
+  const h = (await page.locator(".row.repo", { hasText: name }).first().boundingBox())!;
+  const x = h.x + h.width / 2;
+  await page.mouse.move(x, h.y + h.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(x, h.y + h.height / 2 + (y > h.y ? 8 : -8), { steps: 3 });
+  await page.mouse.move(x, y, { steps: 8 });
+  await page.mouse.up();
+}
+
+const repoNames = (page: Page) => page.locator(".repo-name").allTextContents();
+
+/**
+ * The shelf's order is an opinion, and the drag is how it gets expressed.
+ *
+ * Nothing sorts repositories: the tree renders them in array order, so the
+ * whole feature is a splice — which means the assertion that matters is the
+ * order the list ends up in and the order localStorage remembers, not any
+ * intermediate the drag passed through.
+ */
+test("a repository heading drags into a new place, and is remembered there", async ({
+  page,
+}) => {
+  await open(page);
+  expect(await repoNames(page)).toEqual(["one", "two"]);
+
+  // Above the first repository's whole block, files and all.
+  const first = (await page.locator(".tree-repo").first().boundingBox())!;
+  await dragRepoTo(page, "two", first.y + 2);
+
+  await expect.poll(() => repoNames(page)).toEqual(["two", "one"]);
+  // Persistence rides the existing effect: the order in state is the order on
+  // disk. Read from storage rather than reloading, because the test harness
+  // re-seeds `plans.repos.v1` on every navigation.
+  await expect
+    .poll(() =>
+      page.evaluate(() => JSON.parse(localStorage.getItem("plans.repos.v1") ?? "[]")),
+    )
+    .toEqual(["/repo/two", "/repo/one"]);
+});
+
+/**
+ * The heading's click is a toggle, so a drop that ends on one would collapse
+ * the repository it just moved — the click-swallow is what keeps a reorder
+ * from also being a fold.
+ */
+test("dropping a dragged repository does not collapse it", async ({ page }) => {
+  await open(page);
+  const two = page.locator(".row.repo", { hasText: "two" }).first();
+  await expect(two).toHaveAttribute("aria-expanded", "true");
+
+  const first = (await page.locator(".tree-repo").first().boundingBox())!;
+  await dragRepoTo(page, "two", first.y + 2);
+
+  await expect.poll(() => repoNames(page)).toEqual(["two", "one"]);
+  await expect(page.locator(".row.repo", { hasText: "two" }).first()).toHaveAttribute(
+    "aria-expanded",
+    "true",
+  );
+});
+
+/**
+ * Escape cancels a repository drag the way it cancels a file drag.
+ *
+ * A file drag has committed nothing until release, so Escape only has to drop
+ * the state. A repo drag moves the list as it goes — cancelling it has to put
+ * the repository back, or the order that is supposedly abandoned is the order
+ * the persistence effect writes.
+ */
+test("Escape puts a dragged repository back where it started", async ({ page }) => {
+  await open(page);
+  const h = (await page.locator(".row.repo", { hasText: "two" }).first().boundingBox())!;
+  const x = h.x + h.width / 2;
+  const first = (await page.locator(".tree-repo").first().boundingBox())!;
+  await page.mouse.move(x, h.y + h.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(x, h.y + h.height / 2 - 8, { steps: 3 });
+  await page.mouse.move(x, first.y + 2, { steps: 8 });
+  await expect.poll(() => repoNames(page)).toEqual(["two", "one"]);
+
+  await page.keyboard.press("Escape");
+  await page.mouse.up();
+
+  await expect.poll(() => repoNames(page)).toEqual(["one", "two"]);
+  await expect
+    .poll(() =>
+      page.evaluate(() => JSON.parse(localStorage.getItem("plans.repos.v1") ?? "[]")),
+    )
+    .toEqual(["/repo/one", "/repo/two"]);
+});
+
+/** The same reorder without a steady hand. */
+test("the repository menu moves a repository up and down", async ({ page }) => {
+  await open(page);
+  await page.locator(".row.repo", { hasText: "two" }).first().click({ button: "right" });
+  await page.locator(".ctx-item", { hasText: "Move up" }).click();
+  await expect.poll(() => repoNames(page)).toEqual(["two", "one"]);
+
+  await page.locator(".row.repo", { hasText: "two" }).first().click({ button: "right" });
+  await page.locator(".ctx-item", { hasText: "Move down" }).click();
+  await expect.poll(() => repoNames(page)).toEqual(["one", "two"]);
+  // The ends of the list offer no step past them.
+  await page.locator(".row.repo", { hasText: "two" }).first().click({ button: "right" });
+  await expect(page.locator(".ctx-item", { hasText: "Move down" })).toHaveCount(0);
+});
+
 /**
  * The plans folder in some order other than the alphabet.
  *

@@ -448,6 +448,9 @@ button, .rail, .bar, .tabs, .ctx {
 
 /* The repo row carries its branch on a second line, the way a header block does. */
 .row.repo { align-items: flex-start; padding: 8px 10px 9px 18px; }
+/* The heading is a grip as well as a toggle — said on press, where a permanent
+   grip icon would be furniture the sidebar has so far refused. */
+.row.repo:active { cursor: grabbing; }
 .repo-id { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
 .repo-name {
   font-size: calc(var(--tree-size, 12.5px) - 1px);
