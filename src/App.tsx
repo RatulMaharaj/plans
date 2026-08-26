@@ -1705,16 +1705,10 @@ export default function App() {
   const saveTimer = useRef<number | null>(null);
   const pending = useRef<{ repo: string; path: string; text: string } | null>(null);
 
-  /**
-   * Write the pending buffer out.
-   *
-   * Answers whether the buffer is on disk: `true` when the write landed (or
-   * there was nothing to write), `false` when it was refused — a conflict, or
-   * an error already shown. Most callers save because it is time to save and
-   * can ignore the answer; one — the rewrite seed — is about to tell an agent
-   * what the file contains, and must not say so when it doesn't.
-   */
-  const flush = useCallback(async (): Promise<boolean> => {
+  /** The write that is in the air, if one is: what a second flush has to wait for. */
+  const flushing = useRef<Promise<boolean> | null>(null);
+
+  const writeOut = useCallback(async (): Promise<boolean> => {
     const p = pending.current;
     if (!p) return true;
     pending.current = null;
@@ -1762,6 +1756,33 @@ export default function App() {
       writing.current = false;
     }
   }, [notify, refreshStatus, settings.autosave]);
+
+  /**
+   * Write the pending buffer out.
+   *
+   * Answers whether the buffer is on disk: `true` when the write landed (or
+   * there was nothing to write), `false` when it was refused — a conflict, or
+   * an error already shown. Most callers save because it is time to save and
+   * can ignore the answer; one — the rewrite seed — is about to tell an agent
+   * what the file contains, and must not say so when it doesn't.
+   *
+   * An empty pending slot is not on its own proof of anything: the autosave
+   * timer may have taken the buffer a moment ago and still be waiting on the
+   * write. So a flush first waits out the write already in the air and adopts
+   * its answer — only then is "nothing pending" the same as "on disk".
+   */
+  const flush = useCallback(async (): Promise<boolean> => {
+    const inFlight = flushing.current;
+    if (inFlight && !(await inFlight)) return false;
+    if (!pending.current) return true;
+    const run = writeOut();
+    flushing.current = run;
+    try {
+      return await run;
+    } finally {
+      if (flushing.current === run) flushing.current = null;
+    }
+  }, [writeOut]);
 
   const onChange = useCallback(
     (markdown: string) => {

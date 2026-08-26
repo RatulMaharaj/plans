@@ -951,6 +951,44 @@ test("a refused save cancels the rewrite rather than quoting a file that isn't t
   expect(onDisk).toContain("Theirs.");
 });
 
+test("a save still in flight is waited out before the quote is sent", async ({ page }) => {
+  // The autosave timer takes the buffer first and the write hangs, so at the
+  // moment Rewrite is submitted there is nothing pending and nothing on disk
+  // either. An empty pending slot is not proof of a saved file.
+  await open(page, { settings: { autosave: "afterDelay", autosaveDelay: 0.1 } });
+  await openPlan(page);
+  const editor = page.locator(".milkdown .ProseMirror");
+  await editor.click();
+
+  await page.evaluate(() => ((window as any).__fake.stallWrites = true));
+  await page.locator(".milkdown .ProseMirror p", { hasText: "A plan" }).click();
+  await page.keyboard.press("End");
+  await page.keyboard.type(" Edited here.");
+  await expect(editor).toContainText("Edited here.");
+  // The timer has fired and the write is in the air, going nowhere.
+  await expect.poll(() => calls(page, "write_plan")).toBeGreaterThan(0);
+
+  const para = await selectParagraph(page, "Edited here.");
+  await para.click({ button: "right" });
+  await page.locator(".ctx-item", { hasText: "Rewrite" }).click();
+  await page.locator(".matter-sheet textarea").fill("tighten it");
+  await page.locator(".matter-sheet .act", { hasText: "Rewrite" }).click();
+
+  // Nothing goes out while the file is still the old one.
+  await expect(page.locator(".matter-sheet")).toHaveCount(0);
+  expect(await calls(page, "agent_prompt")).toBe(0);
+
+  await page.evaluate(() => ((window as any).__fake.stallWrites = false));
+  await expect(page.locator(".chat")).toBeVisible();
+  await expect.poll(() => calls(page, "agent_prompt")).toBe(1);
+  const onDisk = await page.evaluate(
+    () => (window as any).__fake.repos[0].files["plans/first.md"] as string,
+  );
+  expect(onDisk).toContain("Edited here.");
+  const [sent] = await argsOf(page, "agent_prompt");
+  expect(sent.text).toContain("Edited here.");
+});
+
 test("the rewrite prompt is editable, and is what gets sent", async ({ page }) => {
   await open(page);
   await openPlan(page);

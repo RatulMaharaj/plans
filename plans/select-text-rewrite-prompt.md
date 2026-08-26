@@ -88,6 +88,12 @@ that goes and rewrites whatever it finds instead. So `flush` answers whether
 the buffer reached disk, and the rewrite path sends nothing when it did not;
 the conflict bar is already on screen saying why.
 
+And "nothing pending" is not by itself an answer. The autosave timer may have
+taken the buffer a moment ago and still be waiting on the write, so a flush
+first waits out the write already in the air and adopts its result — otherwise
+the seed goes out in the window where the buffer is claimed but the disk still
+holds the old file.
+
 ## The template
 
 A `REWRITE_PROMPT` in src/agent.ts beside `HANDOFF_PROMPT` and
@@ -153,6 +159,8 @@ mode is where prose gets reworked; start there.
       seed is sent
 - [x] e2e: a file changed underneath the edit → the conflict shows and no
       `agent_prompt` goes out
+- [x] e2e: an autosave held in flight → the seed waits for it rather than
+      quoting the file as it was
 
 ## What landed
 
@@ -186,7 +194,11 @@ else: no API call, no splice into the document, no accept/reject overlay.
   sheet also closes before the write finishes, so the seed re-opens the file it
   names if the active buffer moved while the write was in flight (`activeRef`,
   the same check `handOff` makes for a file that isn't open); a memory buffer
-  has nothing to re-open, so that case drops the turn too.
+  has nothing to re-open, so that case drops the turn too. `flush` also waits
+  out a write already in flight instead of reading an empty pending slot as
+  proof of a saved file: the write itself lives in `writeOut`, and `flush` is
+  the gate in front of it that adopts the in-flight answer (src/App.tsx). The
+  e2e for it holds `write_plan` open with `__fake.stallWrites`.
 
 Settled from the open questions: the seed lands in the file's current chat, as
 handoff's does; scroll restoration is left to the existing by-position reload;
