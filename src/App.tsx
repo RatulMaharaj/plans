@@ -4788,7 +4788,7 @@ export default function App() {
           {/* Only with something selected, and only where there is an agent
               to send it to: a menu item that scolds you for not selecting
               first is worse than one that is absent. */}
-          {pageMenu.selection.trim() !== "" && chat !== false && (
+          {pageMenu.selection.trim() !== "" && chat !== false && activeRepoPath !== MEMORY && (
             <button
               className="ctx-item"
               onClick={() => {
