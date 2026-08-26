@@ -333,6 +333,14 @@ export const FileTree = memo(function FileTree(p: Props) {
   reposRef.current = p.repos;
   const reorderRef = useRef(p.onReorderRepo);
   reorderRef.current = p.onReorderRepo;
+  /**
+   * Where the dragged repository sat when the drag began.
+   *
+   * A repo drag moves the list as it goes, so unlike a file drag there is no
+   * uncommitted operation for Escape to simply drop — the only way to cancel is
+   * to put the repository back where it started.
+   */
+  const repoHome = useRef<number | null>(null);
   /** Which drop target the pointer is currently over, resolved from the DOM. */
   const target = useRef<{ repo: string; dir: string } | { split: true } | null>(null);
   /**
@@ -374,6 +382,7 @@ export const FileTree = memo(function FileTree(p: Props) {
     setHot(null);
     carried.current = null;
     pressed.current = null;
+    repoHome.current = null;
     target.current = null;
     setDragging(null);
     setOver(null);
@@ -447,6 +456,10 @@ export const FileTree = memo(function FileTree(p: Props) {
         // The page's split drop zone only takes the pointer while a drag is
         // live — a class on <body> is what turns it on.
         if (start.kind === "file") document.body.classList.add("tree-drag", "from-main");
+        if (start.kind === "repo") {
+          const at = reposRef.current.findIndex((r) => r.path === start.repo);
+          repoHome.current = at === -1 ? null : at;
+        }
         trace("drag start", { path: start.path, kind: start.kind });
       }
       if (carried.current.kind === "repo") {
@@ -491,7 +504,15 @@ export const FileTree = memo(function FileTree(p: Props) {
       endDrag();
     };
     const key = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && carried.current) endDrag();
+      const it = carried.current;
+      if (e.key !== "Escape" || !it) return;
+      // A file drag has committed nothing yet, so dropping the state is the
+      // whole cancel. A repo drag has already moved the list — put it back.
+      if (it.kind === "repo" && repoHome.current !== null) {
+        const at = reposRef.current.findIndex((r) => r.path === it.repo);
+        if (at !== -1 && at !== repoHome.current) reorderRef.current(it.repo, repoHome.current);
+      }
+      endDrag();
     };
     window.addEventListener("pointermove", move);
     window.addEventListener("pointerup", up);

@@ -466,6 +466,36 @@ test("dropping a dragged repository does not collapse it", async ({ page }) => {
   );
 });
 
+/**
+ * Escape cancels a repository drag the way it cancels a file drag.
+ *
+ * A file drag has committed nothing until release, so Escape only has to drop
+ * the state. A repo drag moves the list as it goes — cancelling it has to put
+ * the repository back, or the order that is supposedly abandoned is the order
+ * the persistence effect writes.
+ */
+test("Escape puts a dragged repository back where it started", async ({ page }) => {
+  await open(page);
+  const h = (await page.locator(".row.repo", { hasText: "two" }).first().boundingBox())!;
+  const x = h.x + h.width / 2;
+  const first = (await page.locator(".tree-repo").first().boundingBox())!;
+  await page.mouse.move(x, h.y + h.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(x, h.y + h.height / 2 - 8, { steps: 3 });
+  await page.mouse.move(x, first.y + 2, { steps: 8 });
+  await expect.poll(() => repoNames(page)).toEqual(["two", "one"]);
+
+  await page.keyboard.press("Escape");
+  await page.mouse.up();
+
+  await expect.poll(() => repoNames(page)).toEqual(["one", "two"]);
+  await expect
+    .poll(() =>
+      page.evaluate(() => JSON.parse(localStorage.getItem("plans.repos.v1") ?? "[]")),
+    )
+    .toEqual(["/repo/one", "/repo/two"]);
+});
+
 /** The same reorder without a steady hand. */
 test("the repository menu moves a repository up and down", async ({ page }) => {
   await open(page);

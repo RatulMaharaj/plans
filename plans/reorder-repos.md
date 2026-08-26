@@ -128,6 +128,10 @@ order is exactly the kind of thing that should stay personal.
       persistence rides the existing `KEY.repos` effect
 - [x] Live reorder under the pointer, tab-strip style; insertion-line fallback
       only if it visibly stutters
+- [x] Escape cancels a repo drag by putting the repository back at the index it
+      was pressed at — live reorder has no uncommitted operation to drop, so
+      cancelling has to be an undo, or the abandoned order is the one the
+      `KEY.repos` effect writes
 - [x] Context-menu "Move up" / "Move down" for keyboard parity — it resolved
       yes: two conditional items, hidden at the ends of the list
 - [x] e2e: drag the second heading above the first, assert tree order and that
