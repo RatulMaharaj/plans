@@ -1,5 +1,92 @@
 # plans
 
+## 0.7.0
+
+### Minor Changes
+
+- bdd02de: A fourth bundled skill, `factory`: how an agent sets the Factory GitHub
+  Action up in a repository — install the gate script and push wrapper
+  verbatim, adapt the workflow's verify commands and runner to the target
+  repo's own CI, keep the two load-bearing lines (the gate's skip and the
+  recursion-guarded `GITHUB_TOKEN`), point the owner at `claude setup-token`
+  for the subscription secret, and prove the install with a push that
+  dispatches nothing. Installs with the others, opens from the palette like
+  the others.
+- 07f6f6d: Select a passage in the write surface, right-click → "Rewrite…", and say in a
+  sentence what you want changed. The agent gets a turn that names the file,
+  quotes the passage — with a line-range hint only when the quote is unique in
+  the file — and carries your instruction; it edits the file, and the poll
+  reloads the buffer, the same way every other handoff already works. The prompt
+  is yours to argue with in Settings → Agents.
+- 281eef1: A plan's `model:` and `effort:` frontmatter keys — the ones that route a
+  dispatched implementation run — can be set from the palette, offering exactly
+  what the live agent session advertises (ACP `model` and `thought_level`
+  options) and nothing when no session is advertising: the vocabulary is the
+  agent's, never the app's. The plans skill documents the keys, and the bundled
+  dispatchers treat a value they don't recognise as absent — warn and fall back
+  to the default — rather than failing the run over a typo.
+- b264d05: Long dropdowns can be searched. Past ten choices a menu gains a filter row
+  scored by the palette's own subsequence matcher, so `settings` finds
+  `plans/settings-json` in a list where every name begins `plans/` — the prefix
+  type-ahead a select taught everyone stays the right thing below that. No call
+  site opts in: the branch picker, the folder pickers, the chat list and an
+  agent's model list all inherit it from `Dropdown` itself.
+
+  The branch list behind it grew up to match: branches that exist only on a
+  remote are offered too, set apart under a rule, with checking one out creating
+  the tracking branch; the list is ordered by recency rather than alphabetically;
+  and the menu shows the branches it already had, saying it is refreshing, rather
+  than an empty box while git takes its three seconds.
+
+- f307ad4: Settings live in a file. `settings.json` in the platform's config directory is
+  now where every setting on the Settings page actually lives, with a
+  `settings.schema.json` generated from the app's own `Settings` type written
+  beside it — so an editor completes this build's keys and shows the same prose
+  the settings page argues in. localStorage stays on as a warm start, so the
+  theme is still right on the first frame; the file wins any disagreement, and
+  first launch migrates whatever was already stored. Edits made outside are
+  picked up on the same interval as everything else read from disk, which is also
+  how the agent in the chat panel can change your settings with no new tool
+  surface at all — it edits a file. A file that does not parse keeps the last
+  good settings and says so rather than resetting anything. "Open settings file
+  (JSON)" is on the Settings page, next to the path, and in the palette.
+- 241d7e8: The software factory's first working set. A third bundled skill, `pr`, joins
+  `plans` and `review` (it slipped into 0.6.0 without a changelog line): how an
+  agent turns a `ready` plan into a pull request — one unit per run, a pushed
+  `busy` flip as the claim and lock between workers, a worktree from the default
+  branch's tip, and fail-loudly back to `ready` as the only exit besides a PR.
+  Around it, the dispatchers: `scripts/worker.mjs`, a local daemon that watches
+  configured repos and spawns headless runs — fleshing out `draft` plans and
+  implementing `ready` ones, so committing a draft is the whole human gesture —
+  and a Factory GitHub Action that runs one matrix job per unit whose status
+  _became_ `ready` in a push, billed to the Claude subscription. Both route by
+  the plan's `model`/`effort` frontmatter, both confine pushes to
+  `scripts/git-push.sh` (origin only, no flags, and the default branch accepts
+  nothing outside `plans/`), and neither ever bypasses permissions — a scoped
+  allowlist plus `acceptEdits`, the configuration `claude-code-action` already
+  battle-tested in public.
+- 281eef1: The handoff splits in two, named for what each asks of the agent. "Hand off to
+  agent: complete this plan" is the old handoff under an honest name — flesh the
+  plan out towards `ready`. "Hand off to agent: implement this plan" is new: the
+  agent claims the plan as `busy`, builds what it describes, and marks it `done`.
+  Both live in the palette and the tree's right-click menu, and each has its own
+  editable prompt in Settings → Agents.
+
+### Patch Changes
+
+- 281eef1: Six open bugs closed in one pass. Stop actually stops: the session now keeps
+  listening while a turn runs and sends the agent a real `session/cancel`, where
+  before the press sat unread until the answer finished on its own. A maximised
+  mermaid diagram opens fitted whole — no more cropped top — and a plain scroll
+  wheel zooms it, so panning is reachable without knowing the ⌘-wheel gesture.
+  "Open the … skill" in the palette resolves where the skill is actually
+  installed (per-skill file or fenced `AGENTS.md` section) instead of assuming
+  Claude Code's path. Scroll position now carries across Write and Source for
+  the same file, mapped proportionally between the two layouts. `h3` steps up to
+  1.13em and `h4` — which had no rule at all — gets one of its own. And a
+  repository heading can be renamed from its right-click menu: an alias kept by
+  the app, for worktrees and the third repo called `mono`.
+
 ## 0.6.0
 
 ### Minor Changes
