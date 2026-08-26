@@ -1254,6 +1254,28 @@ export default function App() {
   );
 
   /**
+   * Put a repository somewhere else on the shelf.
+   *
+   * The whole of the feature's state: the tree renders `repos` in array order,
+   * and the effect below writes whatever order the array holds, so a splice is
+   * both the reorder and its persistence. By path on the from side because the
+   * tree drags `shownRepos`, an overlay-mapped copy whose indexes are not
+   * these; by index on the to side because "between these two headings" is an
+   * index and nothing else.
+   */
+  const reorderRepo = useCallback((fromPath: string, toIndex: number) => {
+    setRepos((prev) => {
+      const from = prev.findIndex((r) => r.path === fromPath);
+      if (from === -1) return prev;
+      const to = Math.max(0, Math.min(toIndex, prev.length - 1));
+      if (to === from) return prev;
+      const next = prev.slice();
+      next.splice(to, 0, ...next.splice(from, 1));
+      return next;
+    });
+  }, []);
+
+  /**
    * Give a repository the name the sidebar should use.
    *
    * The folder's name is sometimes the wrong answer — a worktree's directory,
@@ -4223,6 +4245,7 @@ export default function App() {
               onOpen={openOne}
               onForgetRepo={forgetRepo}
               onRenameRepo={renameRepo}
+              onReorderRepo={reorderRepo}
               filter={filter}
               showExtensions={settings.showExtensions}
               statusOrder={statusOrder}

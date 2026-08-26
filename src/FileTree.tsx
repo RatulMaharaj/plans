@@ -185,6 +185,15 @@ type Props = {
   onForgetRepo: (repoPath: string) => void;
   /** Give the repo heading a name of the reader's choosing — an alias, not a move. */
   onRenameRepo: (repoPath: string) => void;
+  /**
+   * Put this repository at `toIndex` on the shelf.
+   *
+   * By path on the from side, by index on the to side: `repos` here is a
+   * derived copy, and an index into it is exactly the kind of thing that goes
+   * stale between a press and a release — while "between these two headings"
+   * *is* an index, computed by the component that re-renders from the result.
+   */
+  onReorderRepo: (fromPath: string, toIndex: number) => void;
   filter: string;
   showExtensions: boolean;
   /**
@@ -238,6 +247,17 @@ type MenuAt = {
   mark: Mark;
   kind: "file" | "dir" | "repo";
 };
+
+/**
+ * What a drag is carrying.
+ *
+ * A repository is a kind of its own, and the two drags are told apart by what
+ * was pressed rather than by where the pointer is: a heading is both the grip
+ * for a reorder and the drop target for a file bound for that repository's
+ * root, so only the press can say which gesture this is. Its `path` is always
+ * "" — the repository is the whole of it.
+ */
+type Carried = { repo: string; path: string; kind: "file" | "dir" | "repo" };
 
 /** Every folder key in a subtree, so a repo can be opened or closed in one go. */
 function dirKeys(nodes: Node[], repoPath: string, out: string[] = []): string[] {
@@ -295,17 +315,24 @@ export const FileTree = memo(function FileTree(p: Props) {
    * ours even if the ref has been lost — WebKit will not let a dragover handler
    * read the value being dragged, but it will say which types are present.
    */
-  const carried = useRef<{ repo: string; path: string; kind: "file" | "dir" } | null>(null);
+  const carried = useRef<Carried | null>(null);
   const [dragging, setDragging] = useState<{ repo: string; path: string } | null>(null);
   const [over, setOver] = useState<string | null>(null);
   /** Where the pointer went down, before it has moved far enough to be a drag. */
-  const pressed = useRef<{
-    repo: string;
-    path: string;
-    kind: "file" | "dir";
-    x: number;
-    y: number;
-  } | null>(null);
+  const pressed = useRef<(Carried & { x: number; y: number }) | null>(null);
+  /** The tree's own root, so a repo drag measures this tree's headings only. */
+  const box = useRef<HTMLDivElement>(null);
+  /**
+   * The repositories and the reorder callback as they are *now*.
+   *
+   * A repo drag reorders live on every crossing, and the pointer handlers are
+   * bound once — reading through refs keeps them from carrying a list that was
+   * true when the press began and stale by the second crossing.
+   */
+  const reposRef = useRef(p.repos);
+  reposRef.current = p.repos;
+  const reorderRef = useRef(p.onReorderRepo);
+  reorderRef.current = p.onReorderRepo;
   /** Which drop target the pointer is currently over, resolved from the DOM. */
   const target = useRef<{ repo: string; dir: string } | { split: true } | null>(null);
   /**
@@ -332,7 +359,7 @@ export const FileTree = memo(function FileTree(p: Props) {
    * are below all of that: a press, a threshold, `elementFromPoint` to find
    * the folder under the pointer, and a drop on release.
    */
-  const dragHandle = (repo: string, path: string, kind: "file" | "dir") => ({
+  const dragHandle = (repo: string, path: string, kind: Carried["kind"]) => ({
     onPointerDown: (e: React.PointerEvent) => {
       if (e.button !== 0) return;
       pressed.current = { repo, path, kind, x: e.clientX, y: e.clientY };
@@ -367,11 +394,7 @@ export const FileTree = memo(function FileTree(p: Props) {
    * anything inside it, which would ask the filesystem to put a folder inside a
    * folder that is about to move.
    */
-  const allowed = (
-    it: { repo: string; path: string; kind: "file" | "dir" } | null,
-    repoPath: string,
-    dir: string,
-  ) => {
+  const allowed = (it: Carried | null, repoPath: string, dir: string) => {
     if (!it) return false;
     if (it.repo !== repoPath) return it.kind === "file";
     const from = it.path.includes("/") ? it.path.slice(0, it.path.lastIndexOf("/")) : "";
@@ -388,6 +411,31 @@ export const FileTree = memo(function FileTree(p: Props) {
   });
 
   useEffect(() => {
+    /**
+     * Slide the dragged repository to wherever the pointer's y now says.
+     *
+     * Live, the way the tab strip reorders: a list that visibly gives way says
+     * where the drop will land without a separate indicator. The measure is
+     * each repository's whole block, not just its heading — an expanded
+     * repository is mostly its files, and having to cross all of them to pass
+     * it is what makes the give-way read as one list rather than a jump.
+     */
+    const reorderTo = (repoPath: string, y: number) => {
+      const el = box.current;
+      if (!el) return;
+      const list = reposRef.current;
+      const from = list.findIndex((r) => r.path === repoPath);
+      if (from === -1) return;
+      let to = 0;
+      for (const block of el.querySelectorAll<HTMLElement>(".tree-repo")) {
+        const r = block.getBoundingClientRect();
+        if (y > r.top + r.height / 2) to += 1;
+      }
+      // Past its own midpoint counts itself; settle on the slot, not the gap.
+      if (to > from) to -= 1;
+      if (to === from) return;
+      reorderRef.current(repoPath, to);
+    };
     const move = (e: PointerEvent) => {
       const start = pressed.current;
       if (!start) return;
@@ -400,6 +448,10 @@ export const FileTree = memo(function FileTree(p: Props) {
         // live — a class on <body> is what turns it on.
         if (start.kind === "file") document.body.classList.add("tree-drag", "from-main");
         trace("drag start", { path: start.path, kind: start.kind });
+      }
+      if (carried.current.kind === "repo") {
+        reorderTo(carried.current.repo, e.clientY);
+        return;
       }
       const spot = (document.elementFromPoint(e.clientX, e.clientY) as Element | null)
         ?.closest<HTMLElement>("[data-drop-key], [data-drop-pane]");
@@ -605,6 +657,7 @@ export const FileTree = memo(function FileTree(p: Props) {
   return (
     <div
       className="tree"
+      ref={box}
       // A completed drag ends on a row, and the click that follows would open
       // or toggle it — swallowed here, once, at the capture phase.
       onClickCapture={(e) => {
@@ -810,6 +863,38 @@ export const FileTree = memo(function FileTree(p: Props) {
               >
                 Collapse all
               </button>
+              {/* The drag without the steady hand: the same reorder, one step
+                  at a time, reachable from the keyboard. */}
+              {p.repos.findIndex((r) => r.path === menu.repo) > 0 && (
+                <button
+                  className="ctx-item"
+                  onClick={() =>
+                    act(() =>
+                      p.onReorderRepo(
+                        menu.repo,
+                        p.repos.findIndex((r) => r.path === menu.repo) - 1,
+                      ),
+                    )
+                  }
+                >
+                  Move up
+                </button>
+              )}
+              {p.repos.findIndex((r) => r.path === menu.repo) < p.repos.length - 1 && (
+                <button
+                  className="ctx-item"
+                  onClick={() =>
+                    act(() =>
+                      p.onReorderRepo(
+                        menu.repo,
+                        p.repos.findIndex((r) => r.path === menu.repo) + 1,
+                      ),
+                    )
+                  }
+                >
+                  Move down
+                </button>
+              )}
               <span className="ctx-rule" />
               <button
                 className="ctx-item"
@@ -843,10 +928,15 @@ export const FileTree = memo(function FileTree(p: Props) {
         const changed = changedByRepo[r.path] ?? 0;
         return (
           <div className="tree-repo" key={r.path}>
+            {/* Handle and drop spot at once, and not in conflict: the handle is
+                what a press on the heading starts, the drop spot is where a
+                file dragged onto it lands. Which gesture this is was settled at
+                the press, by what was pressed. */}
             <button
               className={`row repo ${r.path === p.activeRepoPath ? "current" : ""} ${
                 over === `${r.path}::root` ? "over" : ""
-              }`}
+              } ${dragging?.repo === r.path && dragging.path === "" ? "lifted" : ""}`}
+              {...dragHandle(r.path, "", "repo")}
               {...dropSpot(r.path, "", `${r.path}::root`)}
               onClick={() => p.onToggle(key)}
               aria-expanded={open}

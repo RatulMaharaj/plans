@@ -1,5 +1,5 @@
 ---
-status: busy
+status: done
 ---
 # Reorder repos
 
@@ -115,17 +115,28 @@ order is exactly the kind of thing that should stay personal.
 
 ## Next
 
-- [ ] `kind: "repo"` joins the carried union; `dragHandle` on the repo
+- [x] `kind: "repo"` joins the carried union; `dragHandle` on the repo
       heading, branch in the move/up handlers that computes an insertion index
       from heading midpoints and skips drop-spot logic and the `tree-drag`
-      class entirely
-- [ ] Click-swallow extended to headings so a drop does not toggle the repo
-- [ ] `onReorderRepo(fromPath, toIndex)` prop; App splices `repos`,
+      class entirely — the midpoints measured are the whole `.tree-repo`
+      block's, not the heading's: an expanded repository is mostly its files,
+      and having to cross them to pass it is what makes the list read as one
+- [x] Click-swallow extended to headings so a drop does not toggle the repo —
+      the existing `didDrag` capture on `.tree` already covered them once the
+      heading could start a drag at all
+- [x] `onReorderRepo(fromPath, toIndex)` prop; App splices `repos`,
       persistence rides the existing `KEY.repos` effect
-- [ ] Live reorder under the pointer, tab-strip style; insertion-line fallback
+- [x] Live reorder under the pointer, tab-strip style; insertion-line fallback
       only if it visibly stutters
-- [ ] Context-menu "Move up" / "Move down" for keyboard parity, if the open
-      question resolves yes
-- [ ] e2e: drag the second heading above the first, assert tree order and
-      that it survives reload; drag ending on a heading does not collapse it;
-      a file drag onto a heading still moves the file to that repo's root
+- [x] Context-menu "Move up" / "Move down" for keyboard parity — it resolved
+      yes: two conditional items, hidden at the ends of the list
+- [x] e2e: drag the second heading above the first, assert tree order and that
+      the order localStorage holds followed it (read from storage rather than
+      reloading — the harness re-seeds `plans.repos.v1` on every navigation);
+      drag ending on a heading does not collapse it; the existing "a file
+      dragged into another repository is copied" test still covers a file drag
+      onto a heading
+
+The other open questions stand where the plan left them: a dropped folder
+still appends, the filter does not suppress the drag, and the only affordance
+is a `grabbing` cursor while the heading is held.
