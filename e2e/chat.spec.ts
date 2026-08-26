@@ -916,6 +916,41 @@ test("the buffer is on disk before the quote is sent", async ({ page }) => {
   expect(sent.text).toContain("Edited here.");
 });
 
+test("a refused save cancels the rewrite rather than quoting a file that isn't there", async ({
+  page,
+}) => {
+  await open(page, { settings: { autosave: "manual" } });
+  await openPlan(page);
+  const editor = page.locator(".milkdown .ProseMirror");
+  await editor.click();
+
+  await page.locator(".milkdown .ProseMirror p", { hasText: "A plan" }).click();
+  await page.keyboard.press("End");
+  await page.keyboard.type(" Edited here.");
+  await expect(editor).toContainText("Edited here.");
+
+  // Something else writes the file while the instruction is being typed, so
+  // the flush on the way to the agent is refused.
+  await page.evaluate(() => {
+    (window as any).__fake.repos[0].files["plans/first.md"] = "# First\n\nTheirs.\n";
+  });
+
+  const para = await selectParagraph(page, "Edited here.");
+  await para.click({ button: "right" });
+  await page.locator(".ctx-item", { hasText: "Rewrite" }).click();
+  await page.locator(".matter-sheet textarea").fill("tighten it");
+  await page.locator(".matter-sheet .act", { hasText: "Rewrite" }).click();
+
+  // The conflict is what the reader is asked about; no turn goes out quoting
+  // a passage the agent would not find.
+  await expect(page.locator(".conflict")).toBeVisible();
+  expect(await calls(page, "agent_prompt")).toBe(0);
+  const onDisk = await page.evaluate(
+    () => (window as any).__fake.repos[0].files["plans/first.md"] as string,
+  );
+  expect(onDisk).toContain("Theirs.");
+});
+
 test("the rewrite prompt is editable, and is what gets sent", async ({ page }) => {
   await open(page);
   await openPlan(page);

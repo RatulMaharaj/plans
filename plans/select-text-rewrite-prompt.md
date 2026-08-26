@@ -82,6 +82,12 @@ see. `handOff` gets away without flushing because it points at the whole file;
 this seed points *into* it, so the rewrite path calls `flush()` first — the
 same call `openFile` already makes before switching buffers (src/App.tsx:1906).
 
+And it has to *check* the flush. A refused write — a conflict, a disk error —
+leaves the quote describing a file that does not exist, and an agent handed
+that goes and rewrites whatever it finds instead. So `flush` answers whether
+the buffer reached disk, and the rewrite path sends nothing when it did not;
+the conflict bar is already on screen saying why.
+
 ## The template
 
 A `REWRITE_PROMPT` in src/agent.ts beside `HANDOFF_PROMPT` and
@@ -145,6 +151,8 @@ mode is where prose gets reworked; start there.
       e2e/chat.spec.ts's handoff tests)
 - [x] e2e: no selection → no Rewrite item; dirty buffer → flushed before the
       seed is sent
+- [x] e2e: a file changed underneath the edit → the conflict shows and no
+      `agent_prompt` goes out
 
 ## What landed
 
@@ -171,14 +179,23 @@ else: no API call, no splice into the document, no accept/reject overlay.
   worse than one that is absent.
 - Placeholders are filled in one pass through a replacer function: someone's
   prose containing `$&` must not become a substitution of its own.
+- **The flush is checked, and the file is held.** `flush` now returns whether
+  the buffer is on disk (`true` also when there was nothing pending), and the
+  rewrite path drops the turn when it isn't — the only caller that cares,
+  because it is the only one about to tell an agent what a file contains. The
+  sheet also closes before the write finishes, so the seed re-opens the file it
+  names if the active buffer moved while the write was in flight (`activeRef`,
+  the same check `handOff` makes for a file that isn't open); a memory buffer
+  has nothing to re-open, so that case drops the turn too.
 
 Settled from the open questions: the seed lands in the file's current chat, as
 handoff's does; scroll restoration is left to the existing by-position reload;
 `{lines}` earns its keep because it is one `indexOf` and it stays silent when
 it cannot be sure.
 
-Not verified here: this run had no package manager available, so `tsc`, the
-settings-schema generator and Playwright could not be run — the two
+Not verified here (this run, and the review pass that followed it): no package
+manager was available, so `tsc`, the settings-schema generator and Playwright
+could not be run — the two
 `settings.schema.json` copies were updated by hand to match what the generator
 emits for a new prompt field (a `string` with the doc comment flattened into
 `description`, and no `default`, exactly as the other two prompts have it). CI

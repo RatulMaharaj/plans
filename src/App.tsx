@@ -277,6 +277,15 @@ export default function App() {
   const openFileRef = useRef<
     ((repo: string, path: string, retrying?: boolean) => Promise<void>) | null
   >(null);
+  /**
+   * Which buffer is active *now*, readable from inside an awaited callback —
+   * a closure's `activeRepoPath`/`activePath` are whatever they were when it
+   * was made, which is exactly the thing an async path needs to check against.
+   */
+  const activeRef = useRef<{ repo: string | null; path: string | null }>({
+    repo: null,
+    path: null,
+  });
 
   /** Zen: the page alone. Deliberately not persisted — it's a mood, not a setting. */
   const [zen, setZen] = useState(false);
@@ -490,6 +499,9 @@ export default function App() {
    * `activeRepo` and taking the window down with them.
    */
   const activeRepoOrPath = activeRepo?.path ?? activeRepoPath ?? "";
+
+  // Kept in step during render, like `openFileRef` below it.
+  activeRef.current = { repo: activeRepoPath, path: activePath };
 
   const status = activeRepoPath ? (statusByRepo[activeRepoPath] ?? null) : null;
 
@@ -1693,9 +1705,18 @@ export default function App() {
   const saveTimer = useRef<number | null>(null);
   const pending = useRef<{ repo: string; path: string; text: string } | null>(null);
 
-  const flush = useCallback(async () => {
+  /**
+   * Write the pending buffer out.
+   *
+   * Answers whether the buffer is on disk: `true` when the write landed (or
+   * there was nothing to write), `false` when it was refused — a conflict, or
+   * an error already shown. Most callers save because it is time to save and
+   * can ignore the answer; one — the rewrite seed — is about to tell an agent
+   * what the file contains, and must not say so when it doesn't.
+   */
+  const flush = useCallback(async (): Promise<boolean> => {
     const p = pending.current;
-    if (!p) return;
+    if (!p) return true;
     pending.current = null;
     writing.current = true;
     try {
@@ -1710,6 +1731,7 @@ export default function App() {
       // Only the repository that was written to. Re-reading every open repo's
       // status on each autosave is a lot of work for one file's worth of news.
       void refreshStatusFor(p.repo);
+      return true;
     } catch (e) {
       if (String(e).includes("STALE")) {
         /**
@@ -1722,7 +1744,8 @@ export default function App() {
           stamp.current = await api.writePlan(p.repo, p.path, p.text).catch(() => null);
           setDirty(false);
           void refreshFiles();
-          return;
+          // No stamp means even the unconditional write failed.
+          return stamp.current !== null;
         }
         // Put the edit back so no keystroke is lost while the reader decides.
         pending.current = p;
@@ -1731,9 +1754,10 @@ export default function App() {
           () => "",
         );
         setConflict({ theirs });
-        return;
+        return false;
       }
       notify(String(e), "error");
+      return false;
     } finally {
       writing.current = false;
     }
@@ -1790,13 +1814,18 @@ export default function App() {
    *
    * The buffer is flushed first. `handOff` gets away without it because it
    * points at the whole file; this points *into* one, and a quote from a file
-   * the agent cannot see is a quote it cannot find.
+   * the agent cannot see is a quote it cannot find. If the flush is refused —
+   * a conflict, a failed write — there is no turn to send: the quote would
+   * describe a file that doesn't exist, and the agent would go rewrite
+   * whatever it found instead. The conflict bar is already on screen saying
+   * what happened.
    */
   const rewriteSelection = useCallback(
     (selection: string) => {
       const text = selection.replace(/\s+$/, "");
+      const r = activeRepoPath;
       const f = activePath;
-      if (!text || !f) return;
+      if (!text || !r || !f) return;
       setAsking({
         title: "Rewrite",
         placeholder: "What should change about it?",
@@ -1807,7 +1836,18 @@ export default function App() {
           const ask = value.trim();
           if (!ask) return;
           void (async () => {
-            await flush();
+            if (!(await flush())) return;
+            // The sheet closed before the write finished, so the buffer
+            // underneath may have changed while we waited. The chat is
+            // per-file: a seed naming this file has to land in this file's
+            // conversation, so bring it back first — the same thing `handOff`
+            // does when it is asked about a file that isn't open.
+            if (activeRef.current.repo !== r || activeRef.current.path !== f) {
+              // A memory buffer is not on disk, so there is nothing to bring
+              // back and nothing the agent could read: drop the turn instead.
+              if (r === MEMORY) return;
+              await openFileRef.current?.(r, f);
+            }
             const fields: Record<string, string> = {
               file: f,
               lines: lineHint(source, text),
@@ -1823,7 +1863,7 @@ export default function App() {
         },
       });
     },
-    [activePath, flush, set, settings.rewritePrompt, source],
+    [activeRepoPath, activePath, flush, set, settings.rewritePrompt, source],
   );
 
   const onSourceChange = useCallback(
