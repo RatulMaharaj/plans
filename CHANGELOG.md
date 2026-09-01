@@ -1,5 +1,108 @@
 # plans
 
+## 0.8.0
+
+### Minor Changes
+
+- 97468fd: Questions the agent asks are now clickable. The app tells the agent it can
+  render forms, so Claude's AskUserQuestion arrives as a question card in the
+  transcript: the suggested answers stack one under the other as little bubbles,
+  descriptions and all (with a single choice, the click is the answer), every
+  question carries the tool's own "type your own answer" box, and
+  Skip tells the model you moved past it rather than killing the turn. Without
+  this the adapter disallowed the tool entirely and the model could only ask in
+  prose you had to answer by hand.
+- 74d5342: A new file is whatever you say it is. There used to be exactly one shape — a
+  title, `status:` frontmatter, a heading — and it was built in Rust, so adding
+  a daily note meant changing the backend.
+
+  The shape now comes from a template, and a template is a markdown file: its
+  frontmatter is its configuration, its body is the body of the file it stamps
+  out. They live in `~/.plans/templates/`, beside the skills, with the ownership
+  the other way round — the skills are the app's and are rewritten on every
+  launch; the templates are yours, seeded once and only read after that, so
+  editing or deleting one sticks.
+
+  Two ship: `plan.md`, which writes exactly what ⌘N always wrote, and
+  `daily-note.md`, a blank file named for today. A template says what it is
+  called (`name`), what its file is called (`fileName`, with `{slug}`,
+  `{title}` and `{date:yyyy-MM-dd}` in it), and what frontmatter the new file
+  starts with (`frontmatter:`, where `{firstStatus}` is the first word of your
+  status vocabulary). A pattern that never mentions the title needs no title, so
+  "New: Daily Note" is one keystroke and no sheet — and asking for today's note
+  when today's note is already there opens it rather than refusing.
+
+  The palette carries one "New: …" command per template, ⌘N stays bound to the
+  first, and the tree's "New file here" opens into the list when there is more
+  than one. Settings names the folder and opens it; the configuration is in the
+  files, not in `settings.json`.
+
+  Underneath, `create_plan` is now `create_file`: it refuses to overwrite and
+  writes the bytes it is handed, and knows nothing about what a plan looks like.
+
+### Patch Changes
+
+- ba70109: "Show all files" shows all folders too. The tree is built from the files a
+  walk returns, so a folder with nothing in it never appeared; in all-files
+  mode the app now asks the disk for the folders as well, on the same walk and
+  skip rules, and merges them in. Markdown mode keeps the tree to what has
+  files, as before.
+- ba70109: `approved` is a recognised plan status. It gets a colour of its own in the
+  tree and the frontmatter panel, sits between `ready` and `busy` in the
+  default status vocabulary (an edited list is left alone), and the plans skill
+  tells agents the word belongs to the human: it is their sign-off, and an
+  agent treats an approved plan the way it treats a ready one.
+- ba70109: The chat title truncates instead of running under the Rename button. The
+  conversation picker's trigger had a fixed 220px cap, wider than a narrow
+  panel's header could give it; it is now also capped by the room that is
+  actually there. This pass also repaired a duplicated block in the stylesheet
+  that had swallowed the rule dimming file locations on tool lines.
+- ba70109: The up arrow in an empty composer walks back through the messages you sent in
+  this conversation, the way a shell does; down walks forward and lands on
+  whatever you had typed before you started browsing. The arrows only enter
+  history from the edges of the text, so they still move the caret in a
+  multi-line message being written.
+- ba70109: "Copy path" in the tree's right-click menu copies the absolute path. The
+  repo-relative path it used to copy could not be pasted into a terminal,
+  another app, or an agent prompt without first working out where the
+  repository lives.
+- ba70109: Dropdown menus are no longer cut off inside sheets. The menu used to render
+  inside the sheet, whose `overflow: hidden` clipped it at the edge; it now
+  renders in a portal at the trigger's measured position, so the folder picker
+  in the new-file sheet opens whole. It follows the trigger on scroll and
+  resize, and still flips above the trigger when there is no room below.
+- 97468fd: A flush now collects the keystrokes still inside the editor's typing
+  debounce. Changes were reported on a pause (~180ms), so a save that ran
+  sooner — ⌘S right after typing, or the rewrite seed flushing before it
+  quotes the file to the agent — saw an empty buffer, called the file saved,
+  and the rewrite went out quoting text that was not on disk yet.
+- ba70109: The "complete this plan" handoff prompt follows the plans skill instead of
+  carrying style rules of its own. The two had drifted into contradiction: the
+  prompt asked for a closing "Next checklist", which the skill forbids, and
+  argued against the step list the skill is built around, so an agent obeying
+  the prompt wrote a plan the skill said was wrong. The prompt now names the
+  move (flesh the plan out, set it ready, touch nothing else) and leaves the
+  shape to the skill. A saved copy of the old default prompt moves to the new
+  one; an edited prompt is left alone.
+- ba70109: A message sent while the agent is mid-turn is queued and sent when the turn
+  finishes, in order. It used to be dropped silently: the composer had already
+  cleared the box by the time the busy guard fired, so what you typed was gone.
+  The transcript says "queued" when this happens, and if the session dies before
+  the queue drains, it says the queued messages went with it.
+- 97468fd: A message queued mid-turn is sent into the conversation it was typed in, not
+  whichever one is on screen when the turn ends — switching chats while a
+  message waited could send it to the wrong conversation, or lose it to a queue
+  that never drained. The in-flight guard is per conversation too, so a send in
+  one chat can no longer queue a message in another.
+- ba70109: The new-file sheet remembers where the last plan in each repository was
+  created and opens on that folder, as long as it still exists. With nothing
+  remembered it falls back to the folder of whatever is open, as before.
+- 97468fd: A new file's name keeps the case you typed: "Meeting Notes" becomes
+  `Meeting-Notes.md`, not `meeting-notes.md`. The `{slug}` token lowercased the
+  title, so the filename silently disagreed with what was in the sheet.
+- 97468fd: Stop now sits inside the composer, at the end of the options row under the
+  box you type in, instead of floating above it over the transcript.
+
 ## 0.7.0
 
 ### Minor Changes
