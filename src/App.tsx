@@ -52,6 +52,13 @@ import { Dropdown } from "./Dropdown";
 import { FileTree, displayName, MARK_WORD, type Mark } from "./FileTree";
 import { FrontmatterSheet } from "./Frontmatter";
 import { NameSheet } from "./NameSheet";
+import {
+  bundledTemplates,
+  loadTemplates,
+  renderContent,
+  renderName,
+  type Template,
+} from "./templates";
 import { MoveSheet } from "./MoveSheet";
 import { TextPrompt } from "./TextPrompt";
 import { SourceView } from "./SourceView";
@@ -292,7 +299,19 @@ export default function App() {
   const [perf, setPerf] = useState(false);
   const [matterOpen, setMatterOpen] = useState(false);
   /** Where a new file is about to be created, while the name is being asked. */
-  const [naming, setNaming] = useState<null | { repo: string; dir: string }>(null);
+  const [naming, setNaming] = useState<null | {
+    repo: string;
+    dir: string;
+    template: Template;
+  }>(null);
+  /*
+   * The templates the reader owns, read from `~/.plans/templates/` once at
+   * launch. The bundled pair stands in until that answers — and goes on
+   * standing in where there is no home directory to read, which is the test
+   * harness — so ⌘N is never a keystroke that does nothing.
+   */
+  const [templates, setTemplates] = useState<Template[]>(bundledTemplates);
+  const [templatesDir, setTemplatesDir] = useState("");
   /**
    * Open buffers, in the order they were opened. Switching writes any pending
    * edit and re-reads from disk, so a tab is a bookmark rather than a second
@@ -894,6 +913,22 @@ export default function App() {
       .syncUserSkills(SKILLS.map((k) => [k.name, k.text] as [string, string]))
       .catch(() => {});
   }, []);
+
+  /*
+   * The templates next door are read rather than written: the folder is seeded
+   * the first time and belongs to the reader after that. Read once at launch —
+   * a template is picked from a menu, and a menu that changes while it is open
+   * is worse than one that is a launch out of date.
+   */
+  useEffect(() => {
+    void loadTemplates().then((found) => {
+      setTemplates(found.templates);
+      setTemplatesDir(found.dir);
+      if (found.skipped.length) {
+        notify(`Skipped ${found.skipped.join(", ")}: no name in the frontmatter`, "error");
+      }
+    });
+  }, [notify]);
 
   useEffect(() => {
     api
@@ -3183,23 +3218,23 @@ export default function App() {
     },
     [foldersIn],
   );
-  const newPlan = useCallback(() => {
-    if (!activeRepo) return;
-    setNaming({
-      repo: activeRepo.path,
-      dir:
-        lastPlanDir(activeRepo.path) ??
-        (activePath?.includes("/") ? activePath.slice(0, activePath.lastIndexOf("/")) : ""),
-    });
-  }, [activeRepo, activePath, lastPlanDir]);
 
-  const createFile = useCallback(
-    async (repoPath: string, relPath: string, title: string) => {
+  /** The tokens every template is rendered against. */
+  const vars = useCallback(
+    (title: string) => ({
+      title,
+      // The first word of the configured vocabulary, which is what the plan
+      // template already treats as "not started yet".
+      firstStatus: statusChoices[0] ?? "draft",
+    }),
+    [statusChoices],
+  );
+
+  const makeFile = useCallback(
+    async (repoPath: string, relPath: string, title: string, template: Template) => {
       setNaming(null);
       try {
-        // The first word of the configured vocabulary, which is what the
-        // frontmatter scaffold already treats as "not started yet".
-        await api.createPlan(repoPath, relPath, title, statusChoices[0] ?? "draft");
+        await api.createFile(repoPath, relPath, renderContent(template, vars(title)));
         // Where this landed is where the next one starts.
         localStorage.setItem(
           `plans.newPlanDir::${repoPath}`,
@@ -3226,8 +3261,53 @@ export default function App() {
         notify(String(e), "error");
       }
     },
-    [refreshFiles, refreshStatus, openFile, notify, statusChoices],
+    [refreshFiles, refreshStatus, openFile, notify, vars],
   );
+
+  /**
+   * Start a new file from a template, in a given repository and folder.
+   *
+   * A template that asks for a title puts the sheet up; one whose filename is
+   * answered by the calendar alone skips it, which is what makes a daily note
+   * a single keystroke. And a date-named file that is already there is today's
+   * note rather than a collision, so it opens instead of refusing.
+   */
+  const newFromTemplate = useCallback(
+    async (template: Template, repoPath: string, dir: string) => {
+      if (template.prompt) {
+        setNaming({ repo: repoPath, dir, template });
+        return;
+      }
+      const name = renderName(template, vars(""));
+      const relPath = dir ? `${dir}/${name}` : name;
+      const there = await api.statPlan(repoPath, relPath).catch(() => "absent");
+      if (there !== "absent") {
+        void openFile(repoPath, relPath);
+        return;
+      }
+      await makeFile(repoPath, relPath, "", template);
+    },
+    [vars, openFile, makeFile],
+  );
+
+  /** ⌘N and the palette: the chosen template, beside whatever is open. */
+  const newHere = useCallback(
+    (template: Template) => {
+      if (!activeRepo) return;
+      void newFromTemplate(
+        template,
+        activeRepo.path,
+        lastPlanDir(activeRepo.path) ??
+          (activePath?.includes("/") ? activePath.slice(0, activePath.lastIndexOf("/")) : ""),
+      );
+    },
+    [activeRepo, activePath, lastPlanDir, newFromTemplate],
+  );
+
+  /** ⌘N alone: the first template, which is the shipped plan unless you moved it. */
+  const newPlan = useCallback(() => {
+    if (templates[0]) newHere(templates[0]);
+  }, [templates, newHere]);
 
   /**
    * The tree's right-click actions. Each takes its own repo, since the tree
@@ -3529,10 +3609,18 @@ export default function App() {
     [fileAction],
   );
 
-  /** New file in a given folder, rather than beside whatever is open. */
-  const newFileIn = useCallback((repoPath: string, dir: string) => {
-    setNaming({ repo: repoPath, dir });
-  }, []);
+  /**
+   * New file in a given folder, rather than beside whatever is open. The tree
+   * names the template it wants by filename; an unknown one falls back to the
+   * first, which is what the menu shows when there is only one to show.
+   */
+  const newFileIn = useCallback(
+    (repoPath: string, dir: string, templateFile?: string) => {
+      const t = templates.find((x) => x.file === templateFile) ?? templates[0];
+      if (t) void newFromTemplate(t, repoPath, dir);
+    },
+    [templates, newFromTemplate],
+  );
 
 
   const onRun = useCallback(
@@ -4309,6 +4397,7 @@ export default function App() {
               onOpenSplit={openInSplit}
               onHandOff={chat === false ? undefined : (repo, path, kind) => void handOff(kind, repo, path)}
               onNewFile={newFileIn}
+              templates={templates}
               onNewFolder={newFolderIn}
               onMove={moveTo}
               onCopy={(from, path, toRepo, dir) => void copyTo(from, path, toRepo, dir)}
@@ -4377,6 +4466,11 @@ export default function App() {
               onKeyboard={() => setKeyboardOpen(true)}
               settingsFilePath={settingsPath}
               onOpenSettingsFile={openSettingsFile}
+              templates={templates}
+              templatesDir={templatesDir}
+              onOpenTemplates={() =>
+                void api.templatesOpen().catch((e) => notify(String(e), "error"))
+              }
             />
           ) : (
             <>
@@ -4926,16 +5020,22 @@ export default function App() {
 
       {naming && (
         <NameSheet
+          label={`New ${naming.template.name}`}
+          nameOf={(title) => renderName(naming.template, vars(title))}
           dir={naming.dir}
           repo={naming.repo}
           repos={shownRepos}
           // Folders belong to a repository, so choosing another starts at
           // that repository's remembered folder, or its root.
-          onRepoChange={(repo) => setNaming({ repo, dir: lastPlanDir(repo) ?? "" })}
+          onRepoChange={(repo) =>
+            setNaming({ repo, dir: lastPlanDir(repo) ?? "", template: naming.template })
+          }
           dirs={folderChoices}
-          onDirChange={(dir) => setNaming({ repo: naming.repo, dir })}
+          onDirChange={(dir) => setNaming({ ...naming, dir })}
           onCancel={() => setNaming(null)}
-          onCreate={(relPath, title) => void createFile(naming.repo, relPath, title)}
+          onCreate={(relPath, title) =>
+            void makeFile(naming.repo, relPath, title, naming.template)
+          }
         />
       )}
 
@@ -4960,7 +5060,8 @@ export default function App() {
         onOpenFile={(r, p) => void openFile(r, p)}
         onSelectRepo={setActiveRepoPath}
         onAddRepo={() => void addRepo()}
-        onNewPlan={newPlan}
+        templates={templates}
+        onNewFromTemplate={newHere}
         onSave={() => {
           if (saveTimer.current) clearTimeout(saveTimer.current);
           void flush();

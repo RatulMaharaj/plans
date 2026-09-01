@@ -1508,6 +1508,9 @@ input[type="range"]::-webkit-slider-thumb {
 .ctx-item:hover { background: var(--shade); color: var(--ink); }
 /* Anything that loses work says so before you click it. */
 .ctx-item.warn:hover { color: var(--git-mod); }
+/* A template under "New file here": indented, so the list reads as its answer. */
+.ctx-item.ctx-sub { padding-left: 26px; color: var(--ink-3); }
+.ctx-item.ctx-sub:hover { color: var(--ink); }
 .ctx-rule { height: 1px; margin: 4px 0; background: var(--rule); }
 
 /* --- frontmatter: a sheet, not part of the page -------------------------- */

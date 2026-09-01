@@ -223,8 +223,18 @@ type Props = {
   onTerminal: (repoPath: string) => void;
   /** A file dragged onto the editor's far edge opens in the split pane. */
   onOpenSplit: (repoPath: string, relPath: string) => void;
-  /** dir is repo-relative, "" for the repo root. */
-  onNewFile: (repoPath: string, dir: string) => void;
+  /**
+   * dir is repo-relative, "" for the repo root. `templateFile` names which
+   * template to stamp out; omitted means the first, which is what the menu
+   * offers when there is only one.
+   */
+  onNewFile: (repoPath: string, dir: string, templateFile?: string) => void;
+  /**
+   * What "New file here" can make. One template is a plain menu item; more
+   * than one turns it into a heading with the names under it, because picking
+   * a template is the question and a menu is where the tree asks questions.
+   */
+  templates: { file: string; name: string }[];
   onRename: (repoPath: string, relPath: string) => void;
   onMoveTo: (repoPath: string, relPath: string) => void;
   onNewFolder: (repoPath: string, dir: string) => void;
@@ -277,6 +287,13 @@ function dirKeys(nodes: Node[], repoPath: string, out: string[] = []): string[] 
  */
 export const FileTree = memo(function FileTree(p: Props) {
   const [menu, setMenu] = useState<MenuAt | null>(null);
+  /** Whether this menu's template list is showing. Per opening, not per tree. */
+  const [newOpen, setNewOpen] = useState(false);
+  // Before the measuring below, and before paint: a menu opened afresh starts
+  // collapsed, whatever the last one was left showing.
+  useLayoutEffect(() => {
+    setNewOpen(false);
+  }, [menu]);
   const menuRef = useRef<HTMLDivElement>(null);
   /**
    * Where the menu actually goes, once its size is known.
@@ -303,7 +320,9 @@ export const FileTree = memo(function FileTree(p: Props) {
       x: Math.max(pad, Math.min(x, window.innerWidth - width - pad)),
       y: Math.max(pad, Math.min(y, window.innerHeight - height - pad)),
     });
-  }, [menu]);
+    // Opening the template list makes the menu taller, so it is measured again
+    // — otherwise a menu opened near the bottom grows off the window.
+  }, [menu, newOpen]);
   /**
    * What is being dragged, and where it is hovering.
    *
@@ -675,6 +694,45 @@ export const FileTree = memo(function FileTree(p: Props) {
     fn();
   };
 
+  /**
+   * "New file here", which is a question once there is more than one answer.
+   *
+   * A single template keeps the item exactly as it was — one press, one file.
+   * Several turn it into a disclosure: the templates open under it, indented,
+   * rather than flying out sideways where a menu opened near the window's edge
+   * would have to fight for room.
+   */
+  const newFileItems = (repo: string, dir: string) => {
+    if (p.templates.length < 2) {
+      return (
+        <button className="ctx-item" onClick={() => act(() => p.onNewFile(repo, dir))}>
+          New file here
+        </button>
+      );
+    }
+    return (
+      <>
+        <button
+          className="ctx-item"
+          aria-expanded={newOpen}
+          onClick={() => setNewOpen((o) => !o)}
+        >
+          New file here{newOpen ? " ⌄" : " ›"}
+        </button>
+        {newOpen &&
+          p.templates.map((t) => (
+            <button
+              key={t.file}
+              className="ctx-item ctx-sub"
+              onClick={() => act(() => p.onNewFile(repo, dir, t.file))}
+            >
+              {t.name}
+            </button>
+          ))}
+      </>
+    );
+  };
+
   return (
     <div
       className="tree"
@@ -717,21 +775,10 @@ export const FileTree = memo(function FileTree(p: Props) {
               >
                 Open to the side
               </button>
-              <button
-                className="ctx-item"
-                onClick={() =>
-                  act(() =>
-                    p.onNewFile(
-                      menu.repo,
-                      menu.path.includes("/")
-                        ? menu.path.slice(0, menu.path.lastIndexOf("/"))
-                        : "",
-                    ),
-                  )
-                }
-              >
-                New file here
-              </button>
+              {newFileItems(
+                menu.repo,
+                menu.path.includes("/") ? menu.path.slice(0, menu.path.lastIndexOf("/")) : "",
+              )}
               {p.onHandOff && (
                 <>
                   <button
@@ -750,12 +797,7 @@ export const FileTree = memo(function FileTree(p: Props) {
               )}
             </>
           ) : (
-            <button
-              className="ctx-item"
-              onClick={() => act(() => p.onNewFile(menu.repo, menu.path))}
-            >
-              New file here
-            </button>
+            newFileItems(menu.repo, menu.path)
           )}
 
           {menu.kind !== "file" && (

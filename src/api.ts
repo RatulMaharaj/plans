@@ -213,12 +213,12 @@ export const api = {
     invoke<string>("write_plan", { repo, relPath, content, expectStamp }),
 
   /**
-   * Write a new plan. `status` is the word its frontmatter starts with — the
-   * vocabulary is a setting, so the caller supplies it; omit it for a file
-   * that is not a plan.
+   * Write a file that is not there yet, with exactly these bytes. What a new
+   * file looks like is a template's business, not the backend's — this refuses
+   * to overwrite and nothing else.
    */
-  createPlan: (repo: string, relPath: string, title: string, status?: string | null) =>
-    invoke<void>("create_plan", { repo, relPath, title, status: status ?? null }),
+  createFile: (repo: string, relPath: string, content: string) =>
+    invoke<void>("create_file", { repo, relPath, content }),
 
   createFolder: (repo: string, relPath: string) =>
     invoke<void>("create_folder", { repo, relPath }),
@@ -286,6 +286,19 @@ export const api = {
   /** Write the bundled skills to ~/.plans/skills — returns where they went. */
   syncUserSkills: (skills: [string, string][]) =>
     invoke<string>("sync_user_skills", { skills }),
+
+  /**
+   * Read ~/.plans/templates, seeding it with these defaults if it is not there
+   * yet. Unlike the skills these belong to the reader: the folder is seeded
+   * once, and after that the app only reads it.
+   */
+  templatesSync: (defaults: [string, string][]) =>
+    invoke<{ dir: string; files: { name: string; text: string }[] }>("templates_sync", {
+      defaults,
+    }),
+
+  /** Show the templates folder in the platform's file manager. */
+  templatesOpen: () => invoke<void>("templates_open"),
 
   gitStatus: (repo: string, scope: string[]) =>
     invoke<any>("git_status", { repo, scope }).then(camelStatus),

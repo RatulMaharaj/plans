@@ -9,17 +9,15 @@ import { useEffect, useRef, useState } from "react";
 import type { RepoInfo } from "./api";
 import { Dropdown } from "./Dropdown";
 
-export function slugOf(title: string) {
-  return (
-    title
-      .trim()
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, "-")
-      .replace(/^-|-$/g, "") || "untitled"
-  );
-}
-
 type Props = {
+  /**
+   * What the sheet is making, and what it will be called. The filename used to
+   * be `slug(title) + ".md"` and could be nothing else; it is now the chosen
+   * template's pattern, rendered here so the path under the field stays honest
+   * while you type.
+   */
+  label: string;
+  nameOf: (title: string) => string;
   /** Repo-relative folder the file will land in; "" is the repo root. */
   dir: string;
   /** Which repository it lands in, and the ones it could land in instead. */
@@ -34,6 +32,8 @@ type Props = {
 };
 
 export function NameSheet({
+  label,
+  nameOf,
   dir,
   repo,
   repos,
@@ -50,7 +50,7 @@ export function NameSheet({
     field.current?.focus();
   }, []);
 
-  const name = `${slugOf(title)}.md`;
+  const name = nameOf(title);
   const relPath = dir ? `${dir}/${name}` : name;
 
   const submit = () => {
@@ -62,7 +62,7 @@ export function NameSheet({
     <div className="matter-scrim" onMouseDown={onCancel}>
       <div className="matter-sheet" onMouseDown={(e) => e.stopPropagation()}>
         <div className="matter-head">
-          <span className="tag">New file</span>
+          <span className="tag">{label}</span>
         </div>
 
         {/* Where it goes, chosen rather than assumed. */}
