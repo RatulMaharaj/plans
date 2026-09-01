@@ -326,7 +326,9 @@ test("a new folder appears, and holds a file", async ({ page }) => {
   await expect(page.locator(".row.dir", { hasText: "ideas" })).toBeVisible();
 
   await page.locator(".row.dir", { hasText: "ideas" }).click({ button: "right" });
+  // More than one template, so the item opens the list rather than acting.
   await page.locator(".ctx-item", { hasText: "New file here" }).click();
+  await page.locator(".ctx-item.ctx-sub", { hasText: "Plan" }).click();
   await page.locator(".name-field").fill("First idea");
   await page.keyboard.press("Enter");
 
@@ -361,6 +363,7 @@ test("a new file is ready to type in", async ({ page }) => {
   await open(page);
   await page.locator(".row.repo").first().click({ button: "right" });
   await page.locator(".ctx-item", { hasText: "New file here" }).click();
+  await page.locator(".ctx-item.ctx-sub", { hasText: "Plan" }).click();
   await page.locator(".name-field").fill("Straight in");
   await page.keyboard.press("Enter");
 

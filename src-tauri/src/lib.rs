@@ -696,8 +696,15 @@ fn write_plan(
     Ok(stamp_of(content.as_bytes()))
 }
 
+/// Write a file that is not there yet, with exactly the bytes handed over.
+///
+/// This used to be `create_plan`, and it knew what a plan looked like: it built
+/// `---\nstatus: …\n---\n# Title\n\n` itself, which made a plan the only file
+/// the app could make and made every other shape a change to this file. The
+/// shape now comes from a template the reader owns, so all that is left here is
+/// the part that has to be here — refusing to overwrite, and `safe_join`.
 #[tauri::command]
-fn create_plan(repo: String, rel_path: String, title: String, status: Option<String>) -> R<()> {
+fn create_file(repo: String, rel_path: String, content: String) -> R<()> {
     let p = safe_join(&repo, &rel_path)?;
     if p.exists() {
         return Err(format!("{rel_path} already exists"));
@@ -705,23 +712,7 @@ fn create_plan(repo: String, rel_path: String, title: String, status: Option<Str
     if let Some(parent) = p.parent() {
         std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
-    /*
-     * A new plan starts with a status.
-     *
-     * Every plan acquires one eventually, and until it does it is invisible to
-     * everything that reads them — the tree's dot, the status filter, the
-     * ordering. Writing it at creation means the file is a plan from its first
-     * save rather than after someone remembers to say so.
-     *
-     * The word comes from the caller, because the vocabulary is a setting and
-     * not something this layer knows. Nothing is written when it has none,
-     * which keeps this useful for a file that is not a plan at all.
-     */
-    let head = match status.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
-        Some(s) => format!("---\nstatus: {s}\n---\n"),
-        None => String::new(),
-    };
-    std::fs::write(&p, format!("{head}# {title}\n\n")).map_err(|e| e.to_string())
+    std::fs::write(&p, content).map_err(|e| format!("could not write {rel_path}: {e}"))
 }
 
 /// Make a folder. It will be empty, and git will not record it until something
@@ -904,6 +895,93 @@ fn sync_user_skills(skills: Vec<(String, String)>) -> R<String> {
         std::fs::write(dir.join("SKILL.md"), text).map_err(|e| e.to_string())?;
     }
     Ok(root.display().to_string())
+}
+
+/// The new-file templates: `~/.plans/templates/`, beside the skills.
+fn templates_root() -> R<PathBuf> {
+    let home = std::env::var("HOME").map_err(|e| e.to_string())?;
+    Ok(Path::new(&home).join(".plans").join("templates"))
+}
+
+#[derive(Serialize)]
+struct TemplateFile {
+    /// The filename, extension included — a template's identity.
+    name: String,
+    text: String,
+}
+
+#[derive(Serialize)]
+struct Templates {
+    /// Where they live, so the settings page can name it and open it.
+    dir: String,
+    files: Vec<TemplateFile>,
+}
+
+/// Seed the templates folder the first time, then read whatever is in it.
+///
+/// The skills next door are app-owned and rewritten on every launch; these are
+/// the reader's, so the seeding is conditioned on the *folder* rather than on
+/// each file. Writing back any default that had gone missing would mean a
+/// template you deleted came back every launch — the one thing that makes a
+/// folder feel like it is not yours.
+#[tauri::command]
+fn templates_sync(defaults: Vec<(String, String)>) -> R<Templates> {
+    let root = templates_root()?;
+    if !root.exists() {
+        std::fs::create_dir_all(&root).map_err(|e| e.to_string())?;
+        for (name, text) in &defaults {
+            // Names come from the app's own bundled table, but stay careful.
+            if name.is_empty() || name.starts_with('.') || name.contains(['/', '\\']) {
+                return Err(format!("suspicious template name: {name}"));
+            }
+            std::fs::write(root.join(name), text).map_err(|e| e.to_string())?;
+        }
+    }
+    let mut files = Vec::new();
+    for entry in std::fs::read_dir(&root).map_err(|e| e.to_string())? {
+        let entry = entry.map_err(|e| e.to_string())?;
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if name.starts_with('.') || !name.to_lowercase().ends_with(".md") {
+            continue;
+        }
+        if !entry.path().is_file() {
+            continue;
+        }
+        // A file that will not read is one template missing, not a failed
+        // launch: the rest of the folder still works.
+        if let Ok(text) = std::fs::read_to_string(entry.path()) {
+            files.push(TemplateFile { name, text });
+        }
+    }
+    files.sort_by(|a, b| a.name.cmp(&b.name));
+    Ok(Templates {
+        dir: root.display().to_string(),
+        files,
+    })
+}
+
+/// Hand the templates folder to the platform's file manager. Created first if
+/// it is somehow not there, because "nothing happened" is the worst answer to
+/// a press.
+#[tauri::command]
+fn templates_open() -> R<()> {
+    let root = templates_root()?;
+    std::fs::create_dir_all(&root).map_err(|e| e.to_string())?;
+    let path = root.to_string_lossy().into_owned();
+    #[cfg(target_os = "macos")]
+    {
+        exec("open", &[path.as_str()]).map(|_| ())
+    }
+    #[cfg(target_os = "linux")]
+    {
+        exec("xdg-open", &[path.as_str()]).map(|_| ())
+    }
+    #[cfg(target_os = "windows")]
+    {
+        // The empty string is `start`'s window title, which it otherwise takes
+        // from the first quoted argument — the path.
+        exec("cmd", &["/C", "start", "", path.as_str()]).map(|_| ())
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1583,7 +1661,7 @@ pub fn run() {
             read_asset,
             read_plan,
             write_plan,
-            create_plan,
+            create_file,
             create_folder,
             rename_plan,
             copy_plan,
@@ -1599,6 +1677,8 @@ pub fn run() {
             reveal_in_finder,
             open_in_terminal,
             sync_user_skills,
+            templates_sync,
+            templates_open,
             git_status,
             git_diff,
             git_head_text,

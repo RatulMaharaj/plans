@@ -34,6 +34,14 @@ type Props = {
   settingsFilePath: string;
   /** Hand settings.json to whatever edits JSON here. */
   onOpenSettingsFile: () => void;
+  /**
+   * The new-file templates that were found, and where. Named rather than
+   * edited here: a template is a markdown file, so the file is its own UI and
+   * this page only says where to find it.
+   */
+  templates: { name: string }[];
+  templatesDir: string;
+  onOpenTemplates: () => void;
 };
 
 /**
@@ -72,6 +80,9 @@ export function SettingsPage({
   onKeyboard,
   settingsFilePath,
   onOpenSettingsFile,
+  templates,
+  templatesDir,
+  onOpenTemplates,
 }: Props) {
   const [q, setQ] = useState("");
 
@@ -324,6 +335,24 @@ export function SettingsPage({
             value={s.statuses}
             onChange={(statuses) => onChange({ statuses })}
           />
+          {/*
+            The templates are configured in the templates, not here. A markdown
+            file with frontmatter is a better place to write a markdown file
+            with frontmatter than a JSON string in this page's file — so this
+            row is a pointer: what was found, and the way to the folder.
+          */}
+          <div className="setting-row static">
+            <span className="setting-label">
+              New file templates
+              <span className="setting-hint">
+                {templatesDir || "No templates folder yet"}
+                {templates.length ? ` — ${templates.map((t) => t.name).join(", ")}` : ""}
+              </span>
+            </span>
+            <button className="act" onClick={onOpenTemplates}>
+              Open folder
+            </button>
+          </div>
         </Group>
 
         {/* ---- source ---------------------------------------------------- */}

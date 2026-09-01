@@ -1,5 +1,5 @@
 ---
-status: busy
+status: done
 ---
 # Custom new files
 
@@ -128,33 +128,55 @@ first for prompt-less templates and opens on a hit.
 - Cursor-position markers, snippet variables, or anything TextExpander-shaped
   inside the body. Tokens stay the small fixed set above.
 
-## Open questions
+## Open questions, answered on the way in
 
-- Should the daily note default into a fixed folder (`notes/` or `daily/`),
-  or into the last-used directory like plans do (src/App.tsx:3171-3174)? A
-  `dir` frontmatter key on the template would answer it; I have left it out
-  until the answer is known.
-- Is `~/.plans/templates/` right, or should templates sit beside
-  `settings.json` in the config directory? The `~/.plans/` spelling is easier
-  to say and already exists; the config directory is more conventional.
-- Does the palette need fuzzy access to templates under the bare word "new"
-  plus the template name, or is the "New: X" prefix enough?
+- **Where the daily note lands.** Into the last-used directory, like plans
+  (src/App.tsx:3171-3174). No `dir` key: it is the smaller behaviour, it is
+  the one already there, and adding a key is easy later while taking one away
+  is not. Say so and it can be revisited.
+- **`~/.plans/templates/`**, as the plan leaned. It sits beside the skills, it
+  is easier to say than the config directory, and the app already owns that
+  folder.
+- **"New: X" is enough.** Each command also carries the terms "new file
+  template create", so the bare word "new" reaches every one of them, and the
+  filename pattern is the command's hint.
+
+Two things came out differently from the sketch, both deliberate:
+
+- **Seeding is conditioned on the folder, not on each file.** "Write the
+  default if it is missing" and "deleting a default sticks" cannot both be
+  true; a template you deleted coming back every launch is the one thing that
+  would make the folder feel like it is not yours. So the defaults are written
+  when the folder is created and never again. An empty folder falls back to
+  the bundled pair in the frontend, so ⌘N is never a keystroke that does
+  nothing.
+- **The tree's submenu opens downward, not sideways.** The context menu is
+  already measured-then-placed to keep it on screen; a flyout would need that
+  arithmetic a second time, in the direction with least room. "New file here"
+  discloses the templates under it, indented, and the menu re-measures.
 
 ## Next
 
-- [ ] `src-tauri/src/lib.rs` - add `create_file(repo, relPath, content)`
-      beside `create_plan`; keep `safe_join` and the exists refusal
-- [ ] `src/api.ts` - expose `createFile`, deprecate the status-word
-      `createPlan` signature
-- [ ] `src/templates.ts` (new) - discover `~/.plans/templates/`, parse
+- [x] `src-tauri/src/lib.rs` - `create_plan` retired in favour of
+      `create_file(repo, relPath, content)`; `safe_join` and the exists
+      refusal kept. Plus `templates_sync` and `templates_open`.
+- [x] `src/api.ts` - `createFile` replaces `createPlan`; `templatesSync`,
+      `templatesOpen`
+- [x] `src/templates.ts` (new) - discover `~/.plans/templates/`, parse
       frontmatter, render tokens (`{slug}`, `{title}`, `{date:...}`,
-      `{firstStatus}`), seed the two defaults when missing
-- [ ] `src/App.tsx` - `newPlan` → `newFromTemplate`; skip the NameSheet for
+      `{firstStatus}`), seed the two defaults when the folder is made
+- [x] `src/App.tsx` - `newPlan` → `newFromTemplate`; skip the NameSheet for
       prompt-less templates; open instead of create when a prompt-less
       target exists
-- [ ] `src/Palette.tsx` - one "New: <name>" command per discovered template;
+- [x] `src/Palette.tsx` - one "New: <name>" command per discovered template;
       ⌘N binds to the first
-- [ ] `src/FileTree.tsx` - "New file here" becomes a template submenu when
+- [x] `src/FileTree.tsx` - "New file here" becomes a template list when
       more than one template exists
-- [ ] `src/SettingsPage.tsx` - a Files row naming the templates folder,
+- [x] `src/SettingsPage.tsx` - a Files row naming the templates folder,
       listing what was found, with an "Open folder" action
+- [x] `templates/plan.md`, `templates/daily-note.md` - the two shipped
+      defaults, bundled at build time the way the skills are
+- [x] `e2e/templates.spec.ts` - the plan template writes what the backend
+      used to write, byte for byte; a daily note is one keystroke; asking
+      twice opens rather than collides; a template in the folder becomes a
+      command and a file

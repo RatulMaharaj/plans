@@ -15,6 +15,7 @@ import type { ChatRef, Index as ChatIndex } from "./chats";
 import { THEMES } from "./theme";
 import { renderKeys, type KeymapEntry } from "./keys";
 import { score } from "./score";
+import type { Template } from "./templates";
 
 export type Command = {
   id: string;
@@ -48,7 +49,13 @@ type Props = {
   onOpenFile: (repoPath: string, relPath: string) => void;
   onSelectRepo: (path: string) => void;
   onAddRepo: () => void;
-  onNewPlan: () => void;
+  /**
+   * The templates a new file can be made from, in order. One command each —
+   * the first also carries the `new` id, so ⌘N and its hint go on belonging to
+   * whatever is first.
+   */
+  templates: Template[];
+  onNewFromTemplate: (t: Template) => void;
   onSave: () => void;
   onView: (v: "write" | "source" | "diff" | "settings") => void;
   /** Hand settings.json to the system's JSON editor. */
@@ -158,7 +165,22 @@ function buildCommands(p: Props): Command[] {
   const add = (c: Command) => out.push(c);
 
   // --- doing things ---------------------------------------------------------
-  add({ id: "new", group: "Plans", label: "New plan", run: p.onNewPlan });
+  /*
+   * One command per template, built from the folder the same way the per-skill
+   * "Open the … skill" commands are. The first keeps the `new` id so ⌘N still
+   * has a command to name and a hint to render; the rest are addressed by the
+   * file they came from, since two templates may well be called the same thing.
+   */
+  p.templates.forEach((t, i) => {
+    add({
+      id: i === 0 ? "new" : `new.${t.file}`,
+      group: "Plans",
+      label: `New: ${t.name}`,
+      hint: t.fileName,
+      terms: "new file template create",
+      run: () => p.onNewFromTemplate(t),
+    });
+  });
   add({ id: "save", group: "Plans", label: "Save now", run: p.onSave });
   if (p.canEdit) {
     add({

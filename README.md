@@ -62,6 +62,13 @@ than a general-purpose markdown editor.
 - **Command palette.** `⌘P` for files across every open repo, `⌘⇧P` for commands
   — every setting, and git: branch, pull, push, fetch, commit, switch — and
   `?` to search *inside* files, which is the question notes usually pose.
+- **New files come from templates you own.** A template is a markdown file in
+  `~/.plans/templates/`: its frontmatter says what it is called, what to call
+  the file (`{slug}`, `{title}`, `{date:yyyy-MM-dd}`) and what frontmatter to
+  start it with; its body is the body. Two ship — a plan and a blank daily note
+  named for today — and the folder is yours after that, so editing or deleting
+  one sticks. The palette carries a "New: …" per template, `⌘N` is the first,
+  and a filename the calendar answers skips the naming sheet entirely.
 - **Files stay where you put them.** New file asks which repository and folder;
   renaming edits the name, moving picks a folder — two questions, two answers,
   and a tab that follows its file through either. Dragging a file or a folder

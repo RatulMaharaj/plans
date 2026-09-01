@@ -36,8 +36,15 @@ export type FakeRepo = {
 /** A version the feed should claim is available, for the updater's own tests. */
 export type FakeUpdate = { version: string; notes: string };
 
+/** What `~/.plans/templates/` holds, when a test cares that it holds something. */
+export type FakeTemplate = { name: string; text: string };
+
 /** Installed before any app code runs, so the app never sees a real backend. */
-export function installFakeBackend(repos: FakeRepo[], update?: FakeUpdate) {
+export function installFakeBackend(
+  repos: FakeRepo[],
+  update?: FakeUpdate,
+  templates?: FakeTemplate[],
+) {
   const state = {
     repos: repos.map((r) => ({ ...r, files: { ...r.files } })),
     /** Every command the app has issued, for asserting on writes. */
@@ -81,6 +88,8 @@ export function installFakeBackend(repos: FakeRepo[], update?: FakeUpdate) {
     settingsSchema: null as string | null,
     /** How many times "Open settings file" reached the system editor. */
     settingsOpened: 0,
+    /** How many times "Open folder" reached the templates folder. */
+    templatesOpened: 0,
     /** Whether the machine has tmux at all. */
     mux: true,
     /** Panes the fake tmux server is running. */
@@ -169,13 +178,32 @@ export function installFakeBackend(repos: FakeRepo[], update?: FakeUpdate) {
       r.files[relPath] = content;
       return hash(content);
     },
-    create_plan: ({ repo: p, relPath, title, status }) => {
+    create_file: ({ repo: p, relPath, content }) => {
       const r = repo(p);
       if (!r) throw new Error("no such repository");
       if (r.files[relPath] !== undefined) throw new Error(`${relPath} already exists`);
-      // A new plan starts with a status, as the real command does.
-      const head = status ? `---\nstatus: ${status}\n---\n` : "";
-      r.files[relPath] = `${head}# ${title}\n\n`;
+      // The shape of a new file is the frontend's business now: whatever the
+      // template rendered is what lands, exactly as on disk.
+      r.files[relPath] = content;
+      return null;
+    },
+    /*
+     * The templates folder, as a home directory would hold it.
+     *
+     * The real command seeds the folder on first launch and reads it back, so
+     * the honest fake is "the defaults, already seeded" — which is also what
+     * makes the browser see the same two templates a fresh install would. A
+     * test that has written its own says so and gets those instead, exactly as
+     * a folder that already existed would.
+     */
+    templates_sync: ({ defaults }) => ({
+      dir: "/home/test/.plans/templates",
+      files:
+        templates ??
+        (defaults as [string, string][]).map(([name, text]) => ({ name, text })),
+    }),
+    templates_open: () => {
+      state.templatesOpened++;
       return null;
     },
     delete_plan: ({ repo: p, relPath }) => {
