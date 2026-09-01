@@ -327,30 +327,42 @@
           document.title = (doc.name ? doc.name + " · " : "") + "plans";
         }
 
-        var token = location.hash.replace(/^#/, "").trim();
-        if (!token) {
-          // Some software "cleans" URLs and takes the fragment with it. That is
-          // a different failure from a revoked link, and says so.
-          say(
-            "<strong>This link is missing its key.</strong><br />Ask whoever shared it to send the whole link again.",
-          );
-          return;
+        /**
+         * Read the key and fetch the document. On load, and again whenever
+         * the fragment changes: a fresh link pasted into a tab already on
+         * this page is a hash change, not a navigation, and must not leave
+         * the old answer on screen.
+         */
+        function load() {
+          var token = location.hash.replace(/^#/, "").trim();
+          if (!token) {
+            // Some software "cleans" URLs and takes the fragment with it. That
+            // is a different failure from a revoked link, and says so.
+            say(
+              "<strong>This link is missing its key.</strong><br />Ask whoever shared it to send the whole link again.",
+            );
+            return;
+          }
+          page.innerHTML = "";
+
+          fetch("/share/doc", { headers: { Authorization: "Bearer " + decodeURIComponent(token) } })
+            .then(function (res) {
+              if (res.status === 404) {
+                throw new Error(
+                  "<strong>This link no longer works.</strong><br />It was revoked, or it has expired. Ask for a new one.",
+                );
+              }
+              if (!res.ok) throw new Error("<strong>The server could not answer.</strong><br />Try again in a moment.");
+              return res.json();
+            })
+            .then(show)
+            .catch(function (e) {
+              say(e && e.message ? e.message : "<strong>The server could not answer.</strong>");
+            });
         }
 
-        fetch("/share/doc", { headers: { Authorization: "Bearer " + decodeURIComponent(token) } })
-          .then(function (res) {
-            if (res.status === 404) {
-              throw new Error(
-                "<strong>This link no longer works.</strong><br />It was revoked, or it has expired. Ask for a new one.",
-              );
-            }
-            if (!res.ok) throw new Error("<strong>The server could not answer.</strong><br />Try again in a moment.");
-            return res.json();
-          })
-          .then(show)
-          .catch(function (e) {
-            say(e && e.message ? e.message : "<strong>The server could not answer.</strong>");
-          });
+        window.addEventListener("hashchange", load);
+        load();
       })();
     </script>
   </body>
