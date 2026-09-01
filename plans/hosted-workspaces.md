@@ -3,6 +3,43 @@ status: ready
 ---
 # Hosted Workspaces
 
+## Nothing has been implemented yet, and here is why
+
+A dispatched run picked this plan up on 2026-09-01 and put it straight back
+down without writing any code. What it hit:
+
+- **The first item is a different repository.** "Workspace server skeleton in
+  its own repo" is the foundation every other item stands on, and a run
+  scoped to this checkout cannot create, populate or deploy that repo. The
+  sign-in UI needs a server to authenticate against, the `WORKSPACE` buffer
+  needs a document to hold, and the e2e test needs "a local instance of the
+  server" that does not exist. So there is no app-side slice that stands on
+  its own; everything below the first checkbox is a client of something
+  unbuilt.
+- **The run could not add dependencies or run the checks.** Collab mode needs
+  `yjs`, Milkdown's collab plugin and a Tauri keychain plugin, and the run
+  environment has no network access for installs. `node_modules` was empty,
+  so `pnpm build` and `playwright test` were both unavailable. Even a small
+  change would have shipped unverified.
+- **Device flow needs a registered GitHub OAuth app.** The plan argues well
+  for device flow over a redirect, but it never says who owns the OAuth app,
+  what its client id is, or where the app reads it from. That is a decision
+  someone with the GitHub org has to make before the sign-in item is
+  buildable.
+- **Two of the open questions below block app-side work rather than
+  following it.** "Where does the server run" decides what the sign-in UI
+  points at and whether a self-hosted URL is a setting. "Is a workspace a
+  peer of a repository in the sidebar" decides where the buffer kind lands in
+  `FileTree` and how much of the tree's path machinery has to grow an
+  escape hatch. Guessing either would have produced a PR that gets reverted.
+
+What would make this implementable: split it into a server plan that lives in
+the server's own repo, and an app-side plan that treats the server's URL and
+protocol as given. Answer the sidebar question, name the owner of the GitHub
+OAuth app, and confirm the implementing environment is allowed to install new
+dependencies. The design work here is good; it is the packaging into one unit
+of work that does not hold.
+
 A workspace is a room where a plan gets argued: a hosted markdown document
 several people edit at once, with cursors, presence, and a review gate at the
 end. When the argument settles, the plan leaves the room — committed into a
