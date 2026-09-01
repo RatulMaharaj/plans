@@ -1,7 +1,7 @@
 /**
  * One version, four places.
  *
- * Changesets only knows about package.json. Plans carries the same version in
+ * Changesets only knows about package.json. Looped Plans carries the same version in
  * src-tauri/tauri.conf.json (what Tauri stamps into the bundle, and what the
  * updater compares against), src-tauri/Cargo.toml, and Cargo.lock. A bundle
  * labelled with the previous version is invisible until a user reports it.

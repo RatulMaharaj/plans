@@ -1016,7 +1016,7 @@ export function ChatPanel({
   // The app's skills come first: they work with every agent, installed or not.
   const skillCommands: AgentCommand[] = SKILLS.map((k) => ({
     name: k.name,
-    description: `Plans ${k.label} — sent along with your message`,
+    description: `Looped Plans ${k.label} — sent along with your message`,
   }));
   const suggestions = slash
     ? [

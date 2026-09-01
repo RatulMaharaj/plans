@@ -171,7 +171,7 @@ const properties = {
   $schema: {
     type: "string",
     description:
-      "Where this file's schema lives. Written by Plans, and rewritten on every launch so it always describes the build you are running.",
+      "Where this file's schema lives. Written by Looped Plans, and rewritten on every launch so it always describes the build you are running.",
   },
 };
 
@@ -186,7 +186,9 @@ for (const prop of checker.getPropertiesOfType(settingsType)) {
   const notes = [];
   if (doc) notes.push(doc.replace(/\s*\n\s*/g, " "));
   if (APP_MANAGED.has(name)) {
-    notes.push("Managed by Plans — edit it here and the app will write over you.");
+    notes.push(
+      "Managed by Looped Plans — edit it here and the app will write over you.",
+    );
     entry.readOnly = true;
   }
   if (notes.length) entry.description = notes.join(" ");
@@ -207,12 +209,12 @@ if (known < 10) fail(`only found ${known} settings — something is wrong`);
 const schema = {
   $schema: "http://json-schema.org/draft-07/schema#",
   $id: ID,
-  title: "Plans settings",
+  title: "Looped Plans settings",
   description:
-    "Everything the reader can change in Plans, in one file. Generated from the app's own Settings type — do not edit by hand.",
+    "Everything the reader can change in Looped Plans, in one file. Generated from the app's own Settings type — do not edit by hand.",
   type: "object",
   // Kept, not rejected: a file written by a newer build should still open in
-  // this one, and Plans writes unknown keys back untouched.
+  // this one, and Looped Plans writes unknown keys back untouched.
   additionalProperties: true,
   properties,
 };

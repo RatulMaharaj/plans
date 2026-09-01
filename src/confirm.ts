@@ -15,7 +15,7 @@ import { ask as tauriAsk } from "@tauri-apps/plugin-dialog";
 export async function confirmed(
   message: string,
   {
-    title = "Plans",
+    title = "Looped Plans",
     kind = "warning" as "warning" | "info" | "error",
     /** The affirmative button. Naming the act beats "Yes" on a destructive one. */
     ok = "Yes",

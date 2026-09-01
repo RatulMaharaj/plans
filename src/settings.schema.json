@@ -1,14 +1,14 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://plans.ratulmaharaj.com/settings.schema.json",
-  "title": "Plans settings",
-  "description": "Everything the reader can change in Plans, in one file. Generated from the app's own Settings type — do not edit by hand.",
+  "title": "Looped Plans settings",
+  "description": "Everything the reader can change in Looped Plans, in one file. Generated from the app's own Settings type — do not edit by hand.",
   "type": "object",
   "additionalProperties": true,
   "properties": {
     "$schema": {
       "type": "string",
-      "description": "Where this file's schema lives. Written by Plans, and rewritten on every launch so it always describes the build you are running."
+      "description": "Where this file's schema lives. Written by Looped Plans, and rewritten on every launch so it always describes the build you are running."
     },
     "theme": {
       "type": "string",
@@ -158,7 +158,7 @@
     "treeWidth": {
       "type": "number",
       "readOnly": true,
-      "description": "Sidebar width in px, dragged by its edge. Managed by Plans — edit it here and the app will write over you.",
+      "description": "Sidebar width in px, dragged by its edge. Managed by Looped Plans — edit it here and the app will write over you.",
       "minimum": 170,
       "maximum": 480,
       "default": 232
@@ -286,7 +286,7 @@
     "lastSeenVersion": {
       "type": "string",
       "readOnly": true,
-      "description": "The version whose release notes have been shown. Anything older than what is running means the notes open once, by themselves, after an update. Managed by Plans — edit it here and the app will write over you.",
+      "description": "The version whose release notes have been shown. Anything older than what is running means the notes open once, by themselves, after an update. Managed by Looped Plans — edit it here and the app will write over you.",
       "default": ""
     }
   }

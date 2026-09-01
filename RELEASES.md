@@ -1,13 +1,13 @@
-# Releasing Plans
+# Releasing Looped Plans
 
-Plans ships as a signed and notarized macOS `.dmg`, built by
+Looped Plans ships as a signed and notarized macOS `.dmg`, built by
 [`.github/workflows/release.yml`](.github/workflows/release.yml). This document
 covers the per-release routine. The one-time setup — certificates, the App
 Store Connect key, the updater keypair — is done, and lives in this file's
 history if it ever needs doing again.
 
 Signing and notarization are not optional polish: an unsigned build downloaded
-from the internet is quarantined by Gatekeeper and shows up as *"Plans is
+from the internet is quarantined by Gatekeeper and shows up as *"Looped Plans is
 damaged and can't be opened"* on anyone else's Mac. The workflow is built so
 that a broken signature fails CI rather than a user's machine.
 
@@ -104,7 +104,7 @@ is the one the updater feed can see.
    *Troubleshooting*. A release missing its updater artifacts looks completely
    fine and is simply invisible to every installed copy.
 
-5. Download the `.dmg` from the draft release, open it, drag Plans to
+5. Download the `.dmg` from the draft release, open it, drag Looped Plans to
    Applications, and launch it once. It should open with no Gatekeeper prompt
    at all.
 
@@ -177,13 +177,13 @@ signed the archive. If `TAURI_SIGNING_PRIVATE_KEY` was regenerated, the pinned
 public key has to change with it — and every copy installed before that change
 will never update again.
 
-**"Plans is damaged and can't be opened" on a user's Mac**
+**"Looped Plans is damaged and can't be opened" on a user's Mac**
 That's the quarantine message for an unsigned or unnotarized download. Confirm
 against the shipped artifact:
 
 ```sh
-spctl --assess --type execute --verbose=4 /Applications/Plans.app
-xcrun stapler validate /Applications/Plans.app
+spctl --assess --type execute --verbose=4 "/Applications/Looped Plans.app"
+xcrun stapler validate "/Applications/Looped Plans.app"
 ```
 
 ---
@@ -201,5 +201,5 @@ xcrun stapler validate /Applications/Plans.app
   architectures. Per-arch feeds halve the download at the cost of a second build
   matrix and a second thing to get wrong.
 - **Homebrew cask.** `looped/whisper` pushes a cask to a tap on each release;
-  Plans has no tap wired up.
+  Looped Plans has no tap wired up.
 

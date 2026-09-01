@@ -814,7 +814,8 @@ export default function App() {
       try {
         const found = await checkForUpdate();
         if (found) setUpdate(found);
-        else if (asked) notify(`Plans ${await runningVersion()} is the latest version`);
+        else if (asked)
+          notify(`Looped Plans ${await runningVersion()} is the latest version`);
       } catch (e) {
         if (asked) notify(String(e), "error");
       }
@@ -2996,7 +2997,7 @@ export default function App() {
       // running, and a filter for that only misfires on odd version strings.
       const fresh = seen ? RELEASE_SECTIONS.filter((x) => isNewer(x.version, seen)) : [];
       const shown = fresh.length ? fresh : RELEASE_SECTIONS;
-      const title = fresh.length && seen ? `# What changed since ${seen}` : `# Plans ${running}`;
+      const title = fresh.length && seen ? `# What changed since ${seen}` : `# Looped Plans ${running}`;
       const body = shown
         .map((s) => `## ${s.version}\n\n${s.notes}`)
         .join("\n\n");
@@ -4439,7 +4440,7 @@ export default function App() {
         )}
         <span className="rail-sep" data-tauri-drag-region />
         <span className="wordmark" data-tauri-drag-region>
-          Plans
+          Looped Plans
         </span>
 
         {repos.length > 0 ? (

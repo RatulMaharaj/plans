@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Plans",
+  "productName": "Looped Plans",
   "version": "0.8.0",
   "identifier": "com.ratulmaharaj.plans",
   "build": {
@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "Plans",
+        "title": "Looped Plans",
         "titleBarStyle": "Overlay",
         "hiddenTitle": true,
         "width": 1280,

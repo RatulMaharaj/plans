@@ -1237,7 +1237,7 @@ fn cli_status() -> Option<CliStatus> {
         if let Ok(text) = std::fs::read_to_string(&dest) {
             return Some(CliStatus {
                 path: dest.to_string_lossy().into_owned(),
-                current: text.contains(&format!("Plans ({})", env!("CARGO_PKG_VERSION"))),
+                current: text.contains(&format!("Looped Plans ({})", env!("CARGO_PKG_VERSION"))),
             });
         }
     }
@@ -1252,7 +1252,7 @@ fn cli_status() -> Option<CliStatus> {
 fn install_cli() -> R<String> {
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
     let script = format!(
-        "#!/bin/sh\n# Installed by Plans ({}). Opens a repository in the app.\n\"{}\" \"$@\" >/dev/null 2>&1 &\n",
+        "#!/bin/sh\n# Installed by Looped Plans ({}). Opens a repository in the app.\n\"{}\" \"$@\" >/dev/null 2>&1 &\n",
         env!("CARGO_PKG_VERSION"),
         exe.display()
     );

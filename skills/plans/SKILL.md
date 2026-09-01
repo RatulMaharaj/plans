@@ -1,13 +1,13 @@
 ---
 name: plans
-description: Conventions for writing plan files that the Plans app reads - frontmatter, the four-status lifecycle (draft, ready, busy, done), the sections a fleshed-out plan uses, and an agent's part in it. Use when creating or updating markdown files in a plans/ folder, or when asked to flesh out, pick up, or finish a plan.
+description: Conventions for writing plan files that the Looped Plans app reads - frontmatter, the four-status lifecycle (draft, ready, busy, done), the sections a fleshed-out plan uses, and an agent's part in it. Use when creating or updating markdown files in a plans/ folder, or when asked to flesh out, pick up, or finish a plan.
 ---
-# Writing plans the Plans app can read
+# Writing plans the Looped Plans app can read
 
 The markdown files in `plans/` pass between a human and agents. The human
 writes a seed: a problem, an intent, a rough shape. An agent fleshes it out
-into something buildable, and a session implements it. The Plans app is where
-the human reads all of this. It renders each file as a page, shows the
+into something buildable, and a session implements it. The Looped Plans app is
+where the human reads all of this. It renders each file as a page, shows the
 frontmatter as a panel and colours the `status` key so the tree reads as a
 board. Your job when touching these files is to keep that board truthful.
 
