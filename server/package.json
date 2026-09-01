@@ -1,0 +1,24 @@
+{
+  "name": "plans-workspaces",
+  "private": true,
+  "version": "0.1.0",
+  "description": "The workspace server: a room where a plan gets argued before it becomes a file",
+  "type": "module",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "infisical run --env=dev --path=/apps/plans-workspaces --path=/shared -- node src/index.js",
+    "test": "node --test \"test/**/*.test.js\""
+  },
+  "dependencies": {
+    "@electric-sql/pglite": "^0.5.8",
+    "lib0": "^0.2.117",
+    "pg": "^8.23.0",
+    "ws": "^8.21.3",
+    "y-protocols": "^1.0.7",
+    "yjs": "^13.6.32"
+  },
+  "engines": {
+    "node": ">=22.13"
+  }
+}

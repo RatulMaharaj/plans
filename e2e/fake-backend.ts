@@ -90,6 +90,15 @@ export function installFakeBackend(
     settingsOpened: 0,
     /** How many times "Open folder" reached the templates folder. */
     templatesOpened: 0,
+    /**
+     * The workspace server's session, as the keychain would hold it. A test
+     * that wants a signed-in app sets it before boot; the server it points
+     * at (`plans.workspaceServer` in localStorage) is real, started by the
+     * test — nothing about the room is faked.
+     */
+    workspaceToken: null as string | null,
+    /** URLs handed to the platform to open in a browser. */
+    opened: [] as string[],
     /** Whether the machine has tmux at all. */
     mux: true,
     /** Panes the fake tmux server is running. */
@@ -204,6 +213,19 @@ export function installFakeBackend(
     }),
     templates_open: () => {
       state.templatesOpened++;
+      return null;
+    },
+    workspace_token_get: () => state.workspaceToken,
+    workspace_token_set: ({ token }) => {
+      state.workspaceToken = token;
+      return null;
+    },
+    workspace_token_clear: () => {
+      state.workspaceToken = null;
+      return null;
+    },
+    "plugin:opener|open_url": ({ url }) => {
+      state.opened.push(String(url));
       return null;
     },
     delete_plan: ({ repo: p, relPath }) => {

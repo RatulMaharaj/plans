@@ -1,0 +1,225 @@
+/**
+ * Everything the server remembers, in Postgres.
+ *
+ * One database of its own on the shared looped server, reached through
+ * `DATABASE_URL`. Without that variable — a laptop, the tests — the same SQL
+ * runs against PGlite, a Postgres in the process: one dialect, one schema,
+ * and nothing to install to run the suite. The only thing the two share is
+ * `query(sql, params)`, which is all this module asks of either.
+ */
+import { randomBytes, createHash } from "node:crypto";
+
+const SCHEMA = `
+  CREATE TABLE IF NOT EXISTS users (
+    login TEXT PRIMARY KEY,
+    name TEXT,
+    avatar TEXT
+  );
+  CREATE TABLE IF NOT EXISTS sessions (
+    token_hash TEXT PRIMARY KEY,
+    login TEXT NOT NULL,
+    created_at BIGINT NOT NULL
+  );
+  CREATE TABLE IF NOT EXISTS workspaces (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    created_by TEXT NOT NULL,
+    created_at BIGINT NOT NULL,
+    review_state TEXT NOT NULL DEFAULT 'none',
+    review_requested_by TEXT,
+    review_decided_by TEXT,
+    review_at BIGINT
+  );
+  CREATE TABLE IF NOT EXISTS members (
+    workspace_id TEXT NOT NULL,
+    login TEXT NOT NULL,
+    PRIMARY KEY (workspace_id, login)
+  );
+  CREATE TABLE IF NOT EXISTS docs (
+    workspace_id TEXT PRIMARY KEY,
+    state BYTEA NOT NULL,
+    updated_at BIGINT NOT NULL
+  );
+  CREATE TABLE IF NOT EXISTS read_tokens (
+    token_hash TEXT PRIMARY KEY,
+    workspace_id TEXT NOT NULL,
+    created_by TEXT NOT NULL,
+    created_at BIGINT NOT NULL
+  );
+`;
+
+/** Tokens are stored hashed: a leaked database is not a leaked session. */
+export function hashToken(token) {
+  return createHash("sha256").update(token).digest("hex");
+}
+
+export function newToken() {
+  return randomBytes(32).toString("base64url");
+}
+
+/** Short, URL-safe, and not guessable in bulk. */
+export function newId() {
+  return randomBytes(9).toString("base64url");
+}
+
+/** A `query(sql, params) -> rows` over whichever Postgres is available. */
+async function connect(url) {
+  if (url) {
+    const { default: pg } = await import("pg");
+    const pool = new pg.Pool({ connectionString: url });
+    return {
+      query: async (sql, params = []) => (await pool.query(sql, params)).rows,
+      close: () => pool.end(),
+    };
+  }
+  const { PGlite } = await import("@electric-sql/pglite");
+  const lite = new PGlite();
+  await lite.waitReady;
+  return {
+    query: async (sql, params = []) => (await lite.query(sql, params)).rows,
+    close: () => lite.close(),
+  };
+}
+
+export async function openDb(url = process.env.DATABASE_URL ?? "") {
+  const c = await connect(url);
+  for (const stmt of SCHEMA.split(";").map((s) => s.trim()).filter(Boolean)) await c.query(stmt);
+
+  const one = async (sql, params) => (await c.query(sql, params))[0] ?? null;
+  const now = () => Date.now();
+
+  const shape = (w, members) => ({
+    id: w.id,
+    name: w.name,
+    createdBy: w.created_by,
+    createdAt: Number(w.created_at),
+    members,
+    review: {
+      state: w.review_state,
+      requestedBy: w.review_requested_by,
+      decidedBy: w.review_decided_by,
+      at: w.review_at === null ? null : Number(w.review_at),
+    },
+  });
+  const membersOf = async (id) =>
+    (await c.query("SELECT login FROM members WHERE workspace_id = $1 ORDER BY login", [id])).map(
+      (m) => m.login,
+    );
+
+  return {
+    close: () => c.close(),
+
+    // --- people ------------------------------------------------------------
+    async upsertUser(login, name = null, avatar = null) {
+      return one(
+        `INSERT INTO users (login, name, avatar) VALUES ($1, $2, $3)
+         ON CONFLICT (login) DO UPDATE SET name = EXCLUDED.name, avatar = EXCLUDED.avatar
+         RETURNING login, name, avatar`,
+        [login, name, avatar],
+      );
+    },
+    user: (login) => one("SELECT login, name, avatar FROM users WHERE login = $1", [login]),
+    /** Mint a session for a login; the token is returned once and never stored. */
+    async createSession(login) {
+      const token = newToken();
+      await c.query("INSERT INTO sessions (token_hash, login, created_at) VALUES ($1, $2, $3)", [
+        hashToken(token),
+        login,
+        now(),
+      ]);
+      return token;
+    },
+    async loginFor(token) {
+      if (!token) return null;
+      return (await one("SELECT login FROM sessions WHERE token_hash = $1", [hashToken(token)]))?.login ?? null;
+    },
+    endSession: (token) =>
+      token ? c.query("DELETE FROM sessions WHERE token_hash = $1", [hashToken(token)]) : null,
+
+    // --- rooms -------------------------------------------------------------
+    async createWorkspace(name, login) {
+      const id = newId();
+      await c.query(
+        "INSERT INTO workspaces (id, name, created_by, created_at) VALUES ($1, $2, $3, $4)",
+        [id, name, login, now()],
+      );
+      await this.addMember(id, login);
+      return this.workspace(id);
+    },
+    async workspace(id) {
+      const w = await one("SELECT * FROM workspaces WHERE id = $1", [id]);
+      return w ? shape(w, await membersOf(id)) : null;
+    },
+    async workspacesFor(login) {
+      const rows = await c.query(
+        `SELECT w.* FROM workspaces w JOIN members m ON m.workspace_id = w.id
+         WHERE m.login = $1 ORDER BY w.created_at DESC`,
+        [login],
+      );
+      return Promise.all(rows.map(async (w) => shape(w, await membersOf(w.id))));
+    },
+    addMember: (id, login) =>
+      c.query("INSERT INTO members (workspace_id, login) VALUES ($1, $2) ON CONFLICT DO NOTHING", [id, login]),
+    isMember: async (id, login) =>
+      !!(await one("SELECT 1 AS ok FROM members WHERE workspace_id = $1 AND login = $2", [id, login])),
+
+    // --- review ------------------------------------------------------------
+    /**
+     * The one rule the clients cannot be trusted with: whoever asked for the
+     * review cannot be the one who grants it.
+     */
+    async review(id, action, login) {
+      const w = await one("SELECT * FROM workspaces WHERE id = $1", [id]);
+      if (!w) return { error: 404 };
+      const set = (state, requestedBy, decidedBy) =>
+        c.query(
+          `UPDATE workspaces SET review_state = $1, review_requested_by = $2, review_decided_by = $3, review_at = $4
+           WHERE id = $5`,
+          [state, requestedBy, decidedBy, now(), id],
+        );
+      if (action === "request") {
+        await set("requested", login, null);
+      } else if (action === "approve" || action === "changes") {
+        if (w.review_state !== "requested") return { error: 409, reason: "no review is open" };
+        if (w.review_requested_by === login) {
+          return { error: 403, reason: "the author cannot approve their own plan" };
+        }
+        await set(action === "approve" ? "approved" : "changes", w.review_requested_by, login);
+      } else if (action === "clear") {
+        await set("none", null, null);
+      } else {
+        return { error: 400, reason: `unknown action ${action}` };
+      }
+      return { review: (await this.workspace(id)).review };
+    },
+
+    // --- the document ------------------------------------------------------
+    async loadDoc(id) {
+      const row = await one("SELECT state FROM docs WHERE workspace_id = $1", [id]);
+      return row ? new Uint8Array(row.state) : null;
+    },
+    saveDoc: (id, state) =>
+      c.query(
+        `INSERT INTO docs (workspace_id, state, updated_at) VALUES ($1, $2, $3)
+         ON CONFLICT (workspace_id) DO UPDATE SET state = EXCLUDED.state, updated_at = EXCLUDED.updated_at`,
+        [id, Buffer.from(state), now()],
+      ),
+
+    // --- the read endpoint's key ------------------------------------------
+    async createReadToken(id, login) {
+      const token = newToken();
+      await c.query(
+        "INSERT INTO read_tokens (token_hash, workspace_id, created_by, created_at) VALUES ($1, $2, $3, $4)",
+        [hashToken(token), id, login, now()],
+      );
+      return token;
+    },
+    async workspaceForReadToken(token) {
+      if (!token) return null;
+      return (
+        (await one("SELECT workspace_id FROM read_tokens WHERE token_hash = $1", [hashToken(token)]))
+          ?.workspace_id ?? null
+      );
+    },
+  };
+}

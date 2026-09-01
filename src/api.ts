@@ -300,6 +300,14 @@ export const api = {
   /** Show the templates folder in the platform's file manager. */
   templatesOpen: () => invoke<void>("templates_open"),
 
+  // --- the workspace server's session, in the OS keychain ---------------------
+  // A bearer token, so not in settings.json: that file is opened, pasted and
+  // committed. `get` answers null when there is nothing there.
+
+  workspaceTokenGet: () => invoke<string | null>("workspace_token_get"),
+  workspaceTokenSet: (token: string) => invoke<void>("workspace_token_set", { token }),
+  workspaceTokenClear: () => invoke<void>("workspace_token_clear"),
+
   gitStatus: (repo: string, scope: string[]) =>
     invoke<any>("git_status", { repo, scope }).then(camelStatus),
 

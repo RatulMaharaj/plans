@@ -57,8 +57,20 @@ import {
   loadTemplates,
   renderContent,
   renderName,
+  slugOf,
   type Template,
 } from "./templates";
+import {
+  colorFor,
+  openRoom,
+  token as workspaceToken,
+  workspace,
+  type Account,
+  type Room,
+  type Workspace,
+} from "./workspace";
+import { Workspaces, reviewLabel, reviewTone } from "./Workspaces";
+import { SignInSheet } from "./SignInSheet";
 import { MoveSheet } from "./MoveSheet";
 import { TextPrompt } from "./TextPrompt";
 import { SourceView } from "./SourceView";
@@ -134,6 +146,19 @@ type Tab = { repo: string; path: string; view?: View };
  * every write path already refuses them without being told to.
  */
 const MEMORY = "\u0000memory";
+
+/**
+ * A workspace document rides the memory rails.
+ *
+ * Its repository is `MEMORY`, so every write path already refuses it, no tab
+ * for it is restored on launch, and closing it is closing it; what marks it
+ * as a workspace rather than the release notes is the path, which carries
+ * the workspace's id behind a prefix nothing on disk can have. The text the
+ * editor shows comes from the room, not from `memoryDocs`.
+ */
+const WS_PREFIX = "\u0000ws/";
+const wsIdOf = (path: string | null | undefined) =>
+  path && path.startsWith(WS_PREFIX) ? path.slice(WS_PREFIX.length) : null;
 
 function stored<T>(key: string, fallback: T): T {
   try {
@@ -498,6 +523,21 @@ export default function App() {
   /** The version whose notes are on screen; null when the sheet is closed. */
   /** Text for the memory buffers, by path. Not persisted — that is the point. */
   const memoryDocs = useRef(new Map<string, string>());
+
+  // --- workspaces: the app as a client of the workspace server ----------------
+  /** Who is signed in to the workspace server; null is signed out. */
+  const [account, setAccount] = useState<Account | null>(null);
+  const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
+  const [signingIn, setSigningIn] = useState(false);
+  /** Open rooms by workspace id: one socket per document, for as long as its
+   *  tab is open. Not state — a room is a live object, not a render input. */
+  const rooms = useRef(new Map<string, Room>());
+  /** Bumped when a room's status changes, so the chrome re-reads it. */
+  const [, setRoomTick] = useState(0);
+  /** A workspace being named, invited to, or copied out. */
+  const [wsNaming, setWsNaming] = useState(false);
+  const [wsInviting, setWsInviting] = useState<string | null>(null);
+  const [wsCopying, setWsCopying] = useState<null | { id: string; repo: string; dir: string }>(null);
   /** Opening the notes is defined below the buffer machinery it needs. */
   const openNotesRef = useRef<
     ((seen: string | null, running: string) => Promise<void>) | null
@@ -2782,6 +2822,166 @@ export default function App() {
     [flush],
   );
 
+  /** Ask the server which rooms are ours; nothing, when signed out. */
+  const refreshWorkspaces = useCallback(async () => {
+    try {
+      setWorkspaces(await workspace.list());
+    } catch (e) {
+      trace("workspace list failed", { error: String(e) });
+    }
+  }, []);
+
+  // Who we are, once — the keychain answers, then the server confirms.
+  useEffect(() => {
+    void workspace
+      .me()
+      .then((who) => {
+        setAccount(who);
+        if (who) void refreshWorkspaces();
+      })
+      .catch((e) => trace("workspace me failed", { error: String(e) }));
+  }, [refreshWorkspaces]);
+
+  // An invite arrives while you are elsewhere; coming back is when to look.
+  useEffect(() => {
+    if (!account) return;
+    const onFocus = () => void refreshWorkspaces();
+    window.addEventListener("focus", onFocus);
+    return () => window.removeEventListener("focus", onFocus);
+  }, [account, refreshWorkspaces]);
+
+  /**
+   * Open a workspace's document as a buffer.
+   *
+   * The room is opened first and kept for as long as the tab is; the buffer
+   * is a memory buffer whose text the editor takes from the room rather than
+   * from what is passed here. The name is the template for an empty document,
+   * which is all a new workspace has.
+   */
+  const openWorkspace = useCallback(
+    async (ws: Workspace) => {
+      if (!account) return;
+      let room = rooms.current.get(ws.id);
+      if (!room) {
+        const session = await workspaceToken();
+        if (!session) return;
+        room = openRoom(ws.id, session, { name: account.login, color: colorFor(account.login) });
+        rooms.current.set(ws.id, room);
+        room.onReview((review) =>
+          setWorkspaces((prev) => prev.map((w) => (w.id === ws.id ? { ...w, review } : w))),
+        );
+        room.onStatus(() => setRoomTick((n) => n + 1));
+      }
+      await openMemory(`${WS_PREFIX}${ws.id}`, `# ${ws.name}\n`);
+    },
+    [account, openMemory],
+  );
+
+  /** Sign out: the session goes from the server and the keychain, and every
+   *  open room closes — its socket carried that session. */
+  const signOut = useCallback(async () => {
+    if (!(await confirmed(`Sign out of workspaces as @${account?.login}?`, { ok: "Sign out", kind: "info" }))) return;
+    for (const [id, room] of rooms.current) {
+      room.close();
+      rooms.current.delete(id);
+    }
+    await workspace.signOut();
+    setAccount(null);
+    setWorkspaces([]);
+    setTabs((prev) => prev.filter((t) => !wsIdOf(t.path)));
+    if (wsIdOf(activePath)) {
+      setActivePath(null);
+      setContent("");
+      setMatter(null);
+    }
+  }, [account, activePath]);
+
+  /** A new room with only us in it, opened straight away. */
+  const makeWorkspace = useCallback(
+    async (name: string) => {
+      setWsNaming(false);
+      try {
+        const ws = await workspace.create(name);
+        setWorkspaces((prev) => [ws, ...prev]);
+        await openWorkspace(ws);
+      } catch (e) {
+        notify(String(e), "error");
+      }
+    },
+    [openWorkspace, notify],
+  );
+
+  const inviteTo = useCallback(
+    async (id: string, login: string) => {
+      setWsInviting(null);
+      try {
+        const ws = await workspace.invite(id, login.replace(/^@/, "").trim());
+        setWorkspaces((prev) => prev.map((w) => (w.id === id ? ws : w)));
+        notify(`Invited @${login.replace(/^@/, "")}`);
+      } catch (e) {
+        notify(String(e), "error");
+      }
+    },
+    [notify],
+  );
+
+  /** Request, approve, or ask for changes. The server holds the author rule. */
+  const reviewAct = useCallback(
+    async (id: string, action: "request" | "approve" | "changes" | "clear") => {
+      try {
+        const review = await workspace.review(id, action);
+        setWorkspaces((prev) => prev.map((w) => (w.id === id ? { ...w, review } : w)));
+      } catch (e) {
+        notify(String(e), "error");
+      }
+    },
+    [notify],
+  );
+
+  /**
+   * The bridge out of the room: the document, as markdown, into a repository.
+   *
+   * A snapshot, not a move — the room stays, and the file begins an ordinary
+   * git life. The review's outcome goes into the frontmatter on the way out:
+   * an approved plan lands `ready` with `approved-by:` saying who, which is
+   * the point at which history, not the server, is what makes it tamper-
+   * evident.
+   */
+  const copyWorkspaceOut = useCallback(
+    async (id: string, repoPath: string, relPath: string) => {
+      setWsCopying(null);
+      const ws = workspaces.find((w) => w.id === id);
+      const room = rooms.current.get(id);
+      htmlBridge.collect?.();
+      const text =
+        mainWriteMarkdown.current?.() ??
+        room?.doc.getMap<string>("meta").get("markdown") ??
+        "";
+      let out = text;
+      if (ws?.review.state === "approved" && ws.review.decidedBy) {
+        const split = splitFrontmatter(text);
+        let matter = split.matter ?? "";
+        matter = setMatterValue(matter, "status", "ready");
+        matter = setMatterValue(matter, "approved-by", ws.review.decidedBy);
+        out = joinFrontmatter(matter, split.body, split);
+      }
+      try {
+        await api.createFile(repoPath, relPath, out);
+        localStorage.setItem(
+          `plans.newPlanDir::${repoPath}`,
+          relPath.includes("/") ? relPath.slice(0, relPath.lastIndexOf("/")) : "",
+        );
+        await refreshFiles();
+        await openFile(repoPath, relPath);
+        void refreshStatus();
+        notify(`Copied to ${relPath}`);
+      } catch (e) {
+        notify(String(e), "error");
+      }
+    },
+    [workspaces, refreshFiles, openFile, refreshStatus, notify],
+  );
+
   /**
    * Everything that changed between `seen` and the running version.
    *
@@ -2850,6 +3050,12 @@ export default function App() {
       // Closing a memory buffer is how you throw it away; there is nowhere
       // else its text exists.
       if (repo === MEMORY) memoryDocs.current.delete(path);
+      // A workspace's text is on the server; what closes here is the line.
+      const wsId = wsIdOf(path);
+      if (wsId) {
+        rooms.current.get(wsId)?.close();
+        rooms.current.delete(wsId);
+      }
       if (repo !== activeRepoPath || path !== activePath) return;
       const next = rest[Math.min(i, rest.length - 1)];
       setConflict(null);
@@ -3750,6 +3956,8 @@ export default function App() {
   const mainWriteFind = useRef<FindHandle | null>(null);
   /** The main write surface's selection, registered the same way. */
   const mainWriteSelection = useRef<(() => string) | null>(null);
+  /** The main write surface's whole document, for copying a workspace out. */
+  const mainWriteMarkdown = useRef<(() => string | null) | null>(null);
   const mainSourceFind = useRef<FindHandle | null>(null);
   const splitFind = useRef<FindHandle | null>(null);
   /** The engine last driven, so switching surfaces clears the old paint. */
@@ -4208,6 +4416,27 @@ export default function App() {
         >
           Files
         </button>
+        {/* Who you are to the workspace server; signed out reads as an
+            invitation. Sign-out is behind a confirm, since it closes rooms. */}
+        {account ? (
+          <button
+            className="rail-btn account"
+            onClick={() => void signOut()}
+            title={`Signed in to workspaces as @${account.login} — click to sign out`}
+            data-testid="account"
+          >
+            @{account.login}
+          </button>
+        ) : (
+          <button
+            className="rail-btn"
+            onClick={() => setSigningIn(true)}
+            title="Sign in with GitHub, for workspaces"
+            data-testid="sign-in"
+          >
+            Sign in
+          </button>
+        )}
         <span className="rail-sep" data-tauri-drag-region />
         <span className="wordmark" data-tauri-drag-region>
           Plans
@@ -4412,6 +4641,16 @@ export default function App() {
             />
           </div>
 
+          <Workspaces
+            account={account}
+            workspaces={workspaces}
+            activeId={settingsOpen ? null : wsIdOf(activePath)}
+            live={new Set([...rooms.current].filter(([, r]) => r.status === "open").map(([id]) => id))}
+            onOpen={(ws) => void openWorkspace(ws)}
+            onNew={() => setWsNaming(true)}
+            onSignIn={() => setSigningIn(true)}
+          />
+
           {/* Double-click restores the default width. */}
           <div
             className="files-edge"
@@ -4500,7 +4739,9 @@ export default function App() {
                   {tabs.map((t) => {
                     const on = t.repo === activeRepoPath && t.path === activePath;
                     const mark = liveMarks.get(`${t.repo}::${t.path}`) ?? "clean";
-                    const name = t.path.split("/").pop() ?? t.path;
+                    const name = wsIdOf(t.path)
+                      ? (workspaces.find((w) => w.id === wsIdOf(t.path))?.name ?? "Workspace")
+                      : (t.path.split("/").pop() ?? t.path);
                     // Changed on disk since we read it. Says so rather than
                     // acting: opening the tab re-reads the file anyway.
                     const moved = outside.has(`${t.repo}::${t.path}`);
@@ -4554,9 +4795,94 @@ export default function App() {
               )}
 
               <div className={`page-head ${zenOn ? "hushed" : ""}`}>
-                <span className="page-path">{activePath ?? ""}</span>
+                <span className="page-path">
+                  {wsIdOf(activePath)
+                    ? `workspace · ${workspaces.find((w) => w.id === wsIdOf(activePath))?.name ?? ""}`
+                    : (activePath ?? "")}
+                </span>
                 {activePath && (
                   <span className="page-actions">
+                    {/* A workspace's chrome: where the review stands, the
+                        moves available to this person, and the way out. The
+                        author rule is the server's; the buttons only avoid
+                        offering what it will refuse. */}
+                    {wsIdOf(activePath) &&
+                      (() => {
+                        const id = wsIdOf(activePath)!;
+                        const ws = workspaces.find((w) => w.id === id);
+                        const room = rooms.current.get(id);
+                        if (!ws) return null;
+                        const r = ws.review;
+                        const mine = r.requestedBy === account?.login;
+                        return (
+                          <>
+                            {room && room.status !== "open" && (
+                              <span className="ws-status" title="Reconnecting to the workspace server">
+                                {room.status === "connecting" ? "connecting…" : "offline"}
+                              </span>
+                            )}
+                            {r.state !== "none" && (
+                              <span
+                                className={`status-badge tone-${reviewTone(r.state)}`}
+                                title={
+                                  r.state === "requested"
+                                    ? `Review requested by @${r.requestedBy}`
+                                    : `${reviewLabel(r.state)} by @${r.decidedBy}`
+                                }
+                                data-testid="review-state"
+                              >
+                                {reviewLabel(r.state)}
+                              </span>
+                            )}
+                            {r.state === "none" || r.state === "changes" ? (
+                              <button className="rail-btn" onClick={() => void reviewAct(id, "request")}>
+                                Request review
+                              </button>
+                            ) : r.state === "requested" ? (
+                              <>
+                                <button
+                                  className="rail-btn"
+                                  onClick={() => void reviewAct(id, "approve")}
+                                  disabled={mine}
+                                  title={mine ? "You asked for this review; someone else approves it" : "Approve this plan"}
+                                >
+                                  Approve
+                                </button>
+                                <button
+                                  className="rail-btn"
+                                  onClick={() => void reviewAct(id, "changes")}
+                                  disabled={mine}
+                                  title={mine ? "You asked for this review" : "Send it back"}
+                                >
+                                  Request changes
+                                </button>
+                              </>
+                            ) : null}
+                            <button
+                              className="rail-btn"
+                              onClick={() => setWsInviting(id)}
+                              title={`Members: ${ws.members.map((m) => `@${m}`).join(", ")}`}
+                            >
+                              Invite
+                            </button>
+                            {shownRepos.length > 0 && (
+                              <button
+                                className="rail-btn"
+                                onClick={() =>
+                                  setWsCopying({
+                                    id,
+                                    repo: activeRepo?.path ?? shownRepos[0].path,
+                                    dir: lastPlanDir(activeRepo?.path ?? shownRepos[0].path) ?? "",
+                                  })
+                                }
+                                title="Write this document into a repository as a file"
+                              >
+                                Copy to repository…
+                              </button>
+                            )}
+                          </>
+                        );
+                      })()}
                     {/* Layout sits to the left of the view switch: appearing
                         between the switch and Delete moved them under the
                         pointer every time the diff was opened. */}
@@ -4716,6 +5042,12 @@ export default function App() {
                     }}
                   >
                     <Editor
+                      /* A workspace is its own editor: the collab plugin is
+                         bound at construction, and a different room is a
+                         different document rather than a swap. */
+                      key={wsIdOf(activePath) ?? "file"}
+                      room={wsIdOf(activePath) ? rooms.current.get(wsIdOf(activePath)!) : undefined}
+                      markdownRef={mainWriteMarkdown}
                       docKey={docKey}
                       repo={activeRepo?.path ?? ""}
                       relPath={activePath}
@@ -5019,6 +5351,61 @@ export default function App() {
             setMoving(null);
             moveTo(at.repo, at.path, dir);
           }}
+        />
+      )}
+
+      {signingIn && (
+        <SignInSheet
+          onCancel={() => setSigningIn(false)}
+          onDone={(who) => {
+            setSigningIn(false);
+            setAccount(who);
+            void refreshWorkspaces();
+            notify(`Signed in as @${who.login}`);
+          }}
+        />
+      )}
+
+      {wsNaming && (
+        <TextPrompt
+          title="New workspace"
+          placeholder="What is being argued"
+          note="A room with you in it. Invite others from its page."
+          confirm="Create"
+          onCancel={() => setWsNaming(false)}
+          onSubmit={(name) => void makeWorkspace(name)}
+        />
+      )}
+
+      {wsInviting && (
+        <TextPrompt
+          title="Invite to this workspace"
+          placeholder="GitHub login"
+          note="They see it the next time they sign in."
+          confirm="Invite"
+          onCancel={() => setWsInviting(null)}
+          onSubmit={(login) => void inviteTo(wsInviting, login)}
+        />
+      )}
+
+      {wsCopying && (
+        <NameSheet
+          label="Copy to repository"
+          confirm="Copy"
+          initial={workspaces.find((w) => w.id === wsCopying.id)?.name ?? ""}
+          nameOf={(title) => `${slugOf(title)}.md`}
+          dir={wsCopying.dir}
+          repo={wsCopying.repo}
+          repos={shownRepos}
+          onRepoChange={(repo) => setWsCopying({ ...wsCopying, repo, dir: lastPlanDir(repo) ?? "" })}
+          dirs={(() => {
+            const seen = new Set<string>(treeDirs[wsCopying.repo] ?? []);
+            for (const f of filesByRepo[wsCopying.repo] ?? []) if (f.dir) seen.add(f.dir);
+            return [...seen].sort();
+          })()}
+          onDirChange={(dir) => setWsCopying({ ...wsCopying, dir })}
+          onCancel={() => setWsCopying(null)}
+          onCreate={(relPath) => void copyWorkspaceOut(wsCopying.id, wsCopying.repo, relPath)}
         />
       )}
 

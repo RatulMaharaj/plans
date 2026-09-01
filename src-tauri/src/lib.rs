@@ -1119,6 +1119,45 @@ fn reveal_in_finder(repo: String, rel_path: String) -> R<()> {
     tauri_plugin_opener::reveal_item_in_dir(&p).map_err(|e| e.to_string())
 }
 
+// ---------------------------------------------------------------------------
+// the workspace server's session, in the OS keychain
+//
+// One entry, keyed by the app's identifier: signing in replaces it, signing
+// out removes it, and settings.json never sees it. `get` answers None rather
+// than an error when there is nothing there, because "not signed in" is the
+// ordinary first-launch state and not a fault.
+
+const KEYCHAIN_SERVICE: &str = "com.ratulmaharaj.plans";
+const KEYCHAIN_USER: &str = "workspaces";
+
+fn keychain_entry() -> R<keyring::Entry> {
+    keyring::Entry::new(KEYCHAIN_SERVICE, KEYCHAIN_USER).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn workspace_token_get() -> R<Option<String>> {
+    match keychain_entry()?.get_password() {
+        Ok(t) => Ok(Some(t)),
+        Err(keyring::Error::NoEntry) => Ok(None),
+        Err(e) => Err(e.to_string()),
+    }
+}
+
+#[tauri::command]
+fn workspace_token_set(token: String) -> R<()> {
+    keychain_entry()?
+        .set_password(&token)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn workspace_token_clear() -> R<()> {
+    match keychain_entry()?.delete_credential() {
+        Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
+        Err(e) => Err(e.to_string()),
+    }
+}
+
 /// Open a terminal window in the repository. macOS: whatever the default
 /// terminal is not knowable cheaply, so Terminal.app — `open -a` falls back
 /// to complaining usefully if it is somehow absent. Elsewhere: best effort.
@@ -1686,6 +1725,9 @@ pub fn run() {
             sync_user_skills,
             templates_sync,
             templates_open,
+            workspace_token_get,
+            workspace_token_set,
+            workspace_token_clear,
             git_status,
             git_diff,
             git_head_text,

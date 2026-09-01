@@ -45,6 +45,11 @@ jobs:
       - name: Types
         run: pnpm exec tsc --noEmit
 
+      # The workspace server: real HTTP and a real websocket against an
+      # in-memory database. Fast, and the app's own e2e leans on it.
+      - name: Workspace server
+        run: pnpm --filter plans-workspaces test
+
       - name: Behaviour and budgets
         run: pnpm exec playwright install --with-deps chromium && pnpm test
 

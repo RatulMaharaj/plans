@@ -37,7 +37,7 @@
   "plugins": {
     "updater": {
       "endpoints": [
-        "https://github.com/RatulMaharaj/plans/releases/latest/download/latest.json"
+        "https://github.com/loopedautomation/plans/releases/latest/download/latest.json"
       ],
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDcwRjE3OEIzNkY5RDFBMDgKUldRSUdwMXZzM2p4Y0FFbW1odGlzVVAxR2kreVBXWXdZTnMzSlRtMjFUd0FtREpRWWErTldyRE4K"
     }

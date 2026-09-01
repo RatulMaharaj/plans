@@ -1,3 +1,8 @@
+# The app at the root, and the workspace server beside it — one install, one
+# lockfile, two programs. See server/README.md for why the second exists.
+packages:
+  - "server"
+
 allowBuilds:
   # A postinstall that prints a funding message. Nothing is built.
   core-js: false

@@ -91,8 +91,13 @@ pub async fn run(
     let (r4, a4, c4, k4) = (repo.clone(), app.clone(), chat.clone(), asks.clone());
     // The connection closure takes ownership; these are what is left to report
     // with once it has finished, whichever way it finished.
-    let (after_app, after_repo, after_chat, after_perms, after_asks) =
-        (app.clone(), repo.clone(), chat.clone(), perms.clone(), asks.clone());
+    let (after_app, after_repo, after_chat, after_perms, after_asks) = (
+        app.clone(),
+        repo.clone(),
+        chat.clone(),
+        perms.clone(),
+        asks.clone(),
+    );
 
     let result =
         agent_client_protocol::Client

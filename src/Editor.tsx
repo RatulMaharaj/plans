@@ -17,6 +17,8 @@ import { yamlSchema } from "./yaml-node";
 import { findPluginKey, findProsePlugin, scrollToCurrent } from "./find-prose";
 import type { FindHandle } from "./find";
 import { trace } from "./perf";
+import { collab, collabServiceCtx } from "@milkdown/plugin-collab";
+import type { Room } from "./workspace";
 import "./editor-theme.css";
 
 type Props = {
@@ -46,6 +48,20 @@ type Props = {
    * quote has to come from that one.
    */
   selectionRef?: React.MutableRefObject<(() => string) | null>;
+  /** The whole document as markdown, on demand — the copy-to-repository path. */
+  markdownRef?: React.MutableRefObject<(() => string | null) | null>;
+  /**
+   * A document whose truth is on the wire.
+   *
+   * With a room, the editor binds Milkdown's collab plugin to the room's Yjs
+   * doc and awareness: edits go out as they happen, others' cursors are drawn
+   * in, and `initialValue` becomes a template applied only if the shared
+   * document is empty. `onChange` still fires — it is how the serialised
+   * markdown reaches the room's `meta` map, which is what the server's read
+   * endpoint answers with. The caller keys this component by room, so a
+   * different workspace is a different editor rather than a swap.
+   */
+  room?: Room;
 };
 
 /**
@@ -118,6 +134,8 @@ export function Editor({
   findRef,
   onFindCount,
   selectionRef,
+  markdownRef,
+  room,
 }: Props) {
   const hostRef = useRef<HTMLDivElement | null>(null);
   const instance = useRef<Crepe | null>(null);
@@ -237,7 +255,8 @@ export function Editor({
 
     const crepe = new Crepe({
       root,
-      defaultValue: initialValue,
+      // A shared document arrives from the room; the template goes in below.
+      defaultValue: room ? "" : initialValue,
       // Replaces CodeMirror's stock palette, which is generated into hashed
       // class names and so can't be reached from CSS.
       featureConfigs: {
@@ -332,6 +351,9 @@ export function Editor({
     // ⌘F over the rendered text: matches as decorations, recomputed with the
     // document so an agent's write through the watcher cannot strand them.
     crepe.editor.use($prose(() => findProsePlugin((c, t) => onFindCountRef.current?.(c, t))));
+    // The shared document, when there is one: ySync, yCursor and yUndo bound
+    // to the room after create(), below.
+    if (room) crepe.editor.use(collab);
 
     /**
      * Writing HTML back into the document. A fragment may be several lines, and
@@ -459,6 +481,13 @@ export function Editor({
       const markdown = crepe.getMarkdown();
       if (markdown === lastSentRef.current) return;
       lastSentRef.current = markdown;
+      // What the server hands to anyone reading the workspace as a file. Only
+      // when it differs: a set of the same value is still an update, and two
+      // editors answering each other's updates would never stop.
+      if (room) {
+        const meta = room.doc.getMap<string>("meta");
+        if (meta.get("markdown") !== markdown) meta.set("markdown", markdown);
+      }
       onChangeRef.current(markdown);
     };
 
@@ -480,6 +509,18 @@ export function Editor({
 
     instance.current = crepe;
     created.current = false;
+    if (markdownRef) {
+      // Null, not "", when there is no document to answer with: an emptied
+      // document is a real answer and a caller must be able to tell them apart.
+      markdownRef.current = () => {
+        if (!created.current) return null;
+        try {
+          return crepe.getMarkdown();
+        } catch {
+          return null;
+        }
+      };
+    }
     untouch.current = () => {
       touched = false;
     };
@@ -508,6 +549,8 @@ export function Editor({
      * up in the DOM, each answering to the same keystrokes.
      */
     let disposed = false;
+    /** Stops waiting for the room's first sync, if the editor goes first. */
+    let unsync: (() => void) | null = null;
 
     crepe
       .create()
@@ -518,6 +561,39 @@ export function Editor({
         }
         created.current = true;
         trace("editor created");
+        if (room) {
+          // Bind now; connect once the server's state has arrived, or the
+          // template would be applied to a document that only looks empty.
+          const connect = () => {
+            if (disposed) return;
+            try {
+              crepe.editor.action((ctx) => {
+                const service = ctx.get(collabServiceCtx);
+                service.bindDoc(room.doc).setAwareness(room.awareness);
+                service.applyTemplate(initialValue).connect();
+              });
+              // What the read endpoint answers with is written by send(), and
+              // send() waits for typing. A template is not typing — so once the
+              // shared document has settled, its markdown is published if the
+              // room does not already carry it. Every client computes the same
+              // string, so a second writer changes nothing.
+              window.setTimeout(() => {
+                if (disposed) return;
+                try {
+                  const md = crepe.getMarkdown();
+                  const meta = room.doc.getMap<string>("meta");
+                  if (md.trim() && meta.get("markdown") !== md) meta.set("markdown", md);
+                } catch (e) {
+                  trace("template publish failed", { error: String(e) });
+                }
+              }, 300);
+            } catch (e) {
+              trace("collab connect failed", { error: String(e) });
+            }
+          };
+          if (room.synced) connect();
+          else unsync = room.onSynced(connect);
+        }
         // A frame after creation, so the initial serialisation has been and gone.
         requestAnimationFrame(() => {
           ready = true;
@@ -555,6 +631,8 @@ export function Editor({
       trace("editor destroyed");
       disposed = true;
       created.current = false;
+      unsync?.();
+      if (markdownRef && instance.current === crepe) markdownRef.current = null;
       for (const ev of ["beforeinput", "paste", "cut", "drop", "keydown"] as const) {
         root.removeEventListener(ev, onInput, true);
       }
