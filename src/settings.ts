@@ -153,7 +153,11 @@ export type Settings = {
   muxHeight: number;
   /** Width of the chat in px, when it is the right column. */
   chatWidth: number;
-  /** Poll interval for picking up outside edits, in seconds. 0 turns it off. */
+  /**
+   * Poll interval for picking up outside edits to files in your repositories,
+   * in seconds. 0 turns it off. The settings file has its own fixed interval,
+   * so turning this off never leaves the app deaf to its own settings.
+   */
   watchSeconds: number;
 
   /**

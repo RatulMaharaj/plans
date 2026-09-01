@@ -246,7 +246,7 @@
     },
     "watchSeconds": {
       "type": "number",
-      "description": "Poll interval for picking up outside edits, in seconds. 0 turns it off.",
+      "description": "Poll interval for picking up outside edits to files in your repositories, in seconds. 0 turns it off. The settings file has its own fixed interval, so turning this off never leaves the app deaf to its own settings.",
       "minimum": 0,
       "maximum": 30,
       "default": 4

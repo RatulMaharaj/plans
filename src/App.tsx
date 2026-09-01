@@ -161,6 +161,16 @@ const WS_PREFIX = "\u0000ws/";
 const wsIdOf = (path: string | null | undefined) =>
   path && path.startsWith(WS_PREFIX) ? path.slice(WS_PREFIX.length) : null;
 
+/**
+ * How often the settings file is checked for an outside edit.
+ *
+ * Fixed, and deliberately separate from `watchSeconds`: that knob is about how
+ * hard the app leans on the repository, while this is one `stat` of one path
+ * that also happens to be the only way `watchSeconds` itself can be turned back
+ * on from outside the app.
+ */
+const SETTINGS_POLL_MS = 2000;
+
 function stored<T>(key: string, fallback: T): T {
   try {
     const raw = localStorage.getItem(key);
@@ -740,17 +750,25 @@ export default function App() {
   }, [settings, settingsBooted, notify]);
 
   /**
-   * The file joins the same rhythm as everything else read from disk: poll the
-   * stamp, reload when it moves. Editing the theme in another editor and
-   * watching the window change on save is the moment this feature proves
+   * Poll the stamp, reload when it moves. Editing the theme in another editor
+   * and watching the window change on save is the moment this feature proves
    * itself — and it is how the agent in the chat panel changes your settings
    * when asked, with no new tool surface at all.
+   *
+   * It used to share `watchSeconds` with the document watcher, which broke it
+   * in the one configuration that most needs it. `watchSeconds: 0` is a choice
+   * about repository churn, and it turned off the only channel through which
+   * the file can ever be turned back on: the write landed, the app never
+   * looked, and the person learned that asking the agent for a dark theme is
+   * flaky. So this poll runs unconditionally at its own gentle interval. A
+   * quiet tick costs a `stat` rather than a read, which is what `settings_stat`
+   * is for.
    *
    * A file that does not parse keeps the last good settings and says so. "You
    * have a typo" is recoverable; "your settings reset" is rage.
    */
   useEffect(() => {
-    if (!settingsBooted || settings.watchSeconds <= 0) return;
+    if (!settingsBooted) return;
     const id = setInterval(() => {
       void (async () => {
         try {
@@ -791,9 +809,9 @@ export default function App() {
           // Offline, mid-write, gone for a moment — the next tick asks again.
         }
       })();
-    }, Math.max(1, settings.watchSeconds) * 1000);
+    }, SETTINGS_POLL_MS);
     return () => clearInterval(id);
-  }, [settingsBooted, settings.watchSeconds, notify]);
+  }, [settingsBooted, notify]);
 
   const openSettingsFile = useCallback(() => {
     void api.settingsOpen().catch((e) => notify(String(e), "error"));

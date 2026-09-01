@@ -138,6 +138,40 @@ test("an edit made outside arrives without a restart", async ({ page }) => {
   });
 });
 
+test("an outside edit arrives with repository watching turned off", async ({ page }) => {
+  await open(page, { file: JSON.stringify({ theme: "day", watchSeconds: 0 }) });
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "day");
+
+  await editOutside(page, JSON.stringify({ theme: "night", watchSeconds: 0 }));
+
+  // watchSeconds is a choice about repository churn. It used to gate this poll
+  // too, which meant someone who had turned watching off asked the agent for a
+  // dark theme and got silence — and the settings file is the only channel
+  // through which watching can ever be turned back on.
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "night", {
+    timeout: 10_000,
+  });
+});
+
+test("an outside edit lands while a chat is open", async ({ page }) => {
+  await open(page, { file: JSON.stringify({ theme: "day", watchSeconds: 0 }) });
+
+  // The chat needs a buffer to be about, so open the one file this repo has.
+  const shut = page.locator('.row.repo[aria-expanded="false"]');
+  if (await shut.count()) await shut.first().click();
+  await page.locator(".row.file").first().click();
+  await page.keyboard.press("Meta+j");
+  await expect(page.locator(".chat")).toBeVisible();
+
+  // This is the whole feature, seen from the chat: the agent writes the file
+  // and the window changes without anyone touching the settings page.
+  await editOutside(page, JSON.stringify({ theme: "night", watchSeconds: 0 }));
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "night", {
+    timeout: 10_000,
+  });
+  await expect(page.locator(".chat")).toBeVisible();
+});
+
 test("a file that does not parse keeps the last settings and says so", async ({ page }) => {
   await open(page, { file: JSON.stringify({ theme: "night", watchSeconds: 1 }) });
   await expect(page.locator("html")).toHaveAttribute("data-theme", "night");
@@ -149,6 +183,20 @@ test("a file that does not parse keeps the last settings and says so", async ({ 
   });
   // "You have a typo" is recoverable; "your settings reset" is rage.
   await expect(page.locator("html")).toHaveAttribute("data-theme", "night");
+
+  // Someone editing a broken file saves it again every few seconds while they
+  // work out what they got wrong, and the poll sees each of those saves. One
+  // toast is the message; a toast per tick is a fault of its own.
+  await expect(page.locator(".toast")).toHaveCount(0, { timeout: 10_000 });
+  await editOutside(page, '{ "theme": "day", still oops');
+  await page.waitForTimeout(5_000);
+  await expect(page.locator(".toast")).toHaveCount(0);
+
+  // And when the typo is fixed the file is believed again.
+  await editOutside(page, JSON.stringify({ theme: "day", watchSeconds: 1 }));
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "day", {
+    timeout: 10_000,
+  });
 });
 
 test("keys this build does not know survive a save", async ({ page }) => {

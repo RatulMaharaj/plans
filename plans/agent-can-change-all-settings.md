@@ -1,5 +1,5 @@
 ---
-status: busy
+status: done
 ---
 # Agent Can Change All Settings
 
@@ -85,38 +85,37 @@ ever be turned back on. The settings poll should run unconditionally, at a
 fixed gentle interval, and this plan makes that change. A setting whose
 observer can be configured away is a setting that can wedge itself.
 
-## Open questions
+## What the open questions were decided as
 
-- Should the chat preamble mention the settings path once per session, the
-  way it mentions the open plan (`ChatPanel.tsx:432`)? It would make the
-  skill's platform table redundant on the machine that matters — but it
-  spends context on every session for a request most sessions never make.
-  Leaning no: the skill is enough, and the table is four lines.
-- Sharp keys: `telemetry`, `updates`, and `keyOverrides` are all legal
-  targets, and "all settings" is the title. Is the out-of-tree write
-  permission enough ceremony, or should the skill tell the agent to confirm
-  in conversation before flipping privacy-adjacent switches? Leaning: the
-  skill says to state what it is about to change and why — prose, not
-  machinery.
-- If two agents (or an agent and the app) write in the same poll window, last
-  write wins with no stamp check — `settings_write` returns the new stamp but
-  nothing compares an expected one, unlike `write_plan`'s optimistic check
-  (`api.ts:190`). Is a settings file worth the same STALE dance, or is
-  last-write-wins honest enough for a file this small?
-- The identifier is baked into the skill's path table; if it ever changes,
-  the skill lies until someone remembers. Generate the table into the skill
-  at build time, or accept the risk?
+- **The chat preamble stays as it is.** No settings path is injected per
+  session. The skill carries the table, and the settings page prints the
+  resolved path for the platform the table gets wrong, so nothing is spent on
+  the sessions that never ask.
+- **Consent is the permission card plus prose.** The out-of-tree write already
+  arrives as a card in the transcript, and the skill tells the agent to say
+  what it is about to change before it writes, and to wait for agreement on
+  `telemetry`, `updates` and `keyOverrides`. No second machinery.
+- **Last write wins, deliberately.** `settings_write` still returns a stamp
+  nobody compares. The realistic collision is the app's own save racing the
+  agent's write, and the loser's version comes back on the next poll a couple
+  of seconds later, into a file whose whole content is a few dozen scalars.
+  The STALE dance `write_plan` does (`api.ts:190`) exists because a plan holds
+  prose someone typed. Revisit this if a second writer ever appears that is
+  not the app.
+- **The identifier stays hand-written in the skill.** Generating the table at
+  build time is a build step for a string that has not changed since the app
+  was named, and the skill already says the settings page is the authority.
 
 ## Next
 
-- [ ] Write `skills/settings/SKILL.md`: the platform path table,
+- [x] Write `skills/settings/SKILL.md`: the platform path table,
       read-the-schema-first, the etiquette (one write, keep `$schema` and
       extras, app-managed keys), state-your-change, verify-by-reading
-- [ ] Add the row to `SKILLS` (`skill.ts:35`) with its named fence;
+- [x] Add the row to `SKILLS` (`skill.ts:35`) with its named fence;
       installs with the rest
-- [ ] Unhook the settings poll from `watchSeconds` — unconditional, fixed
+- [x] Unhook the settings poll from `watchSeconds` — unconditional, fixed
       interval, still a `stat` when quiet
-- [ ] e2e: an outside write to the settings file changes the app while a
+- [x] e2e: an outside write to the settings file changes the app while a
       chat is open; a torn/invalid write keeps last-good and toasts once
-- [ ] Decide the stamp-check question before anyone builds multi-writer
+- [x] Decide the stamp-check question before anyone builds multi-writer
       habits on last-write-wins

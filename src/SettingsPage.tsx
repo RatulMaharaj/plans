@@ -565,7 +565,7 @@ export function SettingsPage({
             onChange={(showStatusBar) => onChange({ showStatusBar })}
           />
           <Slider
-            label="Check for outside edits"
+            label="Check repositories for outside edits"
             value={s.watchSeconds}
             display={s.watchSeconds === 0 ? "never" : `every ${s.watchSeconds}s`}
             {...RANGES.watchSeconds}
@@ -638,7 +638,7 @@ export function SettingsPage({
         {/* ---- library -------------------------------------------------- */}
         <Group
           name="Repositories"
-          hint="Forgetting a repository removes it from this list only. Nothing on disk changes. Install conventions writes the bundled skills — plan-writing and PR review — everywhere the agents on this machine look: Claude Code's .claude/skills/ files, and a fenced section per skill in AGENTS.md or GEMINI.md for the agents that read those."
+          hint="Forgetting a repository removes it from this list only. Nothing on disk changes. Install conventions writes the bundled skills — plan-writing, PR review and editing this settings file — everywhere the agents on this machine look: Claude Code's .claude/skills/ files, and a fenced section per skill in AGENTS.md or GEMINI.md for the agents that read those."
         >
           {repos.length === 0 && <p className="none">None yet.</p>}
           {repos.map((r) => (
@@ -701,7 +701,7 @@ export function SettingsPage({
         {/* ---- the file ------------------------------------------------- */}
         <Group
           name="Settings file"
-          hint="Everything on this page is one JSON file, with a schema beside it — so an editor completes the keys and explains them, and the agent in the chat can change your settings by editing a file. Saves outside the app are picked up on the same interval as everything else read from disk."
+          hint="Everything on this page is one JSON file, with a schema beside it — so an editor completes the keys and explains them, and the agent in the chat can change your settings by editing a file. Saves made outside the app are picked up within a couple of seconds, whatever the repository watch interval is set to."
         >
           <div className="setting-row static">
             <span className="setting-label">
