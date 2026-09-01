@@ -10,7 +10,15 @@ permissions:
 jobs:
   commands:
     uses: RatulMaharaj/factory/.github/workflows/commands.yml@main
-    secrets: inherit
+    # Named rather than inherited: `secrets: inherit` only reaches a reusable
+    # workflow under the same owner, and the factory is RatulMaharaj's while
+    # this repository is loopedautomation's. Every secret the workflow declares.
+    secrets:
+      CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      CODEX_AUTH_JSON: ${{ secrets.CODEX_AUTH_JSON }}
+      MUSE_API_KEY: ${{ secrets.MUSE_API_KEY }}
+      FACTORY_PAT: ${{ secrets.FACTORY_PAT }}
     with:
       ci_workflow: CI
       runner: macos-latest
