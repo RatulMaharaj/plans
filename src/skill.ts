@@ -3,6 +3,7 @@ import plansText from "../skills/plans/SKILL.md?raw";
 import reviewText from "../skills/review/SKILL.md?raw";
 import prText from "../skills/pr/SKILL.md?raw";
 import factoryText from "../skills/factory/SKILL.md?raw";
+import writingText from "../skills/writing/SKILL.md?raw";
 
 /**
  * The conventions ship inside the bundle, imported at build time from the
@@ -63,6 +64,14 @@ export const SKILLS: BundledSkill[] = [
     begin: "<!-- plans:begin factory -->",
     end: "<!-- plans:end factory -->",
     claudePath: ".claude/skills/factory/SKILL.md",
+  },
+  {
+    name: "writing",
+    label: "writing skill",
+    text: writingText,
+    begin: "<!-- plans:begin writing -->",
+    end: "<!-- plans:end writing -->",
+    claudePath: ".claude/skills/writing/SKILL.md",
   },
 ];
 

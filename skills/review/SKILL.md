@@ -1,13 +1,18 @@
 ---
 name: review
-description: How to turn a branch or PR into review materials the Plans app renders well — a small ordered set of documents, diagrams where prose loses, code blocks as quotations. Use when asked to review a branch, a pull request, or a diff in a repository with a plans/ folder.
+description: How to turn a branch or PR into review materials the Plans app renders well - a small ordered set of documents, diagrams where prose loses, code blocks as quotations. Use when asked to review a branch, a pull request, or a diff in a repository with a plans/ folder.
 ---
 # Writing a review a human can read
 
 You are reviewing a change so that a person can review it faster. The output
-is not one massive document - it is a small, ordered set of markdown files the
-Plans app renders as pages, with a tree that reads as a board. Split by what
-the *reader* does, not by what the diff contains.
+is a small, ordered set of markdown files the Plans app renders as pages,
+with a tree that reads as a board. Split by what the *reader* does; the
+diff's own boundaries are the wrong unit.
+
+The prose in every review document follows the writing skill
+(`.claude/skills/writing/SKILL.md`, or `skills/writing/SKILL.md` in this
+repository). Read it before writing; it sets the voice for everything a
+human reads in the app.
 
 ## Where the documents go
 
@@ -25,19 +30,19 @@ plans/reviews/my-branch/
 
 Each file carries frontmatter with a status, like any plan:
 
-- Write each document, then mark it `ready` — a review doc marked `ready` is
+- Write each document, then mark it `ready`. A review doc marked `ready` is
   one you have finished writing.
-- The reader flips docs to `done` as they read; that is their checklist, not
-  yours. Never set `done` yourself unless explicitly asked to.
+- The reader flips docs to `done` as they read; that checklist belongs to
+  them. Never set `done` yourself unless explicitly asked to.
 
 ## The split
 
-- **01-overview** - what the change *is* and *why*, in a page: intent, shape,
-  the areas the rest of the review walks through, in order.
-- **One document per area of understanding** — not per file. Files are the
-  diff's unit; the reader's unit is "the new save path", "how auth changed".
-  A document per area explains the before, the after, and the reason.
-- **The closing document** — risks, open questions, and what to test. This is
+- **01-overview** - what the change *is* and *why*, in a page: intent, shape
+  and the areas the rest of the review walks through, in order.
+- **One document per area of understanding.** Files are the diff's unit; the
+  reader's unit is "the new save path" or "how auth changed". A document per
+  area explains the before, the after and the reason.
+- **The closing document** - risks, open questions and what to test. This is
   the document the reader acts on; nothing in it should appear for the first
   time here without a pointer back to the area that explains it.
 
@@ -54,16 +59,17 @@ the reader nothing. Use one where prose loses:
 - **sequenceDiagram** for a new call path across a boundary
 - **stateDiagram** where a lifecycle moved
 
-Mermaid also does Gantt, pie, quadrant, requirement diagrams and more — know
-the breadth, but use it only where needed. A pie chart in a PR review is decoration. One
-diagram that explains the shape of the change beats four that inventory it.
+Mermaid also does Gantt, pie, quadrant, requirement diagrams and more. Know
+the breadth, but reach for it only where it earns its place; a pie chart in
+a PR review is decoration. One diagram that explains the shape of the change
+beats four that inventory it.
 
-## Code blocks are quotations, not mirrors
+## Code blocks are quotations
 
-A snippet carries the few lines the reader must actually understand — the new
+A snippet carries the few lines the reader must actually understand - the new
 invariant, the subtle condition - with `file:line` beside it so the claim is
-checkable. Never paste whole files; the diff already exists, the review
-explains it.
+checkable. Never paste whole files; the diff already exists, and the review's
+job is to explain it.
 
 ## Ground every claim in the checkout
 
@@ -75,4 +81,6 @@ from imagination.
 
 ## Writing style
 
-This is technical writing. You should assume that the reader has little to no context regarding the feature being implemented or the bug being fixed. It is your job to provide that context for the reader in a manner that is simple and easy to understand and consume.
+This is technical writing. Assume the reader has little to no context on the
+feature being implemented or the bug being fixed. Your job is to give them
+that context in a way that is simple to understand and quick to consume.
