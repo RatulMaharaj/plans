@@ -251,3 +251,42 @@ test("the device flow proxies GitHub and mints a session of ours", async () => {
     await t.close();
   }
 });
+
+test("a bad frame closes that client and nobody else", async () => {
+  const alice = await signIn("alice");
+  const { id } = (await call("/workspaces", { method: "POST", token: alice, body: { name: "Frames" } })).value;
+  const good = connect(id, alice);
+  await Promise.all([good.open, good.synced]);
+  const bad = new WebSocket(`ws://127.0.0.1:${s.port}/ws/${id}?token=${alice}`);
+  await new Promise((r) => bad.once("open", r));
+  const closed = new Promise((r) => bad.once("close", (code) => r(code)));
+  bad.send(new Uint8Array(0));
+  assert.equal(await closed, 1003);
+  // The room and the server are still there for the well-behaved one.
+  good.doc.getText("t").insert(0, "still here");
+  await until(() => s.rooms.rooms.get(id)?.doc.getText("t").toString() === "still here");
+  assert.equal((await call("/health")).status, 200);
+  good.close();
+});
+
+test("edits made just before the last client leaves survive an immediate reconnect", async () => {
+  const alice = await signIn("alice");
+  const { id } = (await call("/workspaces", { method: "POST", token: alice, body: { name: "Race" } })).value;
+  const a = connect(id, alice);
+  await Promise.all([a.open, a.synced]);
+  a.doc.getText("t").insert(0, "first");
+  await until(() => s.rooms.rooms.get(id)?.doc.getText("t").toString() === "first");
+  a.close();
+  // Straight back in, before the save could possibly have landed.
+  const b = connect(id, alice);
+  await Promise.all([b.open, b.synced]);
+  await until(() => b.doc.getText("t").toString() === "first");
+  b.doc.getText("t").insert(5, " second");
+  await until(() => s.rooms.rooms.get(id)?.doc.getText("t").toString() === "first second");
+  b.close();
+  await until(() => !s.rooms.rooms.has(id));
+  const c = connect(id, alice);
+  await Promise.all([c.open, c.synced]);
+  await until(() => c.doc.getText("t").toString() === "first second");
+  c.close();
+});

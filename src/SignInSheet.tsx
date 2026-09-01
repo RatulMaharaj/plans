@@ -36,17 +36,19 @@ export function SignInSheet({ onDone, onCancel }: Props) {
         void openUrl(s.verificationUri).catch(() => {
           // A browser that will not open is not fatal: the URL is on the sheet.
         });
-        // GitHub names the cadence; polling faster only earns a refusal.
-        const wait = Math.max(1, s.interval) * 1000;
+        // GitHub names the cadence; polling faster only earns a refusal, and
+        // a refusal (`slow_down`) means five seconds more from then on.
+        let wait = Math.max(1, s.interval) * 1000;
         const poll = async () => {
           if (cancelled) return;
           try {
-            const who = await workspace.pollSignIn(s.deviceCode);
+            const { account, slowDown } = await workspace.pollSignIn(s.deviceCode);
             if (cancelled) return;
-            if (who) {
-              onDoneRef.current(who);
+            if (account) {
+              onDoneRef.current(account);
               return;
             }
+            if (slowDown) wait += 5000;
           } catch (e) {
             if (!cancelled) setError(String((e as Error).message ?? e));
             return;

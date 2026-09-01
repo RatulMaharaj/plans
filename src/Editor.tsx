@@ -49,7 +49,7 @@ type Props = {
    */
   selectionRef?: React.MutableRefObject<(() => string) | null>;
   /** The whole document as markdown, on demand — the copy-to-repository path. */
-  markdownRef?: React.MutableRefObject<(() => string) | null>;
+  markdownRef?: React.MutableRefObject<(() => string | null) | null>;
   /**
    * A document whose truth is on the wire.
    *
@@ -510,12 +510,14 @@ export function Editor({
     instance.current = crepe;
     created.current = false;
     if (markdownRef) {
+      // Null, not "", when there is no document to answer with: an emptied
+      // document is a real answer and a caller must be able to tell them apart.
       markdownRef.current = () => {
-        if (!created.current) return "";
+        if (!created.current) return null;
         try {
           return crepe.getMarkdown();
         } catch {
-          return "";
+          return null;
         }
       };
     }
@@ -570,6 +572,21 @@ export function Editor({
                 service.bindDoc(room.doc).setAwareness(room.awareness);
                 service.applyTemplate(initialValue).connect();
               });
+              // What the read endpoint answers with is written by send(), and
+              // send() waits for typing. A template is not typing — so once the
+              // shared document has settled, its markdown is published if the
+              // room does not already carry it. Every client computes the same
+              // string, so a second writer changes nothing.
+              window.setTimeout(() => {
+                if (disposed) return;
+                try {
+                  const md = crepe.getMarkdown();
+                  const meta = room.doc.getMap<string>("meta");
+                  if (md.trim() && meta.get("markdown") !== md) meta.set("markdown", md);
+                } catch (e) {
+                  trace("template publish failed", { error: String(e) });
+                }
+              }, 300);
             } catch (e) {
               trace("collab connect failed", { error: String(e) });
             }

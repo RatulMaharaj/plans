@@ -2954,8 +2954,8 @@ export default function App() {
       const room = rooms.current.get(id);
       htmlBridge.collect?.();
       const text =
-        mainWriteMarkdown.current?.() ||
-        room?.doc.getMap<string>("meta").get("markdown") ||
+        mainWriteMarkdown.current?.() ??
+        room?.doc.getMap<string>("meta").get("markdown") ??
         "";
       let out = text;
       if (ws?.review.state === "approved" && ws.review.decidedBy) {
@@ -3957,7 +3957,7 @@ export default function App() {
   /** The main write surface's selection, registered the same way. */
   const mainWriteSelection = useRef<(() => string) | null>(null);
   /** The main write surface's whole document, for copying a workspace out. */
-  const mainWriteMarkdown = useRef<(() => string) | null>(null);
+  const mainWriteMarkdown = useRef<(() => string | null) | null>(null);
   const mainSourceFind = useRef<FindHandle | null>(null);
   const splitFind = useRef<FindHandle | null>(null);
   /** The engine last driven, so switching surfaces clears the old paint. */

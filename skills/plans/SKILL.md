@@ -111,6 +111,25 @@ doesn't wander into it and the human doesn't expect it.
 **Open questions.** Real decisions that are still open, addressed to whoever
 moves the plan next. If a question would block implementation, say so.
 
+Write each question so an answer has somewhere to land: one bullet per
+question, ending with the lean if you have one ("Leaning no, because …"),
+and under it an indented, empty `Answer:` line — the blank the human fills
+in from the app. When a question gets decided — by the human typing into
+that slot, or by you when the answer becomes clear — fold the decision in:
+strike the question through, replace the `Answer:` slot with `Decided: …`,
+and carry the consequences into the body and the implementation guide.
+
+```markdown
+- Should a share link expire by default? Leaning no; revocation covers it.
+  - Answer:
+- ~~Where does the server run and who pays?~~ Decided: a hosted default,
+  fixed in the app.
+```
+
+The section is a ledger, not a scratchpad: the struck questions show what was
+argued and settled, which is exactly what a later reader (or the session
+implementing the plan) needs to not reopen them.
+
 Do not add a "next steps" section. The lifecycle already says whose move it
 is, and the implementation guide already holds the steps; a next-steps list
 on top of those is noise the human has told us they skip.

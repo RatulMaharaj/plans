@@ -106,6 +106,16 @@ test("two people argue a plan in one room, review it, and copy it out", async ({
   await expect(editor(alice).locator("h1")).toHaveText("Roadmap");
   await expect(alice.locator(".ws-row", { hasText: "Roadmap" })).toBeVisible();
 
+  // Untouched, the room already answers as a file: the template is published
+  // without anyone typing, or the factory would read an empty plan.
+  const aliceToken = await session("alice");
+  const fresh = await (await fetch(`${base}/workspaces`, { headers: { Authorization: `Bearer ${aliceToken}` } })).json();
+  await expect
+    .poll(async () =>
+      (await fetch(`${base}/w/${fresh[0].id}/plan.md`, { headers: { Authorization: `Bearer ${aliceToken}` } })).text(),
+    )
+    .toContain("# Roadmap");
+
   // Bob is not in it yet, and sees nothing.
   const bob = await boot(browser, "bob");
   await expect(bob.locator(".ws-hint")).toContainText("None yet");

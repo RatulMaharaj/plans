@@ -66,7 +66,8 @@ operational event; share links are minted casually, plural, and revoked on a
 whim, and the UI wants to list them ("created by @ratul, 3 days ago") without
 ever listing the factory's credential next to them. A `share_tokens` table
 with the same hashed-at-rest discipline (server/src/db.js:51–54), plus
-`revoked_at`, keeps both stories simple. Three routes:
+`revoked_at` and an `expires_at` stamped thirty days out at mint, keeps both
+stories simple. Expired and revoked answer identically: 404. Three routes:
 
 - `POST /workspaces/{id}/share` → `{ token }`, member-only via the existing
   `mine` guard (server/src/index.js:68–73)
@@ -141,50 +142,52 @@ designing token scopes for documents that can't exist yet is how schemas rot.
 
 ## Open questions
 
-- **Should a share link expire by default?** Revocation handles the leak
-  story, but an expiry (30 days?) handles the *forgotten* link — nobody
-  revokes what they don't remember minting. Leaning toward no expiry in v1
-  and a "created N days ago" label that shames appropriately; expiry is a
-  column we can add without a migration story.
-- **Does the viewer get the review trail or just the state?** The chip needs
-  `review.state`; showing "approved by @name" is more honest for a reader
-  deciding how settled the text is. The share endpoint would return the same
-  shape `db.workspace` already builds (server/src/db.js:91–103), minus the
-  member list — is the member list itself something a link-holder should see?
-  Leaning no: names of who's arguing are not part of the document.
+- ~~Should a share link expire by default?~~ Decided: yes, 30 days.
+  Revocation handles the leak story; expiry handles the *forgotten* link —
+  nobody revokes what they don't remember minting. An expired link renders
+  the same 404 as a revoked one.
+- ~~Does the viewer get the review trail or just the state?~~ Decided: just
+  the state. The chip needs `review.state` and nothing more; no approver
+  names, no member list — names of who's arguing are not part of the
+  document.
 - **Fragment survivability.** Some contexts rewrite or strip fragments
   (certain link scanners, copy-paste through software that "cleans" URLs). If
   a stripped link lands on bare `/share`, the page should say "this link is
   missing its key — ask for it again", not render an error that looks like
   revocation.
+  - Answer:
 - **Mermaid and images.** The app renders mermaid blocks and repo-relative
   images; a workspace doc can contain both. Mermaid in the viewer is one
   script tag and probably worth it; images by relative path have no
   repository to resolve against and should render as a visible broken-asset
   placeholder, not vanish. Does that need saying in the doc, or in the
   viewer?
+  - Answer:
 - **Should the copied-to-repo file remember its links?** Once the plan leaves
   the room for git, the workspace (and its links) live on. Do links keep
   working after copy-out — probably yes, the room is still the discussion —
   or should copy-out suggest revoking them as part of "the argument settled"?
+  - Answer:
 
 ## Next
 
 - [ ] Point `DEFAULT_SERVER` (src/workspace.ts:25) at the workspace server's
-      looped.sh address — the app now lives at plans.looped.sh, and share
-      links are minted from `serverUrl()`, so a stale constant mints stale
-      links
-- [ ] `share_tokens` table (hashed, `revoked_at`) and three member-only
-      routes: mint, list, revoke — 404 for unknown/revoked, like everything
-      else
+  looped.sh address — the app now lives at plans.looped.sh, and share
+  links are minted from `serverUrl()`, so a stale constant mints stale
+  links
+- [ ] `share_tokens` table (hashed, `revoked_at`, `expires_at` = mint + 30
+  days) and three member-only routes: mint, list, revoke — 404 for
+  unknown, revoked, or expired, like everything else
 - [ ] `GET /share/doc` behind the bearer token: markdown from
-      `rooms.markdown`, plus workspace name and review state
+  `rooms.markdown`, plus workspace name and `review.state` only — no
+  trail, no members
 - [ ] `GET /share`: one static, self-contained viewer page — reads
-      `location.hash`, fetches with the Authorization header, renders with
-      raw HTML escaped, frontmatter as a status chip, zen-width column, print
-      stylesheet; a distinct message for a missing fragment
+  `location.hash`, fetches with the Authorization header, renders with
+  raw HTML escaped, frontmatter as a status chip, zen-width column, print
+  stylesheet; a distinct message for a missing fragment
 - [ ] "Copy share link" in the palette and the page head for workspace
-      buffers, via `workspace.ts`; a small sheet listing links with revoke
+  buffers, via `workspace.ts`; a small sheet listing links with revoke
 - [ ] e2e: mint a link in one context, open it in a fresh logged-out context
-      and see the rendered heading; revoke it and see the 404 message; fetch
-      `/share` with no fragment and see the missing-key message, not content
+  and see the rendered heading; revoke it and see the 404 message; fetch
+  `/share` with no fragment and see the missing-key message, not content
+

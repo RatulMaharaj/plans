@@ -106,13 +106,14 @@ export class Rooms {
     ws.on("message", (data) => (room ? this.handle(room, ws, controlled, data) : early.push(data)));
     ws.on("close", () => {
       gone = true;
-      if (room) this.leave(room, ws, controlled);
+      if (room) void this.leave(room, ws, controlled);
     });
 
     room = await this.room(id);
     if (gone) return;
     room.conns.add(ws);
     for (const data of early) this.handle(room, ws, controlled, data);
+    if (ws.readyState !== 1) return;
 
     // Open with our state vector, then everyone's presence, then the review.
     const enc = encoding.createEncoder();
@@ -132,7 +133,21 @@ export class Rooms {
     send(ws, reviewMessage(review));
   }
 
+  /**
+   * One frame from one client. A frame the protocol cannot read — empty,
+   * truncated, or not ours — closes that client and nothing else: a member's
+   * bad byte must never take the room, let alone the process, down with it.
+   */
   handle(room, ws, controlled, data) {
+    try {
+      this.decode(room, ws, controlled, data);
+    } catch (e) {
+      console.warn(`closing a client of ${room.id}: ${e.message}`);
+      ws.close(1003, "bad frame");
+    }
+  }
+
+  decode(room, ws, controlled, data) {
     const dec = decoding.createDecoder(new Uint8Array(data));
     const type = decoding.readVarUint(dec);
     if (type === MSG_SYNC) {
@@ -154,18 +169,21 @@ export class Rooms {
     }
   }
 
-  leave(room, ws, controlled) {
+  async leave(room, ws, controlled) {
     room.conns.delete(ws);
     awarenessProtocol.removeAwarenessStates(room.awareness, [...controlled], null);
-    if (room.conns.size === 0) {
-      // The last reader left: write it out now and let the memory go.
-      if (room.saveTimer) clearTimeout(room.saveTimer);
-      room.saveTimer = null;
-      void this.db.saveDoc(room.id, Y.encodeStateAsUpdate(room.doc)).catch(logSave);
-      room.awareness.destroy();
-      room.doc.destroy();
-      this.rooms.delete(room.id);
-    }
+    if (room.conns.size !== 0) return;
+    // The last reader left: write it out, and only then let the memory go.
+    // The room stays in the map while the write is in flight, so someone
+    // reconnecting in that window joins this document rather than loading
+    // the database's older copy and being overwritten by this save later.
+    if (room.saveTimer) clearTimeout(room.saveTimer);
+    room.saveTimer = null;
+    await this.db.saveDoc(room.id, Y.encodeStateAsUpdate(room.doc)).catch(logSave);
+    if (room.conns.size !== 0 || this.rooms.get(room.id) !== room) return;
+    room.awareness.destroy();
+    room.doc.destroy();
+    this.rooms.delete(room.id);
   }
 
   /** Write everything out; called on shutdown. */

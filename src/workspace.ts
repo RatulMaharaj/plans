@@ -130,17 +130,18 @@ export const workspace = {
   startSignIn: () => call<DeviceStart>("/auth/device", { method: "POST", auth: false }),
 
   /**
-   * Step two, repeated at GitHub's interval: done yet? Resolves with the
-   * account once they have typed the code, and keeps the session.
+   * Step two, repeated at GitHub's interval: done yet? The account once they
+   * have typed the code (and the session is kept); otherwise whether GitHub
+   * asked for a slower cadence, which the caller must honour.
    */
-  async pollSignIn(deviceCode: string): Promise<Account | null> {
-    const r = await call<{ pending?: boolean; token?: string; user?: Account }>("/auth/device/poll", {
-      body: { deviceCode },
-      auth: false,
-    });
-    if (r.pending || !r.token || !r.user) return null;
+  async pollSignIn(deviceCode: string): Promise<{ account: Account | null; slowDown: boolean }> {
+    const r = await call<{ pending?: boolean; slowDown?: boolean; token?: string; user?: Account }>(
+      "/auth/device/poll",
+      { body: { deviceCode }, auth: false },
+    );
+    if (r.pending || !r.token || !r.user) return { account: null, slowDown: !!r.slowDown };
     await setToken(r.token);
-    return r.user;
+    return { account: r.user, slowDown: false };
   },
 
   async signOut() {
