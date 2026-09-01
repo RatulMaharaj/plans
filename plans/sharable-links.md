@@ -164,29 +164,27 @@ designing token scopes for documents that can't exist yet is how schemas rot.
   a stripped link lands on bare `/share`, the page should say "this link is
   missing its key — ask for it again", not render an error that looks like
   revocation.
-  - Answer: as written. A bare `/share` says the link is missing its key and
-    to ask for the whole one again — a sentence that reads as *lost in
-    transit*, not as *dead*, which is the difference that matters to the
-    reader holding it.
+  - Answer: yes, as written. A bare `/share` says the link is missing its
+    key and to ask for the whole one again — a sentence that reads as *lost
+    in transit*, not as *dead*.
 - **Mermaid and images.** The app renders mermaid blocks and repo-relative
   images; a workspace doc can contain both. Mermaid in the viewer is one
   script tag and probably worth it; images by relative path have no
   repository to resolve against and should render as a visible broken-asset
   placeholder, not vanish. Does that need saying in the doc, or in the
   viewer?
-  - Answer: in the viewer, and mermaid stays out for now. The page is one
-    self-contained file with no build step and no network of its own; a CDN
-    script tag would trade that for a diagram, while the fence still renders
-    as readable source. A relative image renders as a dashed `image · alt`
-    placeholder, because the viewer is the thing that knows there is no
-    repository to resolve against.
+  - Answer: the viewer should show exactly what you see in the app, mermaid
+    included. **Not yet done:** the run shipped the page self-contained, so a
+    mermaid fence renders as source; drawing the diagram means one script
+    tag on the viewer. A relative image renders as a dashed `image · alt`
+    placeholder, since there is no repository to resolve against.
 - **Should the copied-to-repo file remember its links?** Once the plan leaves
   the room for git, the workspace (and its links) live on. Do links keep
   working after copy-out — probably yes, the room is still the discussion —
   or should copy-out suggest revoking them as part of "the argument settled"?
-  - Answer: left open, and nothing shipped assumes either way. Links keep
-    working after copy-out today; the thirty-day expiry means an unanswered
-    version of this question resolves itself rather than accumulating.
+  - Answer: no. A clean copy, and copy-out revokes the links: the argument
+    settled, and the file is the record now. **Not yet done:** links keep
+    working after copy-out today; copy-out should revoke them.
 
 ## Next
 
