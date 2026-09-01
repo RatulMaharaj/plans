@@ -114,6 +114,10 @@ type Props = {
   /** Step to the next open buffer, or the previous one. */
   onCycleTab: (step: number) => void;
   onCopyAgentCommand: () => void;
+  /** The open buffer's workspace, when it is one: share links are per room. */
+  shareWorkspaceId: string | null;
+  onCopyShareLink: (id: string) => void;
+  onShareLinks: (id: string) => void;
   onMatter: () => void;
   /**
    * The bundled skills, openable like any other file. Empty when no
@@ -275,6 +279,30 @@ function buildCommands(p: Props): Command[] {
         run: () => p.onOpenChat(c.id),
       });
     }
+  }
+
+  /*
+   * Sharing, only where there is something to share: a link addresses a
+   * workspace, and a file on disk has no room behind it to serve.
+   */
+  if (p.shareWorkspaceId) {
+    const id = p.shareWorkspaceId;
+    add({
+      id: "workspace.share.copy",
+      group: "Workspace",
+      label: "Copy share link",
+      hint: "read-only, for anyone with the link",
+      terms: "publish url public send read only browser",
+      run: () => p.onCopyShareLink(id),
+    });
+    add({
+      id: "workspace.share.links",
+      group: "Workspace",
+      label: "Share links…",
+      hint: "list and revoke",
+      terms: "revoke unshare manage links",
+      run: () => p.onShareLinks(id),
+    });
   }
 
   if (p.canEdit) {

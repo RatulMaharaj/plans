@@ -1,0 +1,357 @@
+<!doctype html>
+<!--
+  The share viewer: one document, read-only, for someone with no account.
+
+  Everything about this page follows from where the secret lives. The link is
+  /share#<token>, and browsers never send a fragment over the wire, so this
+  file is served to anyone who asks — access logs, proxies and link unfurlers
+  all see the same empty shell. The token is read from location.hash and sent
+  as an Authorization header, which is the discipline the rest of the server
+  already speaks.
+
+  Self-contained on purpose: no build step, no framework, no bundle. The app's
+  editing stack exists to edit; dragging it into a read-only page would import
+  a megabyte to render a heading. The reasoning is in plans/sharable-links.md.
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <!-- An unfurler has nothing to unfurl: the fragment never reached us. -->
+    <title>A plan on plans</title>
+    <meta name="robots" content="noindex, nofollow" />
+    <style>
+      :root {
+        --paper: #fbfaf8;
+        --ink: #1b1a18;
+        --ink-2: #4a4741;
+        --ink-3: #8a857c;
+        --rule: #e4e0d8;
+        --accent: #6d8b74;
+        --serif: ui-serif, Georgia, "Iowan Old Style", "Times New Roman", serif;
+        --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --paper: #16161a;
+          --ink: #e8e6e1;
+          --ink-2: #b9b5ac;
+          --ink-3: #7e7a72;
+          --rule: #2c2c31;
+          --accent: #8fb397;
+        }
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        background: var(--paper);
+        color: var(--ink);
+        font-family: var(--serif);
+        font-size: 17px;
+        line-height: 1.62;
+        -webkit-font-smoothing: antialiased;
+      }
+      /* Zen: one buffer and nothing else. The column is reading width, the
+         chrome is a single quiet line above it. */
+      main { max-width: 34rem; margin: 0 auto; padding: 7vh 24px 18vh; }
+      .head {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        margin-bottom: 2.4rem;
+        font-family: var(--mono);
+        font-size: 11px;
+        color: var(--ink-3);
+      }
+      .name { letter-spacing: 0.02em; }
+      .chip {
+        padding: 1px 7px;
+        border: 1px solid currentColor;
+        border-radius: 999px;
+        font-size: 9px;
+        letter-spacing: 0.11em;
+        text-transform: uppercase;
+      }
+      .chip.approved { color: var(--accent); }
+      h1, h2, h3, h4, h5, h6 { line-height: 1.25; margin: 2.2rem 0 0.8rem; font-weight: 600; }
+      h1 { font-size: 1.9rem; margin-top: 0; }
+      h2 { font-size: 1.4rem; }
+      h3 { font-size: 1.15rem; }
+      p, ul, ol, blockquote, pre, table { margin: 0 0 1.1rem; }
+      a { color: inherit; text-decoration: underline; text-underline-offset: 2px; }
+      code {
+        font-family: var(--mono);
+        font-size: 0.85em;
+        background: color-mix(in srgb, var(--ink) 7%, transparent);
+        padding: 1px 4px;
+        border-radius: 4px;
+      }
+      pre {
+        font-family: var(--mono);
+        font-size: 0.8em;
+        line-height: 1.55;
+        background: color-mix(in srgb, var(--ink) 5%, transparent);
+        border: 1px solid var(--rule);
+        border-radius: 6px;
+        padding: 12px 14px;
+        overflow-x: auto;
+      }
+      pre code { background: none; padding: 0; font-size: 1em; }
+      blockquote {
+        border-left: 2px solid var(--rule);
+        padding-left: 1rem;
+        color: var(--ink-2);
+      }
+      hr { border: 0; border-top: 1px solid var(--rule); margin: 2rem 0; }
+      li { margin: 0.25rem 0; }
+      img { max-width: 100%; }
+      /* A repo-relative image has no repository to resolve against here, so it
+         says so rather than vanishing. */
+      .no-asset {
+        display: inline-block;
+        font-family: var(--mono);
+        font-size: 11px;
+        color: var(--ink-3);
+        border: 1px dashed var(--rule);
+        border-radius: 4px;
+        padding: 2px 8px;
+      }
+      .note { color: var(--ink-3); font-family: var(--mono); font-size: 13px; line-height: 1.7; }
+      .note strong { color: var(--ink-2); font-weight: 600; }
+      /* Cmd-P is the export button: the browser's PDF beats one we would
+         render, and wanting a real one would mean a browser on the server. */
+      @media print {
+        :root { --paper: #fff; --ink: #000; --ink-2: #333; --ink-3: #666; --rule: #ccc; }
+        body { font-size: 11.5pt; }
+        main { max-width: none; padding: 0; }
+        .head { margin-bottom: 1.6rem; }
+        pre, blockquote { break-inside: avoid; }
+        h1, h2, h3 { break-after: avoid; }
+      }
+    </style>
+  </head>
+  <body>
+    <main id="page"><p class="note">Opening…</p></main>
+    <script>
+      (function () {
+        var page = document.getElementById("page");
+
+        function say(html) {
+          page.innerHTML = '<p class="note">' + html + "</p>";
+        }
+
+        var ESCAPES = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" };
+        function esc(s) {
+          return String(s).replace(/[&<>"']/g, function (ch) {
+            return ESCAPES[ch];
+          });
+        }
+
+        /**
+         * Inline markdown, over already-escaped text.
+         *
+         * Code spans are lifted out first so the emphasis and link rules
+         * cannot reach inside them: `**not bold**` in a code span is exactly
+         * what someone wrote. The sentinel they leave behind is built rather
+         * than typed, so this file stays plain text — and nothing a person can
+         * write survives escaping as one, so no prose is mistaken for a span.
+         */
+        var SEP = String.fromCharCode(0);
+
+        function inline(text) {
+          var spans = [];
+          var out = esc(text).replace(/`([^`]+)`/g, function (_, code) {
+            spans.push(code);
+            return SEP + (spans.length - 1) + SEP;
+          });
+          out = out.replace(/!\[([^\]]*)\]\(([^)\s]+)[^)]*\)/g, function (_, alt, src) {
+            // Only a real URL is an image here; a repo-relative path has no
+            // repository to resolve against, and vanishing would be a lie.
+            if (/^https?:\/\//i.test(src)) return '<img src="' + src + '" alt="' + alt + '" />';
+            return '<span class="no-asset">image · ' + (alt || src) + "</span>";
+          });
+          out = out.replace(/\[([^\]]+)\]\(([^)\s]+)[^)]*\)/g, function (whole, label, href) {
+            // javascript: and data: are not links anyone shared on purpose.
+            if (!/^(https?:\/\/|mailto:|#)/i.test(href)) return whole;
+            return '<a href="' + href + '" rel="noopener noreferrer nofollow">' + label + "</a>";
+          });
+          out = out
+            .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
+            .replace(/(^|[\s(])_([^_]+)_(?=$|[\s.,;:!?)])/g, "$1<em>$2</em>")
+            .replace(/(^|[^*])\*([^*\n]+)\*/g, "$1<em>$2</em>")
+            .replace(/~~([^~]+)~~/g, "<del>$1</del>");
+          // The spans go back last, still escaped from the first pass.
+          return out.replace(new RegExp(SEP + "(\\d+)" + SEP, "g"), function (_, i) {
+            return "<code>" + spans[Number(i)] + "</code>";
+          });
+        }
+
+        /**
+         * Blocks. Small on purpose — headings, lists, quotes, fences, rules
+         * and paragraphs are what a plan is made of. Raw HTML is escaped
+         * rather than rendered, which is the only safe default for a page that
+         * shows a stranger's words to a stranger.
+         */
+        function render(md) {
+          // HTML comments are this app's comment format, so they stay
+          // invisible here rather than turning into visible text.
+          var lines = md.replace(/<!--[\s\S]*?-->/g, "").split(/\r?\n/);
+          var html = "";
+          var list = null;
+          var para = [];
+
+          function closeList() {
+            if (list) html += "</" + list + ">";
+            list = null;
+          }
+          function closePara() {
+            if (para.length) html += "<p>" + inline(para.join("\n")) + "</p>";
+            para = [];
+          }
+          function openList(tag) {
+            if (list !== tag) {
+              closeList();
+              html += "<" + tag + ">";
+              list = tag;
+            }
+          }
+
+          for (var i = 0; i < lines.length; i++) {
+            var line = lines[i];
+            var fence = line.match(/^\s*```+\s*[\w-]*\s*$/);
+            if (fence) {
+              closePara();
+              closeList();
+              var code = [];
+              for (i++; i < lines.length && !/^\s*```+\s*$/.test(lines[i]); i++) code.push(lines[i]);
+              html += "<pre><code>" + esc(code.join("\n")) + "</code></pre>";
+              continue;
+            }
+            if (!line.trim()) {
+              closePara();
+              closeList();
+              continue;
+            }
+            var heading = line.match(/^(#{1,6})\s+(.*)$/);
+            if (heading) {
+              closePara();
+              closeList();
+              var level = heading[1].length;
+              html += "<h" + level + ">" + inline(heading[2]) + "</h" + level + ">";
+              continue;
+            }
+            if (/^\s*(?:---+|\*\*\*+|___+)\s*$/.test(line)) {
+              closePara();
+              closeList();
+              html += "<hr />";
+              continue;
+            }
+            var quote = line.match(/^\s*>\s?(.*)$/);
+            if (quote) {
+              closePara();
+              closeList();
+              html += "<blockquote><p>" + inline(quote[1]) + "</p></blockquote>";
+              continue;
+            }
+            var bullet = line.match(/^\s*[-*+]\s+(.*)$/);
+            var numbered = line.match(/^\s*\d+[.)]\s+(.*)$/);
+            if (bullet || numbered) {
+              closePara();
+              openList(bullet ? "ul" : "ol");
+              var item = (bullet || numbered)[1];
+              // A checklist reads as one: the box, not "[ ]".
+              var task = item.match(/^\[([ xX])\]\s+(.*)$/);
+              if (task) {
+                html +=
+                  '<li><input type="checkbox" disabled' +
+                  (task[1] === " " ? "" : " checked") +
+                  "> " +
+                  inline(task[2]) +
+                  "</li>";
+              } else {
+                html += "<li>" + inline(item) + "</li>";
+              }
+              continue;
+            }
+            closeList();
+            para.push(line);
+          }
+          closePara();
+          closeList();
+          return html;
+        }
+
+        /**
+         * Frontmatter is metadata, not prose: split off the way the app's
+         * matter.ts splits it — line by line, no YAML library — so it becomes
+         * the chip at the top instead of a stray table of dashes.
+         */
+        function split(md) {
+          if (!/^---[ \t]*\r?\n/.test(md)) return { status: null, body: md };
+          var rest = md.slice(3);
+          var close = rest.match(/\r?\n---[ \t]*(?:\r?\n|$)/);
+          if (!close) return { status: null, body: md };
+          var block = md.slice(md.indexOf("\n") + 1, 3 + close.index);
+          var status = null;
+          block.split(/\r?\n/).forEach(function (l) {
+            var m = l.match(/^status\s*:\s*(.*)$/i);
+            if (m) status = m[1].trim().replace(/^["']|["']$/g, "") || null;
+          });
+          return { status: status, body: md.slice(3 + close.index + close[0].length) };
+        }
+
+        /** The review state in the chip's own vocabulary, as the app says it. */
+        var REVIEW = { requested: "in review", changes: "changes", approved: "approved" };
+
+        function show(doc) {
+          var parts = split(doc.markdown || "");
+          var head = document.createElement("div");
+          head.className = "head";
+          var name = document.createElement("span");
+          name.className = "name";
+          name.textContent = doc.name || "";
+          head.appendChild(name);
+          [parts.status, REVIEW[doc.review && doc.review.state]].forEach(function (label) {
+            if (!label) return;
+            var chip = document.createElement("span");
+            chip.className = "chip" + (label === "approved" ? " approved" : "");
+            chip.textContent = label;
+            head.appendChild(chip);
+          });
+          page.innerHTML = "";
+          page.appendChild(head);
+          var article = document.createElement("article");
+          article.id = "doc";
+          article.innerHTML = render(parts.body);
+          page.appendChild(article);
+          document.title = (doc.name ? doc.name + " · " : "") + "plans";
+        }
+
+        var token = location.hash.replace(/^#/, "").trim();
+        if (!token) {
+          // Some software "cleans" URLs and takes the fragment with it. That is
+          // a different failure from a revoked link, and says so.
+          say(
+            "<strong>This link is missing its key.</strong><br />Ask whoever shared it to send the whole link again.",
+          );
+          return;
+        }
+
+        fetch("/share/doc", { headers: { Authorization: "Bearer " + decodeURIComponent(token) } })
+          .then(function (res) {
+            if (res.status === 404) {
+              throw new Error(
+                "<strong>This link no longer works.</strong><br />It was revoked, or it has expired. Ask for a new one.",
+              );
+            }
+            if (!res.ok) throw new Error("<strong>The server could not answer.</strong><br />Try again in a moment.");
+            return res.json();
+          })
+          .then(show)
+          .catch(function (e) {
+            say(e && e.message ? e.message : "<strong>The server could not answer.</strong>");
+          });
+      })();
+    </script>
+  </body>
+</html>

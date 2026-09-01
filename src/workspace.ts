@@ -22,7 +22,7 @@ import { api } from "./api";
  * person who runs their own. The two overrides are for development — a build
  * pointed at a local server, or a browser test pointed at one it started.
  */
-const DEFAULT_SERVER = "https://workspaces.plans.ratulmaharaj.com";
+const DEFAULT_SERVER = "https://workspaces.plans.looped.sh";
 
 export function serverUrl(): string {
   try {
@@ -51,6 +51,18 @@ export type Workspace = {
   createdAt: number;
   members: string[];
   review: Review;
+};
+
+/**
+ * One share link, as the revoke list shows it. The token itself is returned
+ * once, when it is minted, and never again; `expiresAt` is when it stops
+ * working on its own, thirty days after minting.
+ */
+export type ShareLink = {
+  id: string;
+  createdBy: string;
+  createdAt: number;
+  expiresAt: number;
 };
 
 export type DeviceStart = {
@@ -162,6 +174,23 @@ export const workspace = {
   /** Mint the read token an outside agent uses for `GET /w/{id}/plan.md`. */
   readToken: (id: string) => call<{ token: string }>(`/workspaces/${id}/token`, { method: "POST" }),
   readUrl: (id: string) => `${serverUrl()}/w/${id}/plan.md`,
+
+  /**
+   * Share links: a token each, listed and revocable, for readers with no
+   * account. Minting, listing and revoking are member-only; the reading is
+   * the viewer's, with the token from the URL's fragment.
+   */
+  share: {
+    mint: (id: string) => call<ShareLink & { token: string }>(`/workspaces/${id}/share`, { method: "POST" }),
+    list: (id: string) => call<ShareLink[]>(`/workspaces/${id}/share`),
+    revoke: (id: string, linkId: string) =>
+      call<{ ok: true }>(`/workspaces/${id}/share/revoke`, { body: { id: linkId } }),
+  },
+  /**
+   * The secret rides in the fragment, which browsers never send: the server's
+   * log, any proxy and any unfurler see `/share` and nothing else.
+   */
+  shareUrl: (token: string) => `${serverUrl()}/share#${token}`,
 };
 
 // --- the live document ---------------------------------------------------------

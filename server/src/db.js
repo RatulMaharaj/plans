@@ -46,7 +46,25 @@ const SCHEMA = `
     created_by TEXT NOT NULL,
     created_at BIGINT NOT NULL
   );
+  CREATE TABLE IF NOT EXISTS share_tokens (
+    id TEXT PRIMARY KEY,
+    token_hash TEXT NOT NULL UNIQUE,
+    workspace_id TEXT NOT NULL,
+    created_by TEXT NOT NULL,
+    created_at BIGINT NOT NULL,
+    expires_at BIGINT NOT NULL,
+    revoked_at BIGINT
+  );
 `;
+
+/**
+ * How long a share link lives without anyone thinking about it.
+ *
+ * Revocation answers the leaked link; this answers the *forgotten* one, since
+ * nobody revokes what they no longer remember minting. Expired and revoked are
+ * indistinguishable from outside — both are 404.
+ */
+const SHARE_TTL = 30 * 24 * 60 * 60 * 1000;
 
 /** Tokens are stored hashed: a leaked database is not a leaked session. */
 export function hashToken(token) {
@@ -219,6 +237,67 @@ export async function openDb(url = process.env.DATABASE_URL ?? "") {
       return (
         (await one("SELECT workspace_id FROM read_tokens WHERE token_hash = $1", [hashToken(token)]))
           ?.workspace_id ?? null
+      );
+    },
+
+    // --- share links -------------------------------------------------------
+    /**
+     * A table of its own rather than a `kind` column on `read_tokens`: the
+     * factory's credential is minted once and lives in secrets, share links
+     * are minted casually and revoked on a whim, and the list one UI shows
+     * should never have the other in it. The reasoning is in
+     * plans/sharable-links.md.
+     */
+    async createShareToken(workspaceId, login, ttl = SHARE_TTL) {
+      const token = newToken();
+      const id = newId();
+      const at = now();
+      await c.query(
+        `INSERT INTO share_tokens (id, token_hash, workspace_id, created_by, created_at, expires_at)
+         VALUES ($1, $2, $3, $4, $5, $6)`,
+        [id, hashToken(token), workspaceId, login, at, at + ttl],
+      );
+      return { id, token, createdBy: login, createdAt: at, expiresAt: at + ttl };
+    },
+    /**
+     * The live links, newest first. A revoked or expired one is nobody's
+     * business: a list that showed dead links would invite counting them as
+     * links.
+     */
+    async shareTokens(workspaceId) {
+      const rows = await c.query(
+        `SELECT id, created_by, created_at, expires_at FROM share_tokens
+         WHERE workspace_id = $1 AND revoked_at IS NULL AND expires_at > $2
+         ORDER BY created_at DESC`,
+        [workspaceId, now()],
+      );
+      return rows.map((r) => ({
+        id: r.id,
+        createdBy: r.created_by,
+        createdAt: Number(r.created_at),
+        expiresAt: Number(r.expires_at),
+      }));
+    },
+    /** Revoking is a timestamp, not a delete: a dead link stays accounted for. */
+    async revokeShareToken(workspaceId, id) {
+      const rows = await c.query(
+        `UPDATE share_tokens SET revoked_at = $1
+         WHERE id = $2 AND workspace_id = $3 AND revoked_at IS NULL RETURNING id`,
+        [now(), id, workspaceId],
+      );
+      return rows.length > 0;
+    },
+    /** Revoked, expired, or never minted here: all three answer `null`. */
+    async workspaceForShareToken(token) {
+      if (!token) return null;
+      return (
+        (
+          await one(
+            `SELECT workspace_id FROM share_tokens
+             WHERE token_hash = $1 AND revoked_at IS NULL AND expires_at > $2`,
+            [hashToken(token), now()],
+          )
+        )?.workspace_id ?? null
       );
     },
   };

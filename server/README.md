@@ -95,7 +95,8 @@ app so that changing it does not mean shipping a build.
 
 Users by GitHub login; sessions, as hashed tokens; workspaces, their members
 (by login, so an invite can precede the invitee's first sign-in), the review
-state; and each workspace's document as a Yjs update blob, in Postgres. The document's
+state; the read token and any share links, hashed; and each workspace's
+document as a Yjs update blob, in Postgres. The document's
 markdown is whatever the last editing client serialised, kept in the same Yjs
 doc under `meta.markdown`, so the read endpoint answers without needing an
 editor's schema on the server.
@@ -118,10 +119,40 @@ Every call is JSON, and every call that needs a person carries
 | `POST /workspaces/:id/review`        | `{ action: request \| approve \| changes \| clear }`. The requester cannot approve.           |
 | `POST /workspaces/:id/token`         | Mint a read token for this workspace, for the factory's secrets.                             |
 | `GET /w/:id/plan.md`                 | The document as markdown — for a member's session or the workspace's read token.             |
+| `POST /workspaces/:id/share`         | Mint a share link's token → `{ id, token, createdBy, createdAt, expiresAt }`.                  |
+| `GET /workspaces/:id/share`          | The live links, newest first, for the revoke list.                                            |
+| `POST /workspaces/:id/share/revoke`  | `{ id }` → that one link stops working. The others, and the read token, do not.               |
+| `GET /share/doc`                     | The shared document, for a share token: `{ name, review: { state }, markdown }`.               |
+| `GET /share`                         | The viewer page: a static shell that reads the token from `location.hash`.                    |
 | `WS /ws/:id?token=<session>`         | The live document: y-websocket's sync and awareness messages, plus review announcements.     |
 
 A workspace you are not a member of answers `404`, never `403`: a stranger
-learns nothing, not even that the id exists.
+learns nothing, not even that the id exists. A share token that was revoked,
+that has expired, or that was never minted here answers the same way.
+
+### Share links
+
+A share link is `https://<server>/share#<token>`. Browsers never send the
+fragment, so the access log, any proxy and any unfurler see `/share` and get a
+static shell with nothing in it; the viewer's script reads `location.hash` and
+fetches `/share/doc` with `Authorization: Bearer`, which is the discipline the
+rest of the API already speaks. The token is the address — the workspace id is
+never in the URL.
+
+Share tokens are their own table rather than a flag on `read_tokens`, because
+the two have different lives: the factory's read token is minted once and lives
+in secrets, share links are minted casually and revoked on a whim, and the list
+one UI shows should never have the other in it. Both are stored hashed;
+revoking is a timestamp, not a delete. A share link also expires thirty days
+after minting — revocation answers the leaked link, expiry answers the
+forgotten one — and an expired link is indistinguishable from a revoked one
+from outside. The reasoning is in
+[`plans/sharable-links.md`](../plans/sharable-links.md).
+
+`server/src/share.html` is the whole viewer: one self-contained file, no build
+step and no framework, with the document rendered at reading width, raw HTML
+escaped, frontmatter shown as a status chip, and a print stylesheet — ⌘P is the
+export button.
 
 ## Tests
 

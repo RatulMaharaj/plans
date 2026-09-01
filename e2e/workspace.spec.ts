@@ -186,6 +186,56 @@ test("two people argue a plan in one room, review it, and copy it out", async ({
   expect((bob as any).__faults).toEqual([]);
 });
 
+test("a share link opens the document for someone with no account, until it is revoked", async ({
+  browser,
+}) => {
+  const alice = await boot(browser, "alice");
+  await alice.locator(".ws-new").click();
+  await alice.locator(".matter-sheet .name-field").fill("Sharing");
+  await alice.locator(".matter-sheet .act", { hasText: "Create" }).click();
+  await expect(editor(alice).locator("h1")).toHaveText("Sharing");
+
+  await editor(alice).locator("h1").click();
+  await alice.keyboard.press("End");
+  await alice.keyboard.press("Enter");
+  await alice.keyboard.type("Anyone with the link can read this.");
+
+  await alice.locator(".page-actions .rail-btn", { hasText: "Share" }).click();
+  await alice.getByTestId("share-sheet").locator(".act", { hasText: "New link" }).click();
+  const link = await alice.getByTestId("share-link").inputValue();
+  expect(link).toContain("/share#");
+
+  // The editor serialises once the typing stops, so wait for the sentence to
+  // reach the room rather than racing it into the reader's browser.
+  const token = link.split("#")[1];
+  await expect
+    .poll(async () => {
+      const r = await fetch(`${base}/share/doc`, { headers: { Authorization: `Bearer ${token}` } });
+      return r.ok ? (await r.json()).markdown : "";
+    })
+    .toContain("Anyone with the link can read this.");
+
+  // A reader with no session, no app and no repository — a browser and a URL.
+  const reader = await (await browser.newContext()).newPage();
+  await reader.goto(link);
+  await expect(reader.locator("#doc h1")).toHaveText("Sharing");
+  await expect(reader.locator("#doc")).toContainText("Anyone with the link can read this.");
+
+  // A link whose fragment was cleaned off is a different failure from a dead
+  // one, and says so rather than showing an error that looks like revocation.
+  await reader.goto(link.split("#")[0]);
+  await expect(reader.locator(".note")).toContainText("missing its key");
+  await expect(reader.locator("#doc")).toHaveCount(0);
+
+  // Revoked from the same control that minted it.
+  await alice.locator(".share-row .rail-btn", { hasText: "Revoke" }).click();
+  await expect(alice.getByTestId("share-sheet")).toContainText("No links yet");
+  await reader.goto(link);
+  await expect(reader.locator(".note")).toContainText("no longer works");
+
+  expect((alice as any).__faults).toEqual([]);
+});
+
 test("signed out, the section invites you in and the sign-in sheet shows a code", async ({ browser }) => {
   const ctx = await browser.newContext();
   const page = await ctx.newPage();
