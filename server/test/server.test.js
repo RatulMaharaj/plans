@@ -215,6 +215,100 @@ test("plan.md answers to a member or the workspace's own token, and nobody else"
   a.close();
 });
 
+test("a share link is its own token: many, listed, and revocable one at a time", async () => {
+  const alice = await signIn("alice");
+  const { id } = (await call("/workspaces", { method: "POST", token: alice, body: { name: "Share" } })).value;
+  const a = connect(id, alice);
+  await Promise.all([a.open, a.synced]);
+  a.doc.getMap("meta").set("markdown", "---\nstatus: ready\n---\n\n# Share\n");
+  await until(() => s.rooms.rooms.get(id)?.doc.getMap("meta").get("markdown")?.includes("# Share"));
+
+  const one = await call(`/workspaces/${id}/share`, { method: "POST", token: alice });
+  assert.equal(one.status, 201);
+  const two = await call(`/workspaces/${id}/share`, { method: "POST", token: alice });
+
+  // The token is the address: no workspace id anywhere in the request.
+  const read = await call("/share/doc", { token: one.value.token });
+  assert.equal(read.status, 200);
+  assert.equal(read.value.name, "Share");
+  assert.match(read.value.markdown, /# Share/);
+  // The chip's state, and nothing else about the argument: no trail of who
+  // asked or decided, and no member list.
+  assert.deepEqual(read.value.review, { state: "none" });
+  assert.equal(read.value.members, undefined);
+
+  const listed = await call(`/workspaces/${id}/share`, { token: alice });
+  assert.deepEqual(
+    listed.value.map((l) => l.id).sort(),
+    [one.value.id, two.value.id].sort(),
+  );
+  assert.ok(listed.value.every((l) => l.createdBy === "alice"));
+  // Thirty days, stamped at mint.
+  assert.ok(listed.value.every((l) => l.expiresAt - l.createdAt === 30 * 24 * 60 * 60 * 1000));
+
+  // Killing one link breaks neither the other nor the factory's read token.
+  const factory = await call(`/workspaces/${id}/token`, { method: "POST", token: alice });
+  const revoked = await call(`/workspaces/${id}/share/revoke`, {
+    method: "POST",
+    token: alice,
+    body: { id: one.value.id },
+  });
+  assert.equal(revoked.status, 200);
+  assert.equal((await call("/share/doc", { token: one.value.token })).status, 404);
+  assert.equal((await call("/share/doc", { token: two.value.token })).status, 200);
+  assert.equal((await call(`/w/${id}/plan.md`, { token: factory.value.token })).status, 200);
+  assert.deepEqual(
+    (await call(`/workspaces/${id}/share`, { token: alice })).value.map((l) => l.id),
+    [two.value.id],
+  );
+  // Revoking twice is not a second revocation.
+  assert.equal(
+    (await call(`/workspaces/${id}/share/revoke`, { method: "POST", token: alice, body: { id: one.value.id } })).status,
+    404,
+  );
+
+  // A dead link and a link that never existed answer alike, and a stranger
+  // can neither mint nor list.
+  assert.equal((await call("/share/doc")).status, 404);
+  assert.equal((await call("/share/doc", { token: "never-a-link" })).status, 404);
+  const eve = await signIn("eve");
+  assert.equal((await call(`/workspaces/${id}/share`, { method: "POST", token: eve })).status, 404);
+  assert.equal((await call(`/workspaces/${id}/share`, { token: eve })).status, 404);
+  assert.equal(
+    (await call(`/workspaces/${id}/share/revoke`, { method: "POST", token: eve, body: { id: two.value.id } })).status,
+    404,
+  );
+  a.close();
+});
+
+test("an expired link answers exactly like a revoked one", async () => {
+  const alice = await signIn("alice");
+  const { id } = (await call("/workspaces", { method: "POST", token: alice, body: { name: "Old" } })).value;
+  const live = await call(`/workspaces/${id}/share`, { method: "POST", token: alice });
+  assert.equal((await call("/share/doc", { token: live.value.token })).status, 200);
+
+  // Thirty days is not something a test can wait for, so this one is minted
+  // already expired — the route's own lifetime is the default, not a rule.
+  const dead = await s.db.createShareToken(id, "alice", -1000);
+  assert.equal((await call("/share/doc", { token: dead.token })).status, 404);
+  // And it never appears in the list, which only ever shows live links.
+  assert.deepEqual(
+    (await call(`/workspaces/${id}/share`, { token: alice })).value.map((l) => l.id),
+    [live.value.id],
+  );
+});
+
+test("the share page is a shell: the fragment never reaches the server", async () => {
+  const res = await fetch(`${base}/share`);
+  assert.equal(res.status, 200);
+  assert.match(res.headers.get("content-type"), /text\/html/);
+  const html = await res.text();
+  assert.match(html, /location\.hash/);
+  // Nothing of any document, and no id to guess at: this is what an unfurler
+  // fetching a share link gets.
+  assert.doesNotMatch(html, /workspace_id/);
+});
+
 test("the device flow proxies GitHub and mints a session of ours", async () => {
   const calls = [];
   const fake = async (url, init) => {
