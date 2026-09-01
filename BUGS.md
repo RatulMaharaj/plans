@@ -11,11 +11,7 @@ Remember to add changesets for any patched bugs - fixed bugs belong in the chang
 
 ## Open
 
-- Dropdowns in modals don’t overflow and get cut-off.
-- A message sent when the agent is busy or almost finished seems to get dropped
-- We should be able to press the up arrow to see the last typed messages to an agent
-- Last selected new plan folder per repo should be remembered
-- Chat title still overflows into the rename button
+(nothing at the moment)
 
 ## Watch for
 
@@ -35,6 +31,43 @@ Not bugs yet — places the same class of mistake would land next.
   green test proves the harness agrees with the code, not that the app works.
 
 ## Fixed
+
+### All-files mode still hid empty folders
+
+The tree is built from the file walk's results, so a folder holding nothing -
+or holding only what the walk skips - had no way into it; the only empty
+folders shown were the ones created in the app, remembered in localStorage.
+All-files mode now asks the disk for the directories too, with the same
+ignore and skip rules, and merges them into the tree. Same family as the
+deleted-folders bug below: a tree derived from files answers questions about
+files, and every question about folders needs its own source.
+
+### A message sent while the agent worked vanished
+
+The busy guard in send() returned silently, and Enter had already cleared the
+box before the guard ran, so what was typed was simply gone - worst at the end
+of a turn, when the composer looks idle but the turn has not ended. The guard
+now queues the message and the turn-ended listener sends it. The pattern: any
+guard that refuses input after the UI has taken it must put the input
+somewhere, because "refused" and "lost" look identical to the person typing.
+
+### A dropdown opened inside a sheet was clipped by it
+
+`.matter-sheet` has `overflow: hidden` for its rounded corners, and the menu
+rendered inside it as an absolutely-positioned child. The menu now goes
+through a portal to the body at the trigger's measured viewport position.
+Found by reading the sheet's CSS rather than the dropdown's: the symptom
+named the wrong component. A portalled menu loses its descendant CSS
+selectors, so a no-layout twin of the wrapper (`display: contents`) carries
+the class names in with it.
+
+### A stray paste split a selector in two
+
+The `.chat-pick` block had been pasted a second time into the middle of
+`.chat-tool .chat-where` - the selector's two halves sat either side of ten
+duplicated lines, quietly styling `.chat-tool .chat-pick`, which matches
+nothing. Nothing failed loudly; one rule vanished and a duplicate shadowed
+later edits to the original. Found while fixing the title overflow next door.
 
 ### Stop was read only after the turn it was stopping
 

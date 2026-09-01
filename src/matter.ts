@@ -120,9 +120,9 @@ export function setMatterValue(matter: string, key: string, value: string | null
  */
 export function statusTone(
   status: string,
-): "draft" | "ready" | "busy" | "done" | "other" {
+): "draft" | "ready" | "approved" | "busy" | "done" | "other" {
   const s = status.trim().toLowerCase();
-  if (s === "draft" || s === "ready" || s === "busy" || s === "done")
+  if (s === "draft" || s === "ready" || s === "approved" || s === "busy" || s === "done")
     return s;
   return "other";
 }

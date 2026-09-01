@@ -228,6 +228,19 @@ export function ChatPanel({
   /** True from send() being entered until chat_send answers — a synchronous
    *  guard where turn.current has an async gap. */
   const inflight = useRef(false);
+  /**
+   * Messages typed while a turn was in flight, by thread key. They used to be
+   * dropped — the guard in send() returned after the box had already been
+   * cleared — so now they wait here and go out, in order, as each turn ends.
+   */
+  const pending = useRef(new Map<string, string[]>());
+  /** send(), reachable from the turn-ended listener registered before it exists. */
+  const sendRef = useRef<((text: string, seeded?: boolean) => Promise<void>) | null>(null);
+  /**
+   * Where the up arrow is in the composer's history of sent messages, and the
+   * unsent text it stepped away from. `at: null` means "not in history".
+   */
+  const hist = useRef<{ at: number | null; draft: string }>({ at: null, draft: "" });
   /** Through a ref: `commit` has no deps, and should not gain any. */
   const titleRef = useRef<Props["onTitle"] | null>(null);
   titleRef.current = onTitle;
@@ -401,6 +414,11 @@ export function ChatPanel({
       turns.current.delete(k);
       mark(k, false);
       if (!e.payload.ok) say(k, "note", `stopped — ${e.payload.stop}`, false);
+      // A message typed while this turn ran goes out now, in order.
+      const q = pending.current.get(k);
+      const next = q?.shift();
+      if (q && !q.length) pending.current.delete(k);
+      if (next) void sendRef.current?.(next);
     });
 
     // Session-scoped: no turn to match, so the repo is the filter.
@@ -486,6 +504,13 @@ export function ChatPanel({
       if (e.payload.gen && e.payload.gen < (gen.current.get(k) ?? 0)) return;
       turns.current.delete(k);
       mark(k, false);
+      // The session the queue was waiting on is gone; sending into a dead
+      // session on a loop helps nobody, so the queue is dropped, and said.
+      const q = pending.current.get(k);
+      if (q?.length) {
+        pending.current.delete(k);
+        say(k, "note", `${q.length === 1 ? "a queued message was" : `${q.length} queued messages were`} dropped with the session`, false);
+      }
       if (!e.payload.message) return;
       /*
        * The message the agent leaves is true and rarely actionable, so a
@@ -535,7 +560,17 @@ export function ChatPanel({
     async (text: string, seeded = false) => {
       // Per chat: a long job running in another conversation is not a reason
       // to refuse this one.
-      if (!key || !text.trim() || turns.current.has(key) || inflight.current) return;
+      if (!key || !text.trim()) return;
+      // Mid-turn — including the last moments of one — the message is queued
+      // rather than dropped: the box has already been cleared by the time this
+      // guard fires, so returning silently used to lose what was typed.
+      if (turns.current.has(key) || inflight.current) {
+        const q = pending.current.get(key) ?? [];
+        q.push(text);
+        pending.current.set(key, q);
+        say(key, "note", "queued — sends when this turn finishes", false);
+        return;
+      }
       /*
        * `/clear` means what it says, here.
        *
@@ -591,8 +626,17 @@ export function ChatPanel({
          */
         const skill = /^\/(\w+)\b\s*([\s\S]*)$/.exec(text);
         const bundled = skill && SKILLS.find((k) => k.name === skill[1]);
+        // The plans and review skills lean on the writing skill for voice, so
+        // in a repository with no install the pointer must not dangle: the
+        // writing skill's text travels with them.
+        const writing =
+          bundled && ["plans", "review"].includes(bundled.name)
+            ? SKILLS.find((k) => k.name === "writing")
+            : undefined;
         const outgoing = bundled
-          ? `${bundled.text.trim()}\n\n---\n\n${
+          ? `${bundled.text.trim()}\n\n${
+              writing ? `---\n\n${writing.text.trim()}\n\n` : ""
+            }---\n\n${
               skill[2].trim() || "Apply the skill above in this repository."
             }`
           : text;
@@ -628,6 +672,7 @@ export function ChatPanel({
     },
     [key, relPath, repo, cmd, chats.current, commit, notify, say, onNewChat, mark],
   );
+  sendRef.current = send;
 
   // "Hand off" and friends arrive as a seeded message, sent as if typed.
   // Consumed through a ref: the parent's state update that clears the seed
@@ -888,7 +933,11 @@ export function ChatPanel({
           rows={3}
           value={input}
           placeholder="Ask the agent…"
-          onChange={(e) => setInput(e.target.value)}
+          onChange={(e) => {
+            // Typing is leaving history: whatever is in the box is a draft now.
+            hist.current.at = null;
+            setInput(e.target.value);
+          }}
           onKeyDown={(e) => {
             // The conversation's keys, not the app's — but chords stay the
             // app's (⌘J must still close the panel), and Escape still leaves.
@@ -909,9 +958,52 @@ export function ChatPanel({
                 return;
               }
             }
+            /*
+             * The shell's gesture: up in an empty box (or while already in
+             * history) walks back through what was sent in this conversation,
+             * down walks forward and lands on the unsent draft. Only from the
+             * edges of the text, so arrows still move the caret in a
+             * multi-line message being written.
+             */
+            const box = e.target as HTMLTextAreaElement;
+            const h = hist.current;
+            if (
+              e.key === "ArrowUp" &&
+              box.selectionStart === 0 &&
+              box.selectionEnd === 0 &&
+              (input === "" || h.at !== null)
+            ) {
+              const sent = thread.messages.flatMap((m) => (m.role === "user" ? [m.text] : []));
+              const at = h.at === null ? sent.length - 1 : h.at - 1;
+              if (at >= 0) {
+                e.preventDefault();
+                if (h.at === null) h.draft = input;
+                h.at = at;
+                setInput(sent[at]);
+                return;
+              }
+            }
+            if (
+              e.key === "ArrowDown" &&
+              h.at !== null &&
+              box.selectionStart === box.value.length
+            ) {
+              const sent = thread.messages.flatMap((m) => (m.role === "user" ? [m.text] : []));
+              e.preventDefault();
+              const at = h.at + 1;
+              if (at >= sent.length) {
+                h.at = null;
+                setInput(h.draft);
+              } else {
+                h.at = at;
+                setInput(sent[at]);
+              }
+              return;
+            }
             if (e.key === "Enter" && !e.shiftKey) {
               e.preventDefault();
               const text = input;
+              hist.current = { at: null, draft: "" };
               setInput("");
               setPick(-1);
               void send(text);

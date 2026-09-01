@@ -158,6 +158,10 @@ export const api = {
       xs.map(camelFile),
     ),
 
+  /** Every folder in the repository, including the ones with nothing in them. */
+  listDirs: (repo: string, includeIgnored = false) =>
+    invoke<string[]>("list_dirs", { repo, includeIgnored }),
+
   /** The text plus a fingerprint of the version it came from. */
   readPlan: (repo: string, relPath: string) =>
     invoke<{ content: string; stamp: string }>("read_plan", { repo, relPath }),

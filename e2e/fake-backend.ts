@@ -183,6 +183,22 @@ export function installFakeBackend(repos: FakeRepo[], update?: FakeUpdate) {
       if (r) delete r.files[relPath];
       return null;
     },
+    // All folders: the ones file paths imply, plus the made-empty ones the
+    // state records — the fake's stand-in for a directory entry on disk.
+    list_dirs: ({ repo: p }) => {
+      const r = repo(p);
+      if (!r) return [];
+      const seen = new Set<string>();
+      for (const f of Object.keys(r.files)) {
+        const parts = f.split("/");
+        for (let i = 1; i < parts.length; i++) seen.add(parts.slice(0, i).join("/"));
+      }
+      for (const key of state.dirs) {
+        const [rp, d] = [key.slice(0, key.indexOf("::")), key.slice(key.indexOf("::") + 2)];
+        if (rp === p && d) seen.add(d);
+      }
+      return [...seen].sort();
+    },
     // A folder exists here if any file sits under it — the fake filesystem
     // has no directory entries of its own, exactly like the real one.
     existing_dirs: ({ repo: p, relPaths }) => {

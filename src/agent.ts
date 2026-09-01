@@ -17,14 +17,17 @@ export type HandoffKind = "complete" | "implement";
 /**
  * What the agent is told when a plan is handed to it to be completed.
  *
- * A handoff, not a command: the plan is the brief, and the agent is being
- * asked to take it further in the voice the folder already speaks.
+ * The prompt names the move and defers the shape to the plans skill, which is
+ * installed in the repository and is the one place the conventions live. It
+ * used to restate its own style rules, and they had drifted into contradiction
+ * with the skill - it asked for a closing "Next checklist" that the skill
+ * forbids, and argued against the step list the skill is built around.
  */
 export const HANDOFF_PROMPT =
-  "Take over the plan at {file} and take it further. Keep the house style of " +
-  "this folder: argue the design rather than listing steps, cite file:line " +
-  "for anything you claim about the code, keep an open questions section, " +
-  "and end with a Next checklist. Do not change any file other than the plan.";
+  "Flesh out the plan at {file}, following the plans skill installed in this " +
+  "repository. Cite file:line for anything you claim about the code. When the " +
+  "plan would hold up to being implemented, set its status to ready. Do not " +
+  "change any file other than the plan.";
 
 /**
  * What the agent is told when a plan is handed to it to be implemented.

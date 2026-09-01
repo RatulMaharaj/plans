@@ -13,6 +13,7 @@
  * site cannot know which of its lists will be.
  */
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { score } from "./score";
 
 export type Choice = {
@@ -77,6 +78,14 @@ export function Dropdown({
   const field = useRef<HTMLInputElement>(null);
   const typed = useRef({ buf: "", at: 0 });
   const [drop, setDrop] = useState<"down" | "up">("down");
+  /**
+   * Where the trigger sits in the viewport, measured as the menu opens. The
+   * menu renders in a portal at fixed coordinates so that a sheet's
+   * `overflow: hidden` — or any clipping ancestor — cannot cut it off.
+   */
+  const [at, setAt] = useState<{ left: number; top: number; bottom: number; width: number } | null>(
+    null,
+  );
 
   const current = choices.find((c) => c.value === value);
   const searchable = choices.length >= FILTER_AT;
@@ -119,17 +128,30 @@ export function Dropdown({
     if (open && searchable) field.current?.focus();
   }, [open, searchable]);
 
-  // Flip above the trigger when there isn't room below it.
+  // Measure the trigger, and flip above it when there isn't room below.
+  // Re-measured on any scroll or resize while open, since a fixed-position
+  // menu does not follow its trigger on its own.
   useLayoutEffect(() => {
     if (!open || !wrap.current) return;
-    const r = wrap.current.getBoundingClientRect();
-    setDrop(window.innerHeight - r.bottom < 240 && r.top > 240 ? "up" : "down");
+    const place = () => {
+      const r = wrap.current!.getBoundingClientRect();
+      setAt({ left: r.left, top: r.top, bottom: r.bottom, width: r.width });
+      setDrop(window.innerHeight - r.bottom < 240 && r.top > 240 ? "up" : "down");
+    };
+    place();
+    window.addEventListener("resize", place);
+    document.addEventListener("scroll", place, true);
+    return () => {
+      window.removeEventListener("resize", place);
+      document.removeEventListener("scroll", place, true);
+    };
   }, [open]);
 
   useEffect(() => {
     if (!open) return;
     const away = (e: MouseEvent) => {
-      if (!wrap.current?.contains(e.target as Node)) setOpen(false);
+      const n = e.target as Node;
+      if (!wrap.current?.contains(n) && !menu.current?.contains(n)) setOpen(false);
     };
     document.addEventListener("mousedown", away);
     return () => document.removeEventListener("mousedown", away);
@@ -216,8 +238,31 @@ export function Dropdown({
         </span>
       </button>
 
-      {open && (
-        <div className={`dd-menu ${drop === "up" ? "up" : ""}`} ref={menu}>
+      {open &&
+        at &&
+        createPortal(
+          // A no-layout twin of the wrap, so `.chat-pick .dd-menu`-style
+          // descendant rules still match from inside the portal.
+          <div className={`dd ${className} open`} style={{ display: "contents" }}>
+            <div
+              className={`dd-menu ${drop === "up" ? "up" : ""}`}
+              ref={menu}
+              /*
+               * The coordinates travel as variables rather than as left/top,
+               * so a call site's stylesheet can still choose which edge the
+               * menu hangs from — `.agent-option .dd-menu` anchors right.
+               */
+              style={
+                {
+                  ...(drop === "up"
+                    ? { bottom: window.innerHeight - at.top + 4, top: "auto" }
+                    : { top: at.bottom + 4 }),
+                  minWidth: at.width,
+                  "--dd-left": `${at.left}px`,
+                  "--dd-right": `${window.innerWidth - at.left - at.width}px`,
+                } as unknown as React.CSSProperties
+              }
+            >
           {searchable && (
             <input
               className="dd-filter"
@@ -256,8 +301,10 @@ export function Dropdown({
             ))}
             {!shown.length && <div className="dd-empty">No matches</div>}
           </div>
-        </div>
-      )}
+            </div>
+          </div>,
+          document.body,
+        )}
     </div>
   );
 }

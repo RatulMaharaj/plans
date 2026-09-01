@@ -23,6 +23,9 @@
   --git-new: #4b7a3f;
   --git-mod: #9a6b12;
   --git-staged: #3d5ba9;
+  /* The human's sign-off on a plan — mulberry, between ready's indigo and
+     done's moss. */
+  --status-approved: #8a3a62;
   --shadow: 0 1px 2px rgb(23 24 27 / 0.06), 0 8px 28px rgb(23 24 27 / 0.1);
 
   /* Code, and only code, gets hue. Day: printer's inks on warm white —
@@ -55,6 +58,7 @@
   --git-new: #4e6e33;
   --git-mod: #8c5a0f;
   --git-staged: #4a5288;
+  --status-approved: #7b3b57;
   --shadow: 0 1px 2px rgb(51 41 31 / 0.08), 0 8px 28px rgb(51 41 31 / 0.14);
 
   /* Sepia: the same five inks, warmed and darkened to sit on aged paper. */
@@ -86,6 +90,7 @@
   --git-new: #8fb877;
   --git-mod: #d8ab52;
   --git-staged: #93a8e4;
+  --status-approved: #d492b5;
   --shadow: 0 1px 2px rgb(0 0 0 / 0.4), 0 8px 28px rgb(0 0 0 / 0.5);
 
   /* Night: the same five, lifted to pastels. Nothing reaches white — pure
@@ -1312,11 +1317,11 @@ input[type="range"]::-webkit-slider-thumb {
 .dd-caret { font-size: 9px; color: var(--ink-3); }
 
 .dd-menu {
-  position: absolute;
-  top: calc(100% + 4px);
-  left: 0;
-  z-index: 40;
-  min-width: 100%;
+  /* In a portal at the trigger's measured spot, so a sheet's overflow:hidden
+     cannot clip it. The coordinates arrive as variables from the component. */
+  position: fixed;
+  left: var(--dd-left);
+  z-index: 70;
   max-width: 320px;
   max-height: 240px;
   overflow: hidden;
@@ -1328,7 +1333,6 @@ input[type="range"]::-webkit-slider-thumb {
   border-radius: 4px;
   box-shadow: var(--shadow);
 }
-.dd-menu.up { top: auto; bottom: calc(100% + 4px); }
 
 /* The choices scroll; the filter above them does not scroll away. */
 .dd-list { display: flex; flex-direction: column; overflow: auto; min-height: 0; }
@@ -2267,6 +2271,7 @@ body.resizing.resizing-row, body.resizing.resizing-row .chat-edge { cursor: row-
 }
 .tone-draft { color: var(--ink-3); }
 .tone-ready { color: var(--git-staged); }
+.tone-approved { color: var(--status-approved); }
 .tone-busy { color: var(--git-mod); }
 .tone-done { color: var(--git-new); }
 .tone-other { color: var(--ink-3); }
@@ -2310,9 +2315,11 @@ body.resizing.resizing-row, body.resizing.resizing-row .chat-edge { cursor: row-
 .mux-spacer { flex: 1; }
 
 /* The conversation's own name, which is the first thing that was said in it. */
-.chat-pick { min-width: 0; }
+.chat-pick { min-width: 0; overflow: hidden; }
 .chat-pick .dd-trigger {
-  max-width: 220px;
+  /* Capped by the panel too: a fixed 220px ran under the Rename button
+     whenever the header had less room than that to give. */
+  max-width: min(220px, 100%);
   font-size: 10px;
   letter-spacing: 0.04em;
   color: var(--ink-2);
@@ -2416,18 +2423,7 @@ body.resizing.resizing-row, body.resizing.resizing-row .chat-edge { cursor: row-
 .chat-tool.completed .chat-tool-dot { background: var(--git-new); }
 .chat-tool.failed .chat-tool-dot { background: var(--diff-del); }
 .chat-tool.interrupted .chat-tool-dot { background: transparent; box-shadow: inset 0 0 0 1px var(--ink-3); }
-.chat-tool /* The conversation's own name, which is the first thing that was said in it. */
-.chat-pick { min-width: 0; }
-.chat-pick .dd-trigger {
-  max-width: 220px;
-  font-size: 10px;
-  letter-spacing: 0.04em;
-  color: var(--ink-2);
-}
-.chat-pick .dd-value { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.chat-pick .dd-menu { max-width: min(360px, 80vw); width: max-content; }
-
-.chat-where { color: var(--ink-3); opacity: 0.75; }
+.chat-tool .chat-where { color: var(--ink-3); opacity: 0.75; }
 
 /* Reasoning, folded away: it is available, not in the way. */
 .chat-thought {
@@ -2513,7 +2509,7 @@ body.resizing.resizing-row, body.resizing.resizing-row .chat-edge { cursor: row-
  */
 .agent-option .dd-menu {
   left: auto;
-  right: 0;
+  right: var(--dd-right);
   max-width: min(320px, 70vw);
 }
 /*

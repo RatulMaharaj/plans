@@ -350,6 +350,12 @@ export default function App() {
   /** The same list, readable from inside the poll without re-arming it. */
   const emptyDirsRef = useRef(emptyDirs);
   emptyDirsRef.current = emptyDirs;
+  /**
+   * What the disk says the folders are, asked only in "show all files" mode.
+   * The tree is built from files, so a folder holding nothing — or holding
+   * only things the walk skips — never appears in it on its own.
+   */
+  const [diskDirs, setDiskDirs] = useState<Record<string, string[]>>({});
   /** A one-line question waiting on an answer: branch name, commit message. */
   const [asking, setAsking] = useState<null | {
     title: string;
@@ -401,6 +407,16 @@ export default function App() {
     }
     return [...seen].sort();
   }, [naming, filesByRepo, emptyDirs]);
+
+  /** What the tree shows as folders: the remembered empties, plus — in "show
+   *  all files" mode — every folder the disk has. */
+  const treeDirs = useMemo(() => {
+    if (!Object.keys(diskDirs).length) return emptyDirs;
+    const out: Record<string, string[]> = {};
+    for (const r of new Set([...Object.keys(emptyDirs), ...Object.keys(diskDirs)]))
+      out[r] = [...new Set([...(emptyDirs[r] ?? []), ...(diskDirs[r] ?? [])])];
+    return out;
+  }, [emptyDirs, diskDirs]);
 
   /** A fragment of HTML open for editing, or null. */
   const [htmlEdit, setHtmlEdit] = useState<HtmlEdit | null>(null);
@@ -962,6 +978,23 @@ export default function App() {
       const next = Object.fromEntries(got);
       return sameFiles(prev, next) ? prev : next;
     });
+    // All files means all folders too, empty ones included; the file walk
+    // alone cannot show those. Markdown mode keeps the tree to what has files.
+    if (settings.showAllFiles) {
+      const dirs: Record<string, string[]> = {};
+      for (const r of repos) {
+        try {
+          dirs[r.path] = await api.listDirs(r.path, settings.showIgnored);
+        } catch {
+          dirs[r.path] = [];
+        }
+      }
+      setDiskDirs((prev) =>
+        JSON.stringify(prev) === JSON.stringify(dirs) ? prev : dirs,
+      );
+    } else {
+      setDiskDirs((prev) => (Object.keys(prev).length ? {} : prev));
+    }
     /*
      * The remembered empty folders live only in localStorage — nothing on disk
      * records them — so a folder deleted outside the app, or swept away by a
@@ -3137,16 +3170,28 @@ export default function App() {
     setDocKey(`${activeRepoPath}::${activePath}::${Date.now()}`);
   }, [settings.showFrontmatter, activePath, activeRepoPath, content, matter]);
 
-  /** ⌘N and the palette: a new file beside whatever is open. */
+  /**
+   * ⌘N and the palette. The sheet opens on the folder the last plan in this
+   * repository was created in, as long as it still exists; with no memory it
+   * falls back to beside whatever is open.
+   */
+  const lastPlanDir = useCallback(
+    (repo: string): string | null => {
+      const dir = localStorage.getItem(`plans.newPlanDir::${repo}`);
+      if (dir === null) return null;
+      return dir === "" || foldersIn(repo).includes(dir) ? dir : null;
+    },
+    [foldersIn],
+  );
   const newPlan = useCallback(() => {
     if (!activeRepo) return;
     setNaming({
       repo: activeRepo.path,
-      dir: activePath?.includes("/")
-        ? activePath.slice(0, activePath.lastIndexOf("/"))
-        : "",
+      dir:
+        lastPlanDir(activeRepo.path) ??
+        (activePath?.includes("/") ? activePath.slice(0, activePath.lastIndexOf("/")) : ""),
     });
-  }, [activeRepo, activePath]);
+  }, [activeRepo, activePath, lastPlanDir]);
 
   const createFile = useCallback(
     async (repoPath: string, relPath: string, title: string) => {
@@ -3155,6 +3200,11 @@ export default function App() {
         // The first word of the configured vocabulary, which is what the
         // frontmatter scaffold already treats as "not started yet".
         await api.createPlan(repoPath, relPath, title, statusChoices[0] ?? "draft");
+        // Where this landed is where the next one starts.
+        localStorage.setItem(
+          `plans.newPlanDir::${repoPath}`,
+          relPath.includes("/") ? relPath.slice(0, relPath.lastIndexOf("/")) : "",
+        );
         await refreshFiles();
         /*
          * Ask for the cursor, rather than placing it.
@@ -4262,7 +4312,7 @@ export default function App() {
               onNewFolder={newFolderIn}
               onMove={moveTo}
               onCopy={(from, path, toRepo, dir) => void copyTo(from, path, toRepo, dir)}
-              emptyDirs={emptyDirs}
+              emptyDirs={treeDirs}
               onRename={renameFile}
               onMoveTo={(repo, path) => setMoving({ repo, path })}
               onSetOpen={setOpen}
@@ -4879,8 +4929,9 @@ export default function App() {
           dir={naming.dir}
           repo={naming.repo}
           repos={shownRepos}
-          // Folders belong to a repository, so choosing another starts at its root.
-          onRepoChange={(repo) => setNaming({ repo, dir: "" })}
+          // Folders belong to a repository, so choosing another starts at
+          // that repository's remembered folder, or its root.
+          onRepoChange={(repo) => setNaming({ repo, dir: lastPlanDir(repo) ?? "" })}
           dirs={folderChoices}
           onDirChange={(dir) => setNaming({ repo: naming.repo, dir })}
           onCancel={() => setNaming(null)}

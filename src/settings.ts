@@ -210,7 +210,7 @@ export const DEFAULTS: Settings = {
   showFrontmatter: true,
   showCompleted: true,
   showAllFiles: false,
-  statuses: "draft, ready, busy, done",
+  statuses: "draft, ready, approved, busy, done",
   agentCommand: "claude {prompt}",
   chatCommand: "claude",
   handoffPrompt: HANDOFF_PROMPT,
@@ -277,9 +277,21 @@ export function mergeSettings(raw: Partial<Settings> | null | undefined): Settin
   if (
     normalized === "draft,active,done,blocked" ||
     normalized === "draft,triage,active,done,blocked" ||
-    normalized === "draft,triage,active,busy,done,blocked"
+    normalized === "draft,triage,active,busy,done,blocked" ||
+    normalized === "draft,ready,busy,done"
   )
     s.statuses = DEFAULTS.statuses;
+  // The same rule for the handoff prompt: a saved copy of the old default -
+  // whose style rules had drifted into contradicting the plans skill - moves
+  // to the current one, and an edited prompt is untouched.
+  if (
+    s.handoffPrompt ===
+    "Take over the plan at {file} and take it further. Keep the house style of " +
+      "this folder: argue the design rather than listing steps, cite file:line " +
+      "for anything you claim about the code, keep an open questions section, " +
+      "and end with a Next checklist. Do not change any file other than the plan."
+  )
+    s.handoffPrompt = DEFAULTS.handoffPrompt;
   return s;
 }
 

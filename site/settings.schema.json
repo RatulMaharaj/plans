@@ -131,7 +131,7 @@
     "statuses": {
       "type": "string",
       "description": "The choices the palette offers for `status:`, comma-separated. A convention, not a schema — a file may say anything; these are only what the app offers to write.",
-      "default": "draft, ready, busy, done"
+      "default": "draft, ready, approved, busy, done"
     },
     "imageFolder": {
       "type": "string",

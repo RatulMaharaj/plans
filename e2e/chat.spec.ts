@@ -261,8 +261,8 @@ test("handing a plan to the agent is the first message of its chat", async ({ pa
   await expect(page.locator(".chat")).toBeVisible();
   await expect.poll(() => calls(page, "agent_prompt")).toBe(1);
   const [sent] = await argsOf(page, "agent_prompt");
-  expect(sent.text).toContain("Take over the plan at plans/first.md");
-  await expect(page.locator(".chat-msg.user")).toContainText("Take over the plan");
+  expect(sent.text).toContain("Flesh out the plan at plans/first.md");
+  await expect(page.locator(".chat-msg.user")).toContainText("Flesh out the plan");
 });
 
 test("nothing is committed by talking", async ({ page }) => {
@@ -804,7 +804,7 @@ test("a plan is handed to the agent from its right-click menu", async ({ page })
   await expect(page.locator(".chat")).toBeVisible();
   await expect.poll(() => calls(page, "agent_prompt")).toBe(1);
   const [sent] = await argsOf(page, "agent_prompt");
-  expect(sent.text).toContain("Take over the plan at plans/first.md");
+  expect(sent.text).toContain("Flesh out the plan at plans/first.md");
 });
 
 test("a plan is handed to the agent to implement, with its own instruction", async ({ page }) => {
@@ -818,7 +818,7 @@ test("a plan is handed to the agent to implement, with its own instruction", asy
   await expect.poll(() => calls(page, "agent_prompt")).toBe(1);
   const [sent] = await argsOf(page, "agent_prompt");
   expect(sent.text).toContain("Implement the plan at plans/first.md");
-  expect(sent.text).not.toContain("Take over the plan");
+  expect(sent.text).not.toContain("Flesh out the plan");
 });
 
 test("the implement prompt is editable, and is what gets sent", async ({ page }) => {

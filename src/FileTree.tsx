@@ -784,9 +784,18 @@ export const FileTree = memo(function FileTree(p: Props) {
             </>
           )}
 
+          {/* The absolute path: what a terminal, an agent prompt, or another
+              app can actually open. menu.repo is the repository's absolute
+              path, so joining gives the file's. */}
           <button
             className="ctx-item"
-            onClick={() => act(() => void navigator.clipboard.writeText(menu.path))}
+            onClick={() =>
+              act(() =>
+                void navigator.clipboard.writeText(
+                  menu.path ? `${menu.repo}/${menu.path}` : menu.repo,
+                ),
+              )
+            }
           >
             Copy path
           </button>

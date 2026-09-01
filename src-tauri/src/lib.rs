@@ -354,6 +354,60 @@ fn walk_files(root: &Path, include_ignored: bool, only_markdown: bool) -> Vec<Pl
     found.into_inner().unwrap_or_default()
 }
 
+/// Every directory under the root, on the same walk and skip rules as the
+/// files. The file walk cannot see a folder with nothing in it, so "show all
+/// files" mode asks for the folders separately.
+fn walk_dirs(root: &Path, include_ignored: bool) -> Vec<String> {
+    use ignore::{WalkBuilder, WalkState};
+    use std::sync::Mutex;
+
+    let found: Mutex<Vec<String>> = Mutex::new(Vec::new());
+    let mut builder = WalkBuilder::new(root);
+    builder
+        .threads(2)
+        .hidden(false)
+        .parents(true)
+        .git_ignore(!include_ignored)
+        .git_global(!include_ignored)
+        .git_exclude(!include_ignored)
+        .follow_links(false)
+        .filter_entry(|e| {
+            let name = e.file_name().to_string_lossy();
+            !SKIP_DIRS.contains(&name.as_ref())
+        });
+
+    builder.build_parallel().run(|| {
+        Box::new(|result| {
+            let Ok(entry) = result else {
+                return WalkState::Continue;
+            };
+            if !entry.file_type().is_some_and(|t| t.is_dir()) {
+                return WalkState::Continue;
+            }
+            let Ok(rel) = entry.path().strip_prefix(root) else {
+                return WalkState::Continue;
+            };
+            let rel = rel.to_string_lossy().replace('\\', "/");
+            if rel.is_empty() {
+                return WalkState::Continue;
+            }
+            if let Ok(mut out) = found.lock() {
+                out.push(rel);
+            }
+            WalkState::Continue
+        })
+    });
+
+    let mut out = found.into_inner().unwrap_or_default();
+    out.sort();
+    out
+}
+
+#[tauri::command]
+async fn list_dirs(repo: String, include_ignored: bool) -> R<Vec<String>> {
+    Ok(walk_dirs(&PathBuf::from(&repo), include_ignored))
+}
+
 #[tauri::command]
 async fn list_plans(
     repo: String,
@@ -1521,6 +1575,7 @@ pub fn run() {
             install_cli,
             cli_status,
             list_plans,
+            list_dirs,
             stat_plan,
             search_plans,
             write_asset,
