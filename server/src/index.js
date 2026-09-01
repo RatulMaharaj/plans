@@ -3,6 +3,7 @@
  * document. See ../README.md for what it is for and how to run it.
  */
 import { createServer } from "node:http";
+import { readFileSync } from "node:fs";
 import { WebSocketServer } from "ws";
 import { openDb } from "./db.js";
 import { makeAuth, httpError } from "./auth.js";
@@ -134,6 +135,49 @@ export function startServer({
       const { login, w } = await mine(req, seg[1]);
       return json(res, 201, { token: await db.createReadToken(w.id, login) });
     }
+    // --- share links -------------------------------------------------------
+    // Minting, listing and revoking are member-only, through the same `mine`
+    // guard as everything else; the reading is below, behind the link's own
+    // token. See plans/sharable-links.md.
+    if ((seg = m(/^\/workspaces\/([\w-]+)\/share$/)) && req.method === "POST") {
+      const { login, w } = await mine(req, seg[1]);
+      return json(res, 201, await db.createShareToken(w.id, login));
+    }
+    if ((seg = m(/^\/workspaces\/([\w-]+)\/share$/)) && req.method === "GET") {
+      const { w } = await mine(req, seg[1]);
+      return json(res, 200, await db.shareTokens(w.id));
+    }
+    if ((seg = m(/^\/workspaces\/([\w-]+)\/share\/revoke$/)) && req.method === "POST") {
+      const { w } = await mine(req, seg[1]);
+      const { id } = await body(req);
+      if (!(await db.revokeShareToken(w.id, String(id ?? "")))) throw httpError(404, "no such link");
+      return json(res, 200, { ok: true });
+    }
+    if (req.method === "GET" && path === "/share") {
+      // The shell the fragment is read by: no id, no token, nothing of the
+      // document. An unfurler fetching this link sees exactly this.
+      res.writeHead(200, {
+        "Content-Type": "text/html; charset=utf-8",
+        "Cache-Control": "no-store",
+      });
+      res.end(viewerPage());
+      return;
+    }
+    if (req.method === "GET" && path === "/share/doc") {
+      // The token is the address: the workspace id is never in the URL.
+      const id = await db.workspaceForShareToken(bearer(req));
+      // Revoked, expired, and never-minted answer alike.
+      if (!id) throw httpError(404, "this link is not a link any more");
+      const w = await db.workspace(id);
+      if (!w) throw httpError(404, "this link is not a link any more");
+      return json(res, 200, {
+        name: w.name,
+        // The chip's state and nothing more: who asked, who decided and who is
+        // in the room are not part of the document.
+        review: { state: w.review.state },
+        markdown: await rooms.markdown(id),
+      });
+    }
     if ((seg = m(/^\/w\/([\w-]+)\/plan\.md$/)) && req.method === "GET") {
       // Two doors: a member's session, or the per-workspace token that the
       // factory holds in its secrets. Both are bearer tokens; neither is the
@@ -197,6 +241,16 @@ export function startServer({
     },
     rooms,
   };
+}
+
+/**
+ * The viewer, read once and held: one self-contained file, no build step and
+ * no framework, so serving it is reading a string.
+ */
+let viewerHtml = null;
+function viewerPage() {
+  if (viewerHtml === null) viewerHtml = readFileSync(new URL("./share.html", import.meta.url), "utf8");
+  return viewerHtml;
 }
 
 function json(res, status, value) {

@@ -70,6 +70,7 @@ import {
   type Workspace,
 } from "./workspace";
 import { Workspaces, reviewLabel, reviewTone } from "./Workspaces";
+import { ShareSheet } from "./ShareSheet";
 import { SignInSheet } from "./SignInSheet";
 import { MoveSheet } from "./MoveSheet";
 import { TextPrompt } from "./TextPrompt";
@@ -538,6 +539,8 @@ export default function App() {
   const [wsNaming, setWsNaming] = useState(false);
   const [wsInviting, setWsInviting] = useState<string | null>(null);
   const [wsCopying, setWsCopying] = useState<null | { id: string; repo: string; dir: string }>(null);
+  /** The workspace whose share links are open, if any. */
+  const [wsSharing, setWsSharing] = useState<string | null>(null);
   /** Opening the notes is defined below the buffer machinery it needs. */
   const openNotesRef = useRef<
     ((seen: string | null, running: string) => Promise<void>) | null
@@ -1289,6 +1292,28 @@ export default function App() {
       () => notify("Could not write to the clipboard", "error"),
     );
   }, [activePath, settings.agentCommand, notify]);
+
+  /**
+   * A share link, minted and on the clipboard in one gesture: sharing and
+   * asking for review are siblings, and neither should cost a detour through a
+   * management page. The links this makes are listed and revocable in the
+   * sheet behind the same control.
+   */
+  const copyShareLink = useCallback(
+    async (id: string) => {
+      try {
+        const link = await workspace.share.mint(id);
+        const url = workspace.shareUrl(link.token);
+        await navigator.clipboard.writeText(url).then(
+          () => notify("Share link copied"),
+          () => notify("Could not write to the clipboard", "error"),
+        );
+      } catch (e) {
+        notify(e instanceof Error ? e.message : "Could not mint a share link", "error");
+      }
+    },
+    [notify],
+  );
 
   const changeCount = status?.entries.length ?? 0;
   /** Git's answer once status has been read, the repo's own until then. */
@@ -4859,6 +4884,16 @@ export default function App() {
                                 </button>
                               </>
                             ) : null}
+                            {/* Sharing sits next to review: "look at this" in
+                                two strengths, one for members and one for
+                                anyone holding the link. */}
+                            <button
+                              className="rail-btn"
+                              onClick={() => setWsSharing(id)}
+                              title="A read-only link for someone with no account"
+                            >
+                              Share…
+                            </button>
                             <button
                               className="rail-btn"
                               onClick={() => setWsInviting(id)}
@@ -5389,6 +5424,15 @@ export default function App() {
         />
       )}
 
+      {wsSharing && (
+        <ShareSheet
+          id={wsSharing}
+          name={workspaces.find((w) => w.id === wsSharing)?.name ?? "this document"}
+          notify={notify}
+          onClose={() => setWsSharing(null)}
+        />
+      )}
+
       {wsCopying && (
         <NameSheet
           label="Copy to repository"
@@ -5523,6 +5567,9 @@ export default function App() {
         canHandOff={!!activePath && chat !== false}
         onHandOff={(kind) => void handOff(kind)}
         onCopyAgentCommand={() => void copyAgentCommand()}
+        shareWorkspaceId={wsIdOf(activePath)}
+        onCopyShareLink={(id) => void copyShareLink(id)}
+        onShareLinks={(id) => setWsSharing(id)}
         chats={chats}
         onNewChat={newChat}
         onOpenChat={openChat}

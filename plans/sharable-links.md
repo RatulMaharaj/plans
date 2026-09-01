@@ -1,7 +1,16 @@
 ---
-status: busy
+status: done
 ---
 # sharable links
+
+## What shipped
+
+The design went through as written: the token in the fragment, a
+`share_tokens` table of its own, one static viewer page, and the gesture
+beside review in the page head. The two decisions the plan was revised with
+mid-flight — a thirty-day expiry stamped at mint, and `review.state` alone on
+the wire — are both in, and the three remaining open questions are answered
+below rather than left hanging.
 
 Any markdown file in a workspace should be sharable with a link: send a URL
 to someone with no account, no app, no repo clone, and they see the plan
@@ -155,39 +164,47 @@ designing token scopes for documents that can't exist yet is how schemas rot.
   a stripped link lands on bare `/share`, the page should say "this link is
   missing its key — ask for it again", not render an error that looks like
   revocation.
-  - Answer:
+  - Answer: yes, as written. A bare `/share` says the link is missing its
+    key and to ask for the whole one again — a sentence that reads as *lost
+    in transit*, not as *dead*.
 - **Mermaid and images.** The app renders mermaid blocks and repo-relative
   images; a workspace doc can contain both. Mermaid in the viewer is one
   script tag and probably worth it; images by relative path have no
   repository to resolve against and should render as a visible broken-asset
   placeholder, not vanish. Does that need saying in the doc, or in the
   viewer?
-  - Answer:
+  - Answer: the viewer should show exactly what you see in the app, mermaid
+    included. **Not yet done:** the run shipped the page self-contained, so a
+    mermaid fence renders as source; drawing the diagram means one script
+    tag on the viewer. A relative image renders as a dashed `image · alt`
+    placeholder, since there is no repository to resolve against.
 - **Should the copied-to-repo file remember its links?** Once the plan leaves
   the room for git, the workspace (and its links) live on. Do links keep
   working after copy-out — probably yes, the room is still the discussion —
   or should copy-out suggest revoking them as part of "the argument settled"?
-  - Answer:
+  - Answer: no. A clean copy, and copy-out revokes the links: the argument
+    settled, and the file is the record now. **Not yet done:** links keep
+    working after copy-out today; copy-out should revoke them.
 
 ## Next
 
-- [ ] Point `DEFAULT_SERVER` (src/workspace.ts:25) at the workspace server's
+- [x] Point `DEFAULT_SERVER` (src/workspace.ts:25) at the workspace server's
   looped.sh address — the app now lives at plans.looped.sh, and share
   links are minted from `serverUrl()`, so a stale constant mints stale
   links
-- [ ] `share_tokens` table (hashed, `revoked_at`, `expires_at` = mint + 30
+- [x] `share_tokens` table (hashed, `revoked_at`, `expires_at` = mint + 30
   days) and three member-only routes: mint, list, revoke — 404 for
   unknown, revoked, or expired, like everything else
-- [ ] `GET /share/doc` behind the bearer token: markdown from
+- [x] `GET /share/doc` behind the bearer token: markdown from
   `rooms.markdown`, plus workspace name and `review.state` only — no
   trail, no members
-- [ ] `GET /share`: one static, self-contained viewer page — reads
+- [x] `GET /share`: one static, self-contained viewer page — reads
   `location.hash`, fetches with the Authorization header, renders with
   raw HTML escaped, frontmatter as a status chip, zen-width column, print
   stylesheet; a distinct message for a missing fragment
-- [ ] "Copy share link" in the palette and the page head for workspace
+- [x] "Copy share link" in the palette and the page head for workspace
   buffers, via `workspace.ts`; a small sheet listing links with revoke
-- [ ] e2e: mint a link in one context, open it in a fresh logged-out context
+- [x] e2e: mint a link in one context, open it in a fresh logged-out context
   and see the rendered heading; revoke it and see the 404 message; fetch
   `/share` with no fragment and see the missing-key message, not content
 
