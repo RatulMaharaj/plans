@@ -1,11 +1,11 @@
 ---
 name: review
-description: How to turn a branch or PR into review materials the Plans app renders well - a small ordered set of documents, diagrams where prose loses, code blocks as quotations. Use when asked to review a branch, a pull request, or a diff in a repository with a plans/ folder.
+description: How to turn a branch or PR into review materials the Looped Plans app renders well - a small ordered set of documents, diagrams where prose loses, code blocks as quotations. Use when asked to review a branch, a pull request, or a diff in a repository with a plans/ folder.
 ---
 # Writing a review a human can read
 
 You are reviewing a change so that a person can review it faster. The output
-is a small, ordered set of markdown files the Plans app renders as pages,
+is a small, ordered set of markdown files the Looped Plans app renders as pages,
 with a tree that reads as a board. Split by what the *reader* does; the
 diff's own boundaries are the wrong unit.
 

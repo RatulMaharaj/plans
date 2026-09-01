@@ -594,7 +594,7 @@ export function SettingsPage({
         {/* ---- updates -------------------------------------------------- */}
         <Group
           name="Updates"
-          hint="Plans checks GitHub for a new version of itself. Nothing downloads or installs without a press."
+          hint="Looped Plans checks GitHub for a new version of itself. Nothing downloads or installs without a press."
         >
           <Choice
             label="New versions"
@@ -625,7 +625,7 @@ export function SettingsPage({
         {/* ---- privacy -------------------------------------------------- */}
         <Group
           name="Privacy"
-          hint="Plans counts which features get used, so it can be improved by something other than guesswork. Nobody is identified, and no file name, path, or word of your writing ever leaves this machine."
+          hint="Looped Plans counts which features get used, so it can be improved by something other than guesswork. Nobody is identified, and no file name, path, or word of your writing ever leaves this machine."
         >
           <Toggle
             label="Send anonymous usage data"

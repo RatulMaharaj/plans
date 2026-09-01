@@ -1,6 +1,6 @@
 name: Release
 
-# Builds Plans for macOS, signs it with the Developer ID certificate,
+# Builds Looped Plans for macOS, signs it with the Developer ID certificate,
 # notarizes it with Apple, staples the ticket, and attaches the .dmg and
 # .app.tar.gz to a draft GitHub Release.
 #
@@ -164,7 +164,7 @@ jobs:
           # nothing reaches users until someone opens it, checks the installer,
           # and publishes.
           tagName: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || '' }}
-          releaseName: ${{ startsWith(github.ref, 'refs/tags/v') && format('Plans {0}', github.ref_name) || '' }}
+          releaseName: ${{ startsWith(github.ref, 'refs/tags/v') && format('Looped Plans {0}', github.ref_name) || '' }}
           releaseBody: ${{ steps.notes.outputs.body }}
           releaseDraft: true
           prerelease: false
@@ -229,7 +229,7 @@ jobs:
       # readable any other way — so it proves the file is attached, not that the
       # world can read it. Anonymous readability is a property of the repository
       # rather than of a build: on a private repo every asset URL 404s for
-      # everyone, and no green run here would tell you. If Plans ever goes
+      # everyone, and no green run here would tell you. If Looped Plans ever goes
       # private again, the updater stops working and this check stays green.
       - name: Check latest.json is on the release
         env:

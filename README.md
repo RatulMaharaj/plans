@@ -2,7 +2,7 @@
 
 <img src="site/icon.png" width="72" alt="" />
 
-# Plans
+# Looped Plans
 
 **A small desktop app for reading and editing the markdown in your local git
 repositories** — without opening the whole repo in an editor.
@@ -17,7 +17,7 @@ repositories** — without opening the whole repo in an editor.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="site/plans-night.png" />
-  <img src="site/plans-day.png" width="760" alt="The Plans window: a file tree of markdown across repositories on the left, the open document rendered as a page on the right, with the file edited since the last commit marked in the tree." />
+  <img src="site/plans-day.png" width="760" alt="The Looped Plans window: a file tree of markdown across repositories on the left, the open document rendered as a page on the right, with the file edited since the last commit marked in the tree." />
 </picture>
 
 </div>

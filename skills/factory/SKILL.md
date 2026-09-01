@@ -37,7 +37,7 @@ checks the factory repo out at `.factory/` and uses the canonical copies.
    unclaimed mode covers that case, but say so; `deletion` and
    `non_fast_forward` rules cost the factory nothing.
 5. The repository needs a `plans/` folder following the plans skill's
-   conventions. If the Plans app manages this repo, its bundled skills are
+   conventions. If the Looped Plans app manages this repo, its bundled skills are
    already installed; otherwise the conventions are in the factory repo's
    `skills/` directory.
 

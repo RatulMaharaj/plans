@@ -22,7 +22,7 @@ export function UpdateBanner({ found, progress, installing, onInstall, onDismiss
   return (
     <div className="update-banner" role="status">
       <div className="update-text">
-        <b>Plans {found.version}</b>
+        <b>Looped Plans {found.version}</b>
         {found.notes && <span className="update-notes">{firstLine(found.notes)}</span>}
       </div>
 

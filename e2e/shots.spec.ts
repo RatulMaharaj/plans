@@ -24,7 +24,7 @@ const REPOS: FakeRepo[] = [
     branch: "main",
     modified: ["plans/1_what_this_is_for.md"],
     files: {
-      "README.md": "# Plans\n\nA small desktop app for the markdown in your repositories.\n",
+      "README.md": "# Looped Plans\n\nA small desktop app for the markdown in your repositories.\n",
       "BUGS.md": "# Bugs\n\n- The diff scrolls to the top when a hunk is staged.\n",
       "plans/4_updater.md": "# The updater\n\nCheck on launch, ask before replacing.\n",
       "plans/1_what_this_is_for.md": `# Everything markdown, across every repository
