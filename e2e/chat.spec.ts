@@ -2437,3 +2437,152 @@ test("an agent that never started is not called a sign-in problem", async ({ pag
   // the wrong thing.
   await expect(log).not.toContainText("sign in");
 });
+
+/*
+ * The queue behind the composer. A message typed mid-turn is held and sent
+ * when the turn ends — into the conversation it was typed in, which is not
+ * necessarily the one on screen by then.
+ */
+test("a message typed mid-turn goes out when the turn ends", async ({ page }) => {
+  await open(page);
+  await openPlan(page);
+  await page.keyboard.press("Meta+j");
+  await say(page, "first");
+  await expect.poll(() => calls(page, "agent_prompt")).toBe(1);
+
+  // Turn 1 is still running; the second message waits rather than vanishing.
+  await say(page, "second");
+  await expect(page.locator(".chat-log")).toContainText("queued");
+  await finish(page, 1);
+
+  await expect.poll(() => calls(page, "agent_prompt")).toBe(2);
+  const sent = await argsOf(page, "agent_prompt");
+  expect(sent[1].text).toBe("second");
+});
+
+/*
+ * The agent's questions arrive as a form: a message plus a schema whose
+ * fields are the options. They are drawn as buttons — clicking is the whole
+ * point of surfacing them — with the tool's own "type your own answer" box.
+ */
+test("a question is clickable, and the click is the answer", async ({ page }) => {
+  await open(page);
+  await openPlan(page);
+  await page.keyboard.press("Meta+j");
+  await say(page, "which way?");
+  await expect.poll(() => calls(page, "agent_prompt")).toBe(1);
+
+  await page.evaluate(() => {
+    const f = (window as any).__fake;
+    f.emit("agent-question", {
+      repo: "/repo/one",
+      requestId: "/repo/one::c::ask-1",
+      message: "Which approach should I take?",
+      schema: {
+        type: "object",
+        properties: {
+          question_0: {
+            type: "string",
+            oneOf: [
+              { const: "Small fix", title: "Small fix", description: "The one-line change" },
+              { const: "Refactor", title: "Refactor" },
+            ],
+          },
+          question_0_custom: {
+            type: "string",
+            title: "Other",
+            _meta: { _askUserQuestionCustomAnswer: { questionId: "question_0", isCustomAnswer: true } },
+          },
+        },
+      },
+    });
+  });
+
+  await expect(page.locator(".chat-question")).toContainText("Which approach should I take?");
+  // One single-choice question: the click answers, no separate Answer button.
+  await page.locator(".chat-q-opt", { hasText: "Refactor" }).click();
+  await expect.poll(() => calls(page, "agent_question")).toBe(1);
+  const [sent] = await argsOf(page, "agent_question");
+  expect(sent.requestId).toBe("/repo/one::c::ask-1");
+  expect(sent.content).toEqual({ question_0: "Refactor" });
+
+  // Answered questions freeze into a statement, as permissions do.
+  await page.evaluate(() => {
+    (window as any).__fake.emit("agent-question-done", {
+      repo: "/repo/one",
+      requestId: "/repo/one::c::ask-1",
+      chosen: { question_0: "Refactor" },
+    });
+  });
+  await expect(page.locator(".chat-question .chat-ask-was")).toHaveText("Refactor");
+  await expect(page.locator(".chat-q-opt")).toHaveCount(0);
+});
+
+/** Typing your own answer beats the options, and Skip is always an exit. */
+test("a question takes a typed answer, or a skip", async ({ page }) => {
+  await open(page);
+  await openPlan(page);
+  await page.keyboard.press("Meta+j");
+  await say(page, "which way?");
+  await expect.poll(() => calls(page, "agent_prompt")).toBe(1);
+
+  const schema = {
+    type: "object",
+    properties: {
+      question_0: {
+        type: "string",
+        title: "Approach",
+        description: "Which approach?",
+        oneOf: [{ const: "A", title: "A" }],
+      },
+      question_0_custom: {
+        type: "string",
+        title: "Other",
+        _meta: { _askUserQuestionCustomAnswer: { questionId: "question_0", isCustomAnswer: true } },
+      },
+      question_1: {
+        type: "string",
+        description: "How thorough?",
+        oneOf: [
+          { const: "Quick", title: "Quick" },
+          { const: "Deep", title: "Deep" },
+        ],
+      },
+      question_1_custom: {
+        type: "string",
+        title: "Other",
+        _meta: { _askUserQuestionCustomAnswer: { questionId: "question_1", isCustomAnswer: true } },
+      },
+    },
+  };
+  await page.evaluate((s) => {
+    (window as any).__fake.emit("agent-question", {
+      repo: "/repo/one",
+      requestId: "q2",
+      message: "Please answer the following questions.",
+      schema: s,
+    });
+  }, schema);
+
+  // Several questions: choices accumulate behind an explicit Answer.
+  await page.locator(".chat-q-other").first().fill("my own way");
+  await page.locator(".chat-q-opt", { hasText: "Deep" }).click();
+  await page.locator(".chat-question .act", { hasText: "Answer" }).click();
+  await expect.poll(() => calls(page, "agent_question")).toBe(1);
+  const [sent] = await argsOf(page, "agent_question");
+  expect(sent.content).toEqual({ question_0_custom: "my own way", question_1: "Deep" });
+
+  // A second question, skipped: the model is told, nothing is invented.
+  await page.evaluate((s) => {
+    (window as any).__fake.emit("agent-question", {
+      repo: "/repo/one",
+      requestId: "q3",
+      message: "One more?",
+      schema: s,
+    });
+  }, schema);
+  await page.locator(".chat-question .act.quiet", { hasText: "Skip" }).last().click();
+  await expect.poll(() => calls(page, "agent_question")).toBe(2);
+  const skipped = (await argsOf(page, "agent_question"))[1];
+  expect(skipped.content).toBe(null);
+});

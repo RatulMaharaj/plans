@@ -32,6 +32,37 @@ Not bugs yet — places the same class of mistake would land next.
 
 ## Fixed
 
+### A queued message went to whichever chat was on screen
+
+The mid-turn queue held the message under the chat it was typed in, but the
+dispatch went through `send()`, which read the *current* chat — so a message
+waiting on one conversation's turn could be sent into another, or re-queued
+there against a turn that would never end. The dispatch now carries its thread
+key, and the in-flight guard is per conversation rather than one flag for the
+panel. The pattern: a callback that closes over "the current X" answers for
+whenever it *runs*, not whenever the work was asked for — anything queued must
+carry its destination with it. (Both prompts in sequence were also proven
+against the real adapter, standalone: the backend was never the blocker.)
+
+### The agent could not ask a question, only say one
+
+Claude's AskUserQuestion never reached the app — the adapter disallows the
+tool unless the client declares form-elicitation support at initialize, so
+"should I do A or B?" arrived as prose and the options died in the transcript.
+The client now advertises the capability, answers `elicitation/create`, and
+draws the schema as a card: options as buttons, the tool's own "type your own
+answer" box, Skip as a decline rather than an abort. Found by reading the
+adapter's source rather than our own: the absence was configured on our side,
+in a capability we never sent.
+
+### New file names lost their case
+
+`{slug}` lowercased the title, so "Meeting Notes" was `meeting-notes.md` and
+the name on disk silently disagreed with the sheet. On macOS the filesystem
+compounds it: case-insensitive lookup means nothing ever *fails*, the file is
+simply not called what you typed. The slug keeps the case now; hyphens for
+whitespace are all it imposes.
+
 ### All-files mode still hid empty folders
 
 The tree is built from the file walk's results, so a folder holding nothing -

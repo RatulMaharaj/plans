@@ -1711,6 +1711,7 @@ pub fn run() {
             agent::agent_cancel,
             agent::agent_set_config,
             agent::agent_permission,
+            agent::agent_question,
             agent::agent_stop,
         ])
         .build(tauri::generate_context!())

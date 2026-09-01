@@ -50,8 +50,253 @@ type Msg =
       options: { optionId: string; name: string; kind?: string }[];
       answered?: string | null;
     }
+  /**
+   * A question the agent asked — AskUserQuestion arriving as a form: a
+   * message plus a schema whose fields are the options. Distinct from a
+   * permission because the answer is a filled form, not a single option id.
+   */
+  | {
+      role: "question";
+      requestId: string;
+      title: string;
+      schema: unknown;
+      /** A summary once answered, `null` for skipped or cancelled. */
+      answered?: string | null;
+    }
   /** Seams and failures: the app talking, not the agent. */
   | { role: "note"; text: string };
+
+/** An option of one of the agent's questions. */
+type QOption = { value: string; title: string; description?: string };
+
+/** One field of a question form: a choice to click, or a box to type in. */
+type QField =
+  | {
+      kind: "select";
+      key: string;
+      /** The short header, when the agent gave one. */
+      title?: string;
+      /** The question itself, when the form carries several. */
+      ask?: string;
+      multi: boolean;
+      options: QOption[];
+      /** The companion free-text field, for an answer of your own. */
+      customKey?: string;
+    }
+  | { kind: "text"; key: string; title?: string; ask?: string };
+
+/**
+ * Read the question form out of its JSON schema.
+ *
+ * The shape is ACP's form elicitation: string fields with a titled `oneOf`
+ * are a single choice, arrays with `items.anyOf` a multiple one, and a field
+ * marked `_askUserQuestionCustomAnswer` is the "or type your own" box that
+ * belongs to the question it names. Anything else stringy is a plain input.
+ * Unknown shapes are skipped rather than guessed at — a question we cannot
+ * draw is still skippable, and Skip is always drawn.
+ */
+function fieldsOf(schema: unknown): QField[] {
+  const props =
+    schema && typeof schema === "object"
+      ? ((schema as { properties?: Record<string, unknown> }).properties ?? {})
+      : {};
+  const fields: QField[] = [];
+  const customFor = new Map<string, string>();
+  for (const [key, raw] of Object.entries(props)) {
+    const p = (raw ?? {}) as {
+      type?: string;
+      title?: string;
+      description?: string;
+      oneOf?: unknown[];
+      items?: { anyOf?: unknown[] };
+      _meta?: Record<string, { questionId?: string }>;
+    };
+    const custom = p._meta?.["_askUserQuestionCustomAnswer"];
+    if (custom?.questionId) {
+      customFor.set(custom.questionId, key);
+      continue;
+    }
+    const opts = (list: unknown[] | undefined): QOption[] =>
+      (list ?? []).flatMap((o) => {
+        const e = (o ?? {}) as { const?: unknown; title?: string; description?: string };
+        return e.const !== undefined
+          ? [{ value: String(e.const), title: e.title ?? String(e.const), description: e.description }]
+          : [];
+      });
+    if (Array.isArray(p.oneOf) && p.oneOf.length) {
+      fields.push({ kind: "select", key, title: p.title, ask: p.description, multi: false, options: opts(p.oneOf) });
+    } else if (p.type === "array" && Array.isArray(p.items?.anyOf) && p.items.anyOf.length) {
+      fields.push({ kind: "select", key, title: p.title, ask: p.description, multi: true, options: opts(p.items.anyOf) });
+    } else if (p.type === "string" || p.type === undefined) {
+      fields.push({ kind: "text", key, title: p.title, ask: p.description });
+    }
+  }
+  for (const f of fields) {
+    if (f.kind === "select") f.customKey = customFor.get(f.key);
+  }
+  return fields;
+}
+
+/** What an answered question says it was answered with. */
+function summaryOfAnswer(content: unknown): string | null {
+  if (content === null || content === undefined) return null;
+  const parts = Object.values(content as Record<string, unknown>)
+    .flatMap((v) => (Array.isArray(v) ? v : [v]))
+    .map((v) => String(v).trim())
+    .filter(Boolean);
+  return parts.length ? parts.join(", ") : null;
+}
+
+/**
+ * A question in the transcript, waiting on you.
+ *
+ * One choice and nothing typed sends on the click, the way the permission
+ * buttons do; a form with more to it gathers the answers behind an explicit
+ * Answer. Skip is always there, because the tool itself always offers it —
+ * the model is told you moved past the question rather than the turn dying.
+ */
+function QuestionCard({
+  title,
+  schema,
+  answered,
+  onAnswer,
+}: {
+  title: string;
+  schema: unknown;
+  answered: string | null | undefined;
+  onAnswer: (content: Record<string, unknown> | null) => void;
+}) {
+  const fields = fieldsOf(schema);
+  const [picked, setPicked] = useState<Record<string, string | string[]>>({});
+  const [typed, setTyped] = useState<Record<string, string>>({});
+
+  if (answered !== undefined) {
+    return (
+      <div className="chat-ask chat-question">
+        <span className="chat-ask-title">{title}</span>
+        <span className="chat-ask-was">{answered ?? "skipped"}</span>
+      </div>
+    );
+  }
+
+  const submit = (extra?: Record<string, unknown>) => {
+    const content: Record<string, unknown> = { ...extra };
+    for (const f of fields) {
+      if (f.kind === "select") {
+        const v = picked[f.key];
+        if (v !== undefined && !(f.key in content)) content[f.key] = v;
+        const t = f.customKey ? typed[f.customKey]?.trim() : "";
+        if (f.customKey && t) content[f.customKey] = t;
+      } else {
+        const t = typed[f.key]?.trim();
+        if (t) content[f.key] = t;
+      }
+    }
+    onAnswer(Object.keys(content).length ? content : null);
+  };
+
+  // One single choice and no other answer in flight: the click is the answer.
+  const lone =
+    fields.length === 1 && fields[0].kind === "select" && !fields[0].multi ? fields[0] : null;
+
+  return (
+    <div className="chat-ask chat-question">
+      <span className="chat-ask-title">{title}</span>
+      {fields.map((f) => (
+        <div key={f.key} className="chat-q-field">
+          {f.ask ? <div className="chat-q-ask">{f.ask}</div> : null}
+          {f.kind === "select" ? (
+            <>
+              <div className="chat-q-opts" role="listbox" aria-label={f.ask ?? f.title ?? title}>
+                {f.options.map((o) => {
+                  const on = f.multi
+                    ? ((picked[f.key] as string[] | undefined) ?? []).includes(o.value)
+                    : picked[f.key] === o.value;
+                  /*
+                   * A recommendation has no field of its own — the convention
+                   * (Claude's, and the tool description's) is a literal
+                   * "(Recommended)" appended to the label. Drawn as a badge
+                   * rather than left as trailing prose; the *value* sent back
+                   * stays the full label, which is what the tool records.
+                   */
+                  const rec = /\s*\((recommended)\)\s*$/i.exec(o.title);
+                  const label = rec ? o.title.slice(0, rec.index) : o.title;
+                  return (
+                    <button
+                      key={o.value}
+                      className={`chat-q-opt ${on ? "on" : ""}`}
+                      onClick={() => {
+                        if (lone && !typed[lone.customKey ?? ""]?.trim()) {
+                          submit({ [f.key]: o.value });
+                          return;
+                        }
+                        setPicked((prev) => {
+                          if (!f.multi) return { ...prev, [f.key]: o.value };
+                          const cur = (prev[f.key] as string[] | undefined) ?? [];
+                          const next = cur.includes(o.value)
+                            ? cur.filter((x) => x !== o.value)
+                            : [...cur, o.value];
+                          return { ...prev, [f.key]: next };
+                        });
+                      }}
+                    >
+                      <span className="chat-q-opt-label">
+                        {label}
+                        {rec ? <span className="chat-q-opt-rec">recommended</span> : null}
+                      </span>
+                      {o.description ? (
+                        <span className="chat-q-opt-desc">{o.description}</span>
+                      ) : null}
+                    </button>
+                  );
+                })}
+              </div>
+              {f.customKey ? (
+                <input
+                  className="chat-q-other"
+                  placeholder="Or type your own answer…"
+                  value={typed[f.customKey] ?? ""}
+                  onChange={(e) => setTyped((p) => ({ ...p, [f.customKey!]: e.target.value }))}
+                  onKeyDown={(e) => {
+                    if (!e.metaKey && !e.ctrlKey) e.stopPropagation();
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      submit();
+                    }
+                  }}
+                />
+              ) : null}
+            </>
+          ) : (
+            <input
+              className="chat-q-other"
+              placeholder={f.title ?? "Your answer…"}
+              value={typed[f.key] ?? ""}
+              onChange={(e) => setTyped((p) => ({ ...p, [f.key]: e.target.value }))}
+              onKeyDown={(e) => {
+                if (!e.metaKey && !e.ctrlKey) e.stopPropagation();
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  submit();
+                }
+              }}
+            />
+          )}
+        </div>
+      ))}
+      <span className="chat-ask-acts">
+        <button className="act quiet" onClick={() => onAnswer(null)}>
+          Skip
+        </button>
+        {!lone && (
+          <button className="act" onClick={() => submit()}>
+            Answer
+          </button>
+        )}
+      </span>
+    </div>
+  );
+}
 
 /** What the agent says it can do. Drawn, never interpreted. */
 type Thread = {
@@ -141,7 +386,7 @@ function load(key: string): Thread {
       t.messages = (t.messages ?? []).map((m) =>
         m.role === "tool" && (m.status === "pending" || m.status === "in_progress")
           ? { ...m, status: "interrupted" }
-          : m.role === "permission" && m.answered === undefined
+          : (m.role === "permission" || m.role === "question") && m.answered === undefined
             ? { ...m, answered: null }
             : m,
       );
@@ -225,9 +470,11 @@ export function ChatPanel({
    */
   const threads = useRef(new Map<string, Thread>());
   const keyRef = useRef<string | null>(null);
-  /** True from send() being entered until chat_send answers — a synchronous
-   *  guard where turn.current has an async gap. */
-  const inflight = useRef(false);
+  /** Thread keys with a send() entered but chat_send not yet answered — a
+   *  synchronous guard where turn.current has an async gap. Per chat, so a
+   *  message to one conversation is never queued on the strength of another
+   *  one's in-flight call. */
+  const inflight = useRef(new Set<string>());
   /**
    * Messages typed while a turn was in flight, by thread key. They used to be
    * dropped — the guard in send() returned after the box had already been
@@ -235,7 +482,9 @@ export function ChatPanel({
    */
   const pending = useRef(new Map<string, string[]>());
   /** send(), reachable from the turn-ended listener registered before it exists. */
-  const sendRef = useRef<((text: string, seeded?: boolean) => Promise<void>) | null>(null);
+  const sendRef = useRef<((text: string, seeded?: boolean, at?: string) => Promise<void>) | null>(
+    null,
+  );
   /**
    * Where the up arrow is in the composer's history of sent messages, and the
    * unsent text it stepped away from. `at: null` means "not in history".
@@ -460,6 +709,46 @@ export function ChatPanel({
         messages: [...t.messages, { role: "permission", requestId, title, options }],
       }));
     });
+    // The agent's questions travel the same road as its permission checks:
+    // into their own transcript, drawn from the schema they carry.
+    const questioned = listen<{
+      repo: string;
+      chat: string;
+      requestId: string;
+      message: string;
+      schema: unknown;
+    }>("agent-question", (e) => {
+      const k = to(e.payload);
+      if (!k) return;
+      const { requestId, message, schema } = e.payload;
+      commit(k, (t) => ({
+        ...t,
+        messages: [...t.messages, { role: "question", requestId, title: message, schema }],
+      }));
+    });
+    const questionDone = listen<{
+      repo: string;
+      chat: string;
+      requestId: string;
+      chosen: unknown;
+    }>("agent-question-done", (e) => {
+      const k = to(e.payload);
+      if (!k) return;
+      commit(k, (t) => ({
+        ...t,
+        messages: t.messages.map((m) =>
+          m.role === "question" && m.requestId === e.payload.requestId
+            ? {
+                ...m,
+                // `null` content is a cancel; `{}` a deliberate skip; anything
+                // else the answers themselves, summarised.
+                answered:
+                  e.payload.chosen === null ? "cancelled" : summaryOfAnswer(e.payload.chosen),
+              }
+            : m,
+        ),
+      }));
+    });
     const answeredElsewhere = listen<{
       repo: string;
       chat: string;
@@ -546,6 +835,8 @@ export function ChatPanel({
         config,
         commands,
         asked,
+        questioned,
+        questionDone,
         answeredElsewhere,
         opened,
         plan,
@@ -557,18 +848,27 @@ export function ChatPanel({
   }, [say, upsertTool, commit, key, repo, authHint]);
 
   const send = useCallback(
-    async (text: string, seeded = false) => {
-      // Per chat: a long job running in another conversation is not a reason
-      // to refuse this one.
-      if (!key || !text.trim()) return;
+    async (text: string, seeded = false, at?: string) => {
+      /*
+       * Which conversation this goes to. Usually the one on screen — but a
+       * message dequeued when its turn ended belongs to the chat it was typed
+       * in, and the user may be looking at a different one by then. Sending
+       * a queued message through whatever chat happened to be visible is how
+       * a second message could still vanish (or land in the wrong chat).
+       */
+      const k = at ?? key;
+      if (!k || !text.trim()) return;
+      // The chat id is the tail of the thread key; the repo is this panel's —
+      // every event that queues here was already filtered to it.
+      const chat = k.slice(chatKey(repo, "").length);
       // Mid-turn — including the last moments of one — the message is queued
       // rather than dropped: the box has already been cleared by the time this
       // guard fires, so returning silently used to lose what was typed.
-      if (turns.current.has(key) || inflight.current) {
-        const q = pending.current.get(key) ?? [];
+      if (turns.current.has(k) || inflight.current.has(k)) {
+        const q = pending.current.get(k) ?? [];
         q.push(text);
-        pending.current.set(key, q);
-        say(key, "note", "queued — sends when this turn finishes", false);
+        pending.current.set(k, q);
+        say(k, "note", "queued — sends when this turn finishes", false);
         return;
       }
       /*
@@ -584,12 +884,12 @@ export function ChatPanel({
        * was clearing running with nothing pointing at it.
        */
       if (text.trim() === "/clear") {
-        void api.agentStop(repo, chats.current).catch(() => {});
+        void api.agentStop(repo, chat).catch(() => {});
         onNewChat();
         return;
       }
-      inflight.current = true;
-      const t = threads.current.get(key) ?? load(key);
+      inflight.current.add(k);
+      const t = threads.current.get(k) ?? load(k);
       /*
        * Which plan you are looking at, said when it changes.
        *
@@ -598,14 +898,17 @@ export function ChatPanel({
        * something the old design had to send because a `-p` invocation had no
        * other way to say it.
        */
-      const moved = relPath && relPath !== t.plan;
+      // The open plan is context for the conversation on screen; a message
+      // dequeued into a background chat keeps the plan it already had.
+      const here = k === keyRef.current;
+      const moved = here && relPath && relPath !== t.plan;
       const where = moved ? `The plan I am looking at is ${relPath}.\n\n` : "";
-      commit(key, (cur) => ({
+      commit(k, (cur) => ({
         ...cur,
-        plan: relPath ?? cur.plan ?? null,
+        plan: (here ? relPath : null) ?? cur.plan ?? null,
         messages: [...cur.messages, { role: "user", text }],
       }));
-      mark(key, true);
+      mark(k, true);
       // The length and whether a button wrote it — never the message itself.
       track("chat_message_sent", { seeded, chars: text.length });
       try {
@@ -642,13 +945,13 @@ export function ChatPanel({
           : text;
         const id = await api.agentPrompt(
           repo,
-          chats.current,
+          chat,
           cmd,
           where + outgoing,
           same ? t.session : null,
         );
         if (!same) {
-          commit(key, (cur) => ({
+          commit(k, (cur) => ({
             ...cur,
             session: null,
             messages: [
@@ -657,20 +960,20 @@ export function ChatPanel({
             ],
           }));
         }
-        commit(key, (cur) => ({ ...cur, agent: cmd }));
-        turns.current.set(key, { id, at: Date.now() });
+        commit(k, (cur) => ({ ...cur, agent: cmd }));
+        turns.current.set(k, { id, at: Date.now() });
       } catch (e) {
-        mark(key, false);
+        mark(k, false);
         // In the transcript as well as the toast: a turn that produced nothing
         // must not look like a turn that is still thinking, and a toast is
         // gone by the time you look back at the conversation.
-        say(key, "note", String(e).replace(/^Error:\s*/, ""), false);
+        say(k, "note", String(e).replace(/^Error:\s*/, ""), false);
         notify(String(e), "error");
       } finally {
-        inflight.current = false;
+        inflight.current.delete(k);
       }
     },
-    [key, relPath, repo, cmd, chats.current, commit, notify, say, onNewChat, mark],
+    [key, relPath, repo, cmd, commit, notify, say, onNewChat, mark],
   );
   sendRef.current = send;
 
@@ -694,6 +997,11 @@ export function ChatPanel({
   /** Answer a permission request from the transcript. */
   const decide = (requestId: string, optionId: string | null) => {
     void api.agentPermission(repo, chats.current, requestId, optionId).catch(() => {});
+  };
+
+  /** Answer one of the agent's questions. `null` skips it. */
+  const answer = (requestId: string, content: Record<string, unknown> | null) => {
+    void api.agentQuestion(repo, chats.current, requestId, content).catch(() => {});
   };
 
   /*
@@ -878,6 +1186,17 @@ export function ChatPanel({
               </div>
             );
           }
+          if (m.role === "question") {
+            return (
+              <QuestionCard
+                key={m.requestId}
+                title={m.title}
+                schema={m.schema}
+                answered={m.answered}
+                onAnswer={(content) => answer(m.requestId, content)}
+              />
+            );
+          }
           if (m.role === "thought") {
             return (
               <details key={i} className="chat-thought">
@@ -905,14 +1224,6 @@ export function ChatPanel({
       </div>
 
       <div className="chat-input">
-        {/* Stop lives with the composer, floating clear of the title — the
-            answer is stopped where the next message is typed, and Esc in the
-            box does the same. */}
-        {busy && (
-          <button className="chat-stop" onClick={stop} title="Stop this answer (esc)">
-            Stop
-          </button>
-        )}
         {suggestions.length > 0 && (
           <div className="chat-slash" role="listbox">
             {suggestions.map((c, i) => (
@@ -1026,6 +1337,14 @@ export function ChatPanel({
           */}
         <div className="chat-foot">
           <AgentOptions repo={repo} chat={chats.current} options={thread.options} busy={busy} />
+          {/* Stop sits in the composer itself, at the end of the options row —
+              the answer is stopped where the next message is typed, and Esc in
+              the box does the same. */}
+          {busy && (
+            <button className="chat-stop" onClick={stop} title="Stop this answer (esc)">
+              Stop
+            </button>
+          )}
         </div>
       </div>
     </section>

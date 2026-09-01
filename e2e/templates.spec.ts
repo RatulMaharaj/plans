@@ -56,9 +56,9 @@ const files = (page: Page) =>
   page.evaluate(() => (window as any).__fake.repos[0].files as Record<string, string>);
 
 /**
- * The shipped plan template has to reproduce, byte for byte, what the hardcoded
- * scaffold used to write — otherwise this whole change is a behaviour change
- * wearing a refactor's clothes.
+ * The shipped plan template reproduces the old scaffold's *content* exactly.
+ * The filename keeps the case that was typed — lowercasing it read as a bug,
+ * the name on disk silently disagreeing with the title in the sheet.
  */
 test("the plan template writes what the backend used to write", async ({ page }) => {
   await open(page);
@@ -66,8 +66,8 @@ test("the plan template writes what the backend used to write", async ({ page })
   await page.locator(".name-field").fill("A Fresh Plan");
   await page.keyboard.press("Enter");
 
-  await expect.poll(async () => Object.keys(await files(page))).toContain("a-fresh-plan.md");
-  expect((await files(page))["a-fresh-plan.md"]).toBe("---\nstatus: draft\n---\n# A Fresh Plan\n\n");
+  await expect.poll(async () => Object.keys(await files(page))).toContain("A-Fresh-Plan.md");
+  expect((await files(page))["A-Fresh-Plan.md"]).toBe("---\nstatus: draft\n---\n# A Fresh Plan\n\n");
 });
 
 /**
@@ -129,8 +129,8 @@ test("a template in the folder becomes a command and a file", async ({ page }) =
   await page.locator(".name-field").fill("Tabs Vanish");
   await page.keyboard.press("Enter");
 
-  await expect.poll(async () => Object.keys(await files(page))).toContain("bug-tabs-vanish.md");
-  expect((await files(page))["bug-tabs-vanish.md"]).toBe(
+  await expect.poll(async () => Object.keys(await files(page))).toContain("bug-Tabs-Vanish.md");
+  expect((await files(page))["bug-Tabs-Vanish.md"]).toBe(
     "---\nstatus: draft\nkind: bug\n---\n# Tabs Vanish\n\n## What happened\n\n",
   );
 });

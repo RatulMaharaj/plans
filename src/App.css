@@ -2460,6 +2460,68 @@ body.resizing.resizing-row, body.resizing.resizing-row .chat-edge { cursor: row-
 .chat-ask-was { color: var(--ink-3); flex: none; }
 
 /*
+ * The agent's questions: the same card as a permission, opened up into a
+ * small form. Options are buttons because clicking is the whole point of
+ * surfacing them; the "type your own" box is the tool's own affordance, not
+ * an invention of ours.
+ */
+.chat-question { flex-direction: column; align-items: stretch; }
+.chat-question .chat-ask-title { flex: none; }
+/* Skip on the left, the submit on the right. */
+.chat-question .chat-ask-acts { justify-content: space-between; }
+.chat-q-field { display: flex; flex-direction: column; gap: 6px; }
+.chat-q-ask { color: var(--ink-2); }
+/* One suggested answer under the other, each its own little bubble. */
+.chat-q-opts { display: flex; flex-direction: column; align-items: stretch; gap: 5px; }
+.chat-q-opt {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  width: 100%;
+  text-align: left;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  line-height: 1.5;
+  padding: 8px 14px;
+  border-radius: 12px;
+  border: 1px solid var(--rule-strong);
+  background: var(--paper);
+  color: var(--ink-1);
+  cursor: pointer;
+}
+.chat-q-opt:hover { border-color: var(--ink-3); }
+.chat-q-opt.on {
+  border-color: var(--accent, var(--ink-2));
+  color: var(--accent, var(--ink-1));
+}
+.chat-q-opt-desc { color: var(--ink-3); min-width: 0; }
+.chat-q-opt-label { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; width: 100%; }
+.chat-q-opt-rec { margin-left: auto; }
+/* The "(Recommended)" the model appends to a label, worn as a badge. */
+.chat-q-opt-rec {
+  font-size: 9px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 1px 6px;
+  border-radius: 999px;
+  /* The app's green — the same moss the new git state wears. */
+  border: 1px solid var(--git-new);
+  color: var(--git-new);
+}
+.chat-q-other {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--ink-1);
+  background: transparent;
+  border: 1px solid var(--rule-strong);
+  border-radius: 4px;
+  padding: 4px 6px;
+  outline: none;
+}
+.chat-q-other:focus { border-color: var(--ink-3); }
+
+/*
  * The agent's own settings, in the composer under what you are typing. A row
  * of quiet dropdowns: what is in them is the agent's business, so they are
  * furniture rather than a feature — present when there is something to
@@ -2846,14 +2908,12 @@ body.tree-drag .tabs.drop-hot {
   outline-offset: -2px;
 }
 
-/* --- stop, at the composer ----------------------------------------------- */
-/* Floats just above the box you type in, clear of the title and the header
-   keys — a long chat name can no longer run into it. */
+/* --- stop, in the composer ----------------------------------------------- */
+/* At the end of the options row under the box you type in — part of the
+   composer's furniture rather than floating over the transcript. */
 .chat-stop {
-  position: absolute;
-  top: -36px;
-  right: 12px;
-  z-index: 5;
+  margin-left: auto;
+  flex: none;
   font-family: var(--mono);
   font-size: 11px;
   letter-spacing: 0.04em;
@@ -2863,7 +2923,6 @@ body.tree-drag .tabs.drop-hot {
   background: var(--raised);
   color: var(--ink-2);
   cursor: pointer;
-  box-shadow: var(--shadow);
 }
 .chat-stop:hover { color: var(--ink); border-color: var(--ink-3); }
 

@@ -483,6 +483,15 @@ export function Editor({
     untouch.current = () => {
       touched = false;
     };
+    // A flush about to read the buffer asks for the keystrokes still inside
+    // the debounce — otherwise everything typed in the last 180ms is missing
+    // from what gets saved, and a caller quoting "the file" quotes the past.
+    htmlBridge.collect = () => {
+      if (timer) {
+        clearTimeout(timer);
+        send();
+      }
+    };
 
     const onInput = () => {
       touched = true;
@@ -553,6 +562,7 @@ export function Editor({
       htmlBridge.apply = null;
       htmlBridge.insert = null;
       htmlBridge.comment = null;
+      htmlBridge.collect = null;
       /*
        * The reason the bridge is a bridge. A focus request outliving the editor
        * it was meant for would otherwise fire at a destroyed view; nulled here,

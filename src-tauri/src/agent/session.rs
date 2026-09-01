@@ -13,8 +13,9 @@
 
 use crate::agent::events;
 use agent_client_protocol::schema::v1::{
-    CancelNotification, ContentBlock, InitializeRequest, LoadSessionRequest, NewSessionRequest,
-    PromptRequest, SessionConfigOptionValue, SessionId, SessionNotification,
+    CancelNotification, ClientCapabilities, ContentBlock, CreateElicitationRequest,
+    ElicitationCapabilities, ElicitationFormCapabilities, InitializeRequest, LoadSessionRequest,
+    NewSessionRequest, PromptRequest, SessionConfigOptionValue, SessionId, SessionNotification,
     SetSessionConfigOptionRequest, TextContent,
 };
 use agent_client_protocol::schema::ProtocolVersion;
@@ -53,6 +54,7 @@ pub async fn run(
     resume: Option<String>,
     mut ops: UnboundedReceiver<Op>,
     perms: crate::agent::client::Pending,
+    asks: crate::agent::client::Asks,
 ) {
     /*
      * The child needs the PATH a terminal would have, not the one we inherited.
@@ -86,10 +88,11 @@ pub async fn run(
 
     let (r2, a2, c2, t2) = (repo.clone(), app.clone(), chat.clone(), turn_now.clone());
     let (r3, a3, c3, p3) = (repo.clone(), app.clone(), chat.clone(), perms.clone());
+    let (r4, a4, c4, k4) = (repo.clone(), app.clone(), chat.clone(), asks.clone());
     // The connection closure takes ownership; these are what is left to report
     // with once it has finished, whichever way it finished.
-    let (after_app, after_repo, after_chat, after_perms) =
-        (app.clone(), repo.clone(), chat.clone(), perms.clone());
+    let (after_app, after_repo, after_chat, after_perms, after_asks) =
+        (app.clone(), repo.clone(), chat.clone(), perms.clone(), asks.clone());
 
     let result =
         agent_client_protocol::Client
@@ -119,10 +122,27 @@ pub async fn run(
                 },
                 agent_client_protocol::on_receive_request!(),
             )
+            // The agent's own questions — AskUserQuestion and friends — arrive
+            // as form elicitations, and only because initialize below says the
+            // client can draw them. Without the capability the adapter
+            // disallows the tool and the model asks in prose instead.
+            .on_receive_request(
+                move |req: CreateElicitationRequest, responder, _c| {
+                    let (app, repo, chat, asks) = (a4.clone(), r4.clone(), c4.clone(), k4.clone());
+                    async move {
+                        crate::agent::client::question(app, repo, chat, asks, req, responder).await
+                    }
+                },
+                agent_client_protocol::on_receive_request!(),
+            )
             .connect_with(agent, |c: ConnectionTo<Agent>| async move {
-                c.send_request(InitializeRequest::new(ProtocolVersion::V1))
-                    .block_task()
-                    .await?;
+                c.send_request(InitializeRequest::new(ProtocolVersion::V1).client_capabilities(
+                    ClientCapabilities::new().elicitation(
+                        ElicitationCapabilities::new().form(ElicitationFormCapabilities::new()),
+                    ),
+                ))
+                .block_task()
+                .await?;
 
                 /*
                  * Pick up where the last process left off, when there is a
@@ -231,6 +251,7 @@ pub async fn run(
                                              * a panel that already moved on.
                                              */
                                             crate::agent::client::cancel_all(&perms, &repo, &chat);
+                                            crate::agent::client::cancel_asks(&asks);
                                             let _ = c.send_notification(CancelNotification::new(sid.clone()));
                                             let _ = app.emit(
                                                 "agent-turn",
@@ -262,6 +283,7 @@ pub async fn run(
                             // questions, and the panel is told so it stops
                             // waiting.
                             crate::agent::client::cancel_all(&perms, &repo, &chat);
+                            crate::agent::client::cancel_asks(&asks);
                             let _ = app.emit(
                             "agent-turn",
                             json!({ "repo": repo, "chat": chat, "turn": turn, "stop": "cancelled", "ok": false }),
@@ -299,6 +321,7 @@ pub async fn run(
             .await;
 
     crate::agent::client::cancel_all(&after_perms, &after_repo, &after_chat);
+    crate::agent::client::cancel_asks(&after_asks);
     match result {
         Err(e) => down(&after_app, &after_repo, &after_chat, gen, &format!("{e}")),
         Ok(()) => down(&after_app, &after_repo, &after_chat, gen, ""),

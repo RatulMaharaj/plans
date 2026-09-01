@@ -1862,6 +1862,10 @@ export default function App() {
    * its answer — only then is "nothing pending" the same as "on disk".
    */
   const flush = useCallback(async (): Promise<boolean> => {
+    // The keystrokes still inside the editor's typing debounce, first: without
+    // this a flush within ~180ms of typing saw an empty pending slot, called
+    // the buffer saved, and a rewrite went out quoting text not yet on disk.
+    htmlBridge.collect?.();
     const inFlight = flushing.current;
     if (inFlight && !(await inFlight)) return false;
     if (!pending.current) return true;

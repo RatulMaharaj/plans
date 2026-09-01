@@ -397,6 +397,18 @@ export const api = {
     invoke<null>("agent_permission", { repo, chat, requestId, option }),
 
   /**
+   * Answer one of the agent's questions. `content` is the filled form as an
+   * object against the schema the question carried; `null` means "skipped",
+   * which tells the model the user moved past it rather than aborting.
+   */
+  agentQuestion: (
+    repo: string,
+    chat: string,
+    requestId: string,
+    content: Record<string, unknown> | null,
+  ) => invoke<null>("agent_question", { repo, chat, requestId, content, cancel: false }),
+
+  /**
    * End one conversation's session. What ends a session is deleting the chat,
    * clearing it, or quitting — not moving between chats.
    */

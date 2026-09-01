@@ -296,6 +296,16 @@ export const htmlBridge: {
   /** Set by Editor: put the cursor at the end of the document and focus it. */
   focusEnd: (() => void) | null;
   /**
+   * Set by Editor: deliver any edit still sitting in the typing debounce, now.
+   *
+   * The editor reports changes on a pause, not on every key, so for up to that
+   * pause the newest keystrokes exist only inside ProseMirror. Anything about
+   * to read "the buffer" — a flush ahead of quoting the file to an agent, ⌘S —
+   * must ask for them first, or it saves the file as it was a moment ago and
+   * calls that saved.
+   */
+  collect: (() => void) | null;
+  /**
    * Set by App: focus the document the editor puts up next, once.
    *
    * A flag rather than a call, because App has nothing to call yet. Opening a
@@ -306,7 +316,15 @@ export const htmlBridge: {
    * settled. One-shot: the file opened after a created one must not inherit it.
    */
   focusNext: boolean;
-} = { request: null, apply: null, insert: null, comment: null, focusEnd: null, focusNext: false };
+} = {
+  request: null,
+  apply: null,
+  insert: null,
+  comment: null,
+  focusEnd: null,
+  collect: null,
+  focusNext: false,
+};
 
 /** Whether a fragment is one complete comment, fences and all. */
 export function isComment(value: string): boolean {

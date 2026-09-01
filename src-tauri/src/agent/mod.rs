@@ -58,6 +58,7 @@ static NEXT_GEN: AtomicU64 = AtomicU64::new(1);
 struct Live {
     ops: UnboundedSender<session::Op>,
     perms: client::Pending,
+    asks: client::Asks,
     /// Which agent this session is. Changing the setting has to end it.
     agent: String,
     /// Which session this is, among all the ones this key has had.
@@ -126,12 +127,14 @@ fn ensure(
 
     let (tx, rx) = unbounded_channel();
     let perms = client::pending();
+    let asks = client::asks();
     let gen = NEXT_GEN.fetch_add(1, Ordering::Relaxed);
     state.0.lock().unwrap().insert(
         key(repo, chat),
         Live {
             ops: tx,
             perms: perms.clone(),
+            asks: asks.clone(),
             agent: agent_id.to_string(),
             gen,
         },
@@ -148,6 +151,7 @@ fn ensure(
             resume,
             rx,
             perms,
+            asks,
         )
         .await;
         /*
@@ -234,6 +238,31 @@ pub fn agent_permission(
     Ok(())
 }
 
+/// Answer one of the agent's questions. `content` is the form's answers as an
+/// object against the schema it sent; `null` means "skipped"; `cancel` aborts
+/// the tool call outright.
+#[tauri::command]
+pub fn agent_question(
+    app: AppHandle,
+    repo: String,
+    chat: String,
+    request_id: String,
+    content: Option<serde_json::Value>,
+    cancel: Option<bool>,
+) -> R<()> {
+    let state: State<Agents> = app.state();
+    let live = state.0.lock().unwrap();
+    if let Some(l) = live.get(&key(&repo, &chat)) {
+        let payload = if cancel.unwrap_or(false) {
+            None
+        } else {
+            Some(content.unwrap_or(serde_json::Value::Null))
+        };
+        client::answer_ask(&l.asks, &request_id, payload);
+    }
+    Ok(())
+}
+
 /// End one conversation's session, if there is one.
 fn stop(app: &AppHandle, repo: &str, chat: &str) {
     let state: State<Agents> = app.state();
@@ -244,6 +273,7 @@ fn stop(app: &AppHandle, repo: &str, chat: &str) {
     let gen = live.as_ref().map(|l| l.gen).unwrap_or(0);
     if let Some(l) = live {
         client::cancel_all(&l.perms, repo, chat);
+        client::cancel_asks(&l.asks);
         let _ = l.ops.send(session::Op::Shutdown);
     }
     let _ = app.emit(
@@ -297,6 +327,7 @@ pub fn shutdown_all(app: &AppHandle) {
         }
         for ((repo, chat), l) in live.iter() {
             client::cancel_all(&l.perms, repo, chat);
+            client::cancel_asks(&l.asks);
             let _ = l.ops.send(session::Op::Shutdown);
         }
     }

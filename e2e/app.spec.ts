@@ -336,7 +336,7 @@ test("a new folder appears, and holds a file", async ({ page }) => {
     .poll(async () =>
       page.evaluate(() => Object.keys((window as any).__fake.repos[0].files)),
     )
-    .toContain("ideas/first-idea.md");
+    .toContain("ideas/First-idea.md");
 
   /*
    * And it is a plan from its first save.
@@ -346,7 +346,7 @@ test("a new folder appears, and holds a file", async ({ page }) => {
    * add one. The word is the first of the configured vocabulary.
    */
   const made = await page.evaluate(
-    () => (window as any).__fake.repos[0].files["ideas/first-idea.md"] as string,
+    () => (window as any).__fake.repos[0].files["ideas/First-idea.md"] as string,
   );
   expect(made.startsWith("---\nstatus: draft\n---\n")).toBe(true);
 });

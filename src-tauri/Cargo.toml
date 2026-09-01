@@ -24,7 +24,10 @@ ignore = "0.4.33"
 # Talking to coding agents. The protocol is an open standard with an official
 # SDK, which is the whole reason the app no longer builds one CLI's flags by
 # hand — see plans/agent-client-protocol.md.
-agent-client-protocol = "2.0.0"
+# The elicitation feature is what lets an agent ask *questions* (Claude's
+# AskUserQuestion) as structured forms rather than prose: without the client
+# capability the adapter disallows the tool entirely.
+agent-client-protocol = { version = "2.0.0", features = ["unstable_elicitation"] }
 tokio = { version = "1", features = ["rt", "macros", "sync", "process", "io-util", "time"] }
 
 # The development build wears a different icon, which on macOS is an AppKit

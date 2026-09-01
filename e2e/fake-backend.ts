@@ -425,6 +425,9 @@ export function installFakeBackend(
       state.answered.push({ requestId: String(requestId), option: (option ?? null) as string | null });
       return null;
     },
+    // The agent's questions. Recording the call is the whole job — a test
+    // reads what the app answered out of `calls`, as with permissions.
+    agent_question: () => null,
     agent_auto_allow: () => null,
     agent_stop: () => null,
     /**

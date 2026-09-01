@@ -45,13 +45,19 @@ export const BUNDLED: [string, string][] = [
   ["daily-note.md", dailyText],
 ];
 
-/** A title turned into a filename. Kept here because `{slug}` is a token. */
+/**
+ * A title turned into a filename. Kept here because `{slug}` is a token.
+ *
+ * The case the reader typed survives: "Meeting Notes" is `Meeting-Notes.md`,
+ * not `meeting-notes.md`. Lowercasing looked tidy and read as a bug — the
+ * filename silently disagreed with what was typed, on a filesystem that
+ * remembers case even when it does not distinguish it.
+ */
 export function slugOf(title: string) {
   return (
     title
       .trim()
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/[^A-Za-z0-9]+/g, "-")
       .replace(/^-|-$/g, "") || "untitled"
   );
 }
