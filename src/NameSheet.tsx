@@ -29,6 +29,10 @@ type Props = {
   onDirChange: (dir: string) => void;
   onCancel: () => void;
   onCreate: (relPath: string, title: string) => void;
+  /** A title to start from, when the thing being named already has one. */
+  initial?: string;
+  /** The verb on the button; "Create" unless told otherwise. */
+  confirm?: string;
 };
 
 export function NameSheet({
@@ -42,12 +46,15 @@ export function NameSheet({
   onDirChange,
   onCancel,
   onCreate,
+  initial,
+  confirm = "Create",
 }: Props) {
-  const [title, setTitle] = useState("");
+  const [title, setTitle] = useState(initial ?? "");
   const field = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     field.current?.focus();
+    field.current?.select();
   }, []);
 
   const name = nameOf(title);
@@ -104,9 +111,9 @@ export function NameSheet({
         />
         <p className="name-path">{title.trim() ? relPath : dir || "repository root"}</p>
         <div className="matter-foot">
-          <span>⏎ create · esc cancel</span>
+          <span>⏎ {confirm.toLowerCase()} · esc cancel</span>
           <button className="act" onClick={submit} disabled={!title.trim()}>
-            Create
+            {confirm}
           </button>
         </div>
       </div>

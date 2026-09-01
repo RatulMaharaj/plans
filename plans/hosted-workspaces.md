@@ -1,44 +1,31 @@
 ---
-status: busy
+status: done
 ---
 # Hosted Workspaces
 
-## Nothing has been implemented yet, and here is why
+## What shipped, and the three decisions that unblocked it
 
-A dispatched run picked this plan up on 2026-09-01 and put it straight back
-down without writing any code. What it hit:
+An earlier run put this plan down because its first item was another
+repository and two of its open questions decided the app's shape. Both were
+answered rather than guessed, and the plan went through as one unit:
 
-- **The first item is a different repository.** "Workspace server skeleton in
-  its own repo" is the foundation every other item stands on, and a run
-  scoped to this checkout cannot create, populate or deploy that repo. The
-  sign-in UI needs a server to authenticate against, the `WORKSPACE` buffer
-  needs a document to hold, and the e2e test needs "a local instance of the
-  server" that does not exist. So there is no app-side slice that stands on
-  its own; everything below the first checkbox is a client of something
-  unbuilt.
-- **The run could not add dependencies or run the checks.** Collab mode needs
-  `yjs`, Milkdown's collab plugin and a Tauri keychain plugin, and the run
-  environment has no network access for installs. `node_modules` was empty,
-  so `pnpm build` and `playwright test` were both unavailable. Even a small
-  change would have shipped unverified.
-- **Device flow needs a registered GitHub OAuth app.** The plan argues well
-  for device flow over a redirect, but it never says who owns the OAuth app,
-  what its client id is, or where the app reads it from. That is a decision
-  someone with the GitHub org has to make before the sign-in item is
-  buildable.
-- **Two of the open questions below block app-side work rather than
-  following it.** "Where does the server run" decides what the sign-in UI
-  points at and whether a self-hosted URL is a setting. "Is a workspace a
-  peer of a repository in the sidebar" decides where the buffer kind lands in
-  `FileTree` and how much of the tree's path machinery has to grow an
-  escape hatch. Guessing either would have produced a PR that gets reverted.
+- **The server lives in this repository**, under `server/`, as a second
+  package in the pnpm workspace. One Node process, `node:sqlite`, `ws`, and
+  the y-websocket protocol written out in a hundred lines. No native build,
+  no framework. `server/README.md` is its whole manual.
+- **A workspace is its own region of the sidebar**, under the tree, not a
+  heading inside it. The tree's machinery assumes paths on disk everywhere it
+  walks; a workspace has a name, members and a review state, and that is all
+  its row shows.
+- **The server's address is fixed in the app**, not a setting. The one
+  override is for development and the browser tests, which start a server of
+  their own and point the app at it through `localStorage`. The address is a
+  constant in `src/workspace.ts`; deploying the server is what makes it true.
 
-What would make this implementable: split it into a server plan that lives in
-the server's own repo, and an app-side plan that treats the server's URL and
-protocol as given. Answer the sidebar question, name the owner of the GitHub
-OAuth app, and confirm the implementing environment is allowed to install new
-dependencies. The design work here is good; it is the packaging into one unit
-of work that does not hold.
+What the GitHub OAuth app needs is one client id, held by the server as an
+environment variable so that changing it never means shipping a build. Until
+one is registered the server says sign-in is not configured, and the app's
+sheet says so too.
 
 A workspace is a room where a plan gets argued: a hosted markdown document
 several people edit at once, with cursors, presence, and a review gate at the
@@ -190,38 +177,40 @@ workspace list UI beyond a section in the sidebar.
   local copy of workspace docs so one can be *read* offline? Leaning yes and
   trivial (IndexedDB persistence is a y- package), but it complicates "the
   server is the truth" storytelling.
-- Where does the server run and who pays? A workspace server is the first
-  piece of this project with an operating cost. Self-hostable from day one
-  (single binary/container) even if a hosted default exists later?
+- ~~Where does the server run and who pays?~~ Decided: a hosted default,
+  fixed in the app. It is a container (`server/Dockerfile`) anyone can run,
+  but the app does not offer a field for it.
 - Does review state need to survive into the file as more than frontmatter —
   e.g. the full approval trail as an HTML comment block, in the spirit of
   everything-in-the-file? It would let the PR skill quote it.
 - Invites: by GitHub login only, or a link that grants membership on first
   sign-in? Links are how these tools actually spread; tokens-in-links is the
   tension.
-- Does the sidebar treat a workspace as a peer of a repository (a heading in
-  the tree) or as a different region? The tree's machinery assumes paths on
-  disk everywhere it walks (src/FileTree.tsx:384–392 drop spots, git marks) —
-  a workspace heading would carry almost none of it.
+- ~~Does the sidebar treat a workspace as a peer of a repository or as a
+  different region?~~ Decided: its own region, under the tree.
 
 ## Next
 
-- [ ] Workspace server skeleton in its own repo: GitHub device-flow auth,
-      SQLite, Yjs websocket relay with per-doc rooms, membership checks on
-      socket upgrade
-- [ ] Sign-in UI in the rail (top left), token in the OS keychain, account
-      chip with sign-out
-- [ ] `WORKSPACE` buffer kind riding the MEMORY rails: not in `repos`, all
-      disk-write paths refuse it, tabs and view switching work
-- [ ] Editor grows a collab mode: Yjs doc bound via Milkdown's collab plugin,
-      `initialValue`/`onChange` bypassed for this kind, cursors and presence
-      from awareness
-- [ ] Review state on the server (request, approve, request-changes; author ≠
-      approver), rendered in the status-chip vocabulary in the app
-- [ ] "Copy to repository…" through NameSheet + `writePlan`, stamping the
-      outcome into frontmatter on the way out
-- [ ] `GET /w/{id}/plan.md` behind a per-workspace bearer token, serialized
-      identically to the copy path
-- [ ] e2e against a local instance of the server: two browser contexts editing
-      one doc, cursor visible across them; author's approve rejected; copied
-      file lands in the fixture repo
+- [x] Workspace server in `server/`: GitHub device-flow auth proxied so the
+      app never holds a GitHub token, SQLite, Yjs websocket relay with
+      per-doc rooms, membership checked on socket upgrade
+- [x] Sign-in UI in the rail (top left), token in the OS keychain through
+      the `keyring` crate, account chip with sign-out
+- [x] The workspace buffer rides the MEMORY rails: repo `MEMORY`, path
+      `\0ws/<id>`, so every disk-write path already refuses it and no tab
+      for it is restored on launch
+- [x] Editor grows a collab mode: the room's Yjs doc bound via Milkdown's
+      collab plugin, `initialValue` applied as a template only to an empty
+      document, cursors and presence from awareness. `onChange` is kept —
+      it is how the serialised markdown reaches the doc's `meta` map
+- [x] Review state on the server (request, approve, changes; author ≠
+      approver enforced there), announced over the socket, rendered in the
+      status-chip vocabulary in the page head
+- [x] "Copy to repository…" through NameSheet + `createFile`, stamping
+      `status: ready` and `approved-by:` into frontmatter when approved
+- [x] `GET /w/{id}/plan.md` behind a per-workspace bearer token, answering
+      with the same `meta.markdown` the copy path reads
+- [x] e2e against a server the test starts: two browser contexts editing one
+      doc, alice's cursor visible in bob's page; alice's Approve disabled and
+      the server refusing it; the copied file lands in the fixture repo with
+      the stamp

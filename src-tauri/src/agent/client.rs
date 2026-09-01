@@ -137,10 +137,10 @@ pub async fn question(
     let response = match chosen {
         // Accept is deserialized rather than built: the content is arbitrary
         // schema-shaped JSON, and the wire type already knows how to read it.
-        Some(content) if !content.is_null() => serde_json::from_value(
-            json!({ "action": "accept", "content": content }),
-        )
-        .unwrap_or_else(|_| CreateElicitationResponse::new(ElicitationAction::Cancel)),
+        Some(content) if !content.is_null() => {
+            serde_json::from_value(json!({ "action": "accept", "content": content }))
+                .unwrap_or_else(|_| CreateElicitationResponse::new(ElicitationAction::Cancel))
+        }
         // Skipped on purpose: the model is told the user moved past the
         // question, which is not the same as aborting the tool call.
         Some(_) => CreateElicitationResponse::new(ElicitationAction::Decline),
