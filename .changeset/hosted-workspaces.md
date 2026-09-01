@@ -2,8 +2,8 @@
 "plans": minor
 ---
 
-Workspaces: a room where a plan gets argued before it is a file. Sign in with
-GitHub from the rail, make a workspace, invite people by login, and edit one
+Workspaces: a room where a plan gets argued before it is a file. Sign in
+from the rail, make a workspace, invite people by email, and edit one
 markdown document together with everyone's cursor in it. Request a review
 when it settles; someone other than you approves it, which the server
 enforces. "Copy to repository…" then writes the document into a repository

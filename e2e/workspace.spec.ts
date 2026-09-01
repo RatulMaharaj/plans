@@ -88,7 +88,7 @@ async function boot(browser: Browser, login: string): Promise<Page> {
     [installFakeBackend.toString(), REPOS, token, base] as const,
   );
   await page.goto("/");
-  await expect(page.getByTestId("account")).toHaveText(`@${login}`);
+  await expect(page.getByTestId("account")).toHaveText(login);
   (page as any).__faults = faults;
   return page;
 }
@@ -126,7 +126,7 @@ test("two people argue a plan in one room, review it, and copy it out", async ({
 
   // The invite reaches bob on his next look at the list.
   await bob.reload();
-  await expect(bob.getByTestId("account")).toHaveText("@bob");
+  await expect(bob.getByTestId("account")).toHaveText("bob");
   await bob.locator(".ws-row", { hasText: "Roadmap" }).click();
   await expect(editor(bob).locator("h1")).toHaveText("Roadmap");
 
@@ -236,7 +236,7 @@ test("a share link opens the document for someone with no account, until it is r
   expect((alice as any).__faults).toEqual([]);
 });
 
-test("signed out, the section invites you in and the sign-in sheet shows a code", async ({ browser }) => {
+test("signed out, the section invites you in and the sign-in sheet reports an unconfigured server", async ({ browser }) => {
   const ctx = await browser.newContext();
   const page = await ctx.newPage();
   await page.addInitScript(
@@ -251,9 +251,9 @@ test("signed out, the section invites you in and the sign-in sheet shows a code"
   );
   await page.goto("/");
   await expect(page.getByTestId("sign-in")).toBeVisible();
-  await expect(page.locator(".ws-hint")).toContainText("Sign in with GitHub");
+  await expect(page.locator(".ws-hint")).toContainText("Sign in");
 
-  // This server has no OAuth app, so the sheet says so rather than hanging.
+  // This server has no tenant, so the sheet says so rather than hanging.
   await page.getByTestId("sign-in").click();
   await expect(page.getByTestId("signin")).toBeVisible();
   await expect(page.locator(".signin-error")).toContainText("not configured");

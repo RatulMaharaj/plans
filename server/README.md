@@ -23,7 +23,8 @@ node server/src/index.js
 | `PORT`                 | `8787`           |                                                                                     |
 | `HOST`                 | `127.0.0.1`      | `0.0.0.0` in the container, behind whatever terminates TLS.                          |
 | `DATABASE_URL`         | —                | Postgres. Unset, the server runs an in-process Postgres (PGlite): a laptop, a test.   |
-| `GITHUB_CLIENT_ID`     | —                | The GitHub OAuth app that sign-in goes through. Without it, sign-in is off.           |
+| `AUTH0_DOMAIN`         | —                | The looped Auth0 tenant, e.g. `looped.eu.auth0.com`. Without it, sign-in is off.     |
+| `AUTH0_CLIENT_ID`      | —                | The tenant's *native* application for Plans, with the Device Code grant enabled.     |
 | `WORKSPACES_DEV_LOGIN` | —                | `1` enables `POST /auth/dev`, a session for a bare login. Tests and laptops only.     |
 
 Node 22 or newer. The database driver is `pg`; the schema is created on
@@ -58,7 +59,7 @@ What goes in the folder, per environment:
 | Secret             | dev                          | prod                         |
 | ------------------ | ---------------------------- | ---------------------------- |
 | `DATABASE_URL`     | leave unset for PGlite, or a local Postgres | the `plans_workspaces` database above |
-| `GITHUB_CLIENT_ID` | a dev OAuth app              | the real one                 |
+| `AUTH0_DOMAIN`, `AUTH0_CLIENT_ID` | the tenant and its native application for Plans | the same, or shared from `/shared` |
 
 ### The container
 
@@ -84,17 +85,24 @@ The entrypoint exchanges the identity for a token and wraps the process in
 `infisical run`; with no Infisical variables it starts unchanged, which is
 what `docker run` above does.
 
-**The GitHub OAuth app** is an ordinary one from *Settings → Developer
-settings → OAuth Apps*, with *Device flow* enabled. No callback URL matters,
-because the desktop app has nowhere for GitHub to send anyone back to; the
-app shows a code, the person types it at github.com, and this server does the
-polling. The client id is not a secret, but it lives here rather than in the
-app so that changing it does not mean shipping a build.
+**Sign-in is Auth0's device flow**, against the tenant the other looped apps
+use, so a workspace member is the identity they already have. It needs a
+*Native* application in the tenant with the *Device Code* grant enabled and
+`openid profile email` in its allowed scopes; no callback URL, because the
+desktop app has nowhere to be sent back to. The app shows a code, the
+person confirms it in a browser, and this server does the polling. What the
+tenant hands back is an ID token; the server verifies it against the
+tenant's signing keys, reads the email, and mints a session of its own. The
+client id is not a secret, but it lives here rather than in the app so that
+changing it does not mean shipping a build.
+
+People are known by email, lowercased: it is what an invite names before
+its subject has ever signed in.
 
 ## What it holds
 
-Users by GitHub login; sessions, as hashed tokens; workspaces, their members
-(by login, so an invite can precede the invitee's first sign-in), the review
+Users by email; sessions, as hashed tokens; workspaces, their members (by
+email, so an invite can precede the invitee's first sign-in), the review
 state; the read token and any share links, hashed; and each workspace's
 document as a Yjs update blob, in Postgres. The document's
 markdown is whatever the last editing client serialised, kept in the same Yjs
@@ -108,14 +116,14 @@ Every call is JSON, and every call that needs a person carries
 
 | Route                                | What it does                                                                               |
 | ------------------------------------ | ------------------------------------------------------------------------------------------ |
-| `POST /auth/device`                  | Start GitHub's device flow: a code to type, and where to type it.                            |
+| `POST /auth/device`                  | Start Auth0's device flow: a code, and the page that confirms it.                           |
 | `POST /auth/device/poll`             | `{ deviceCode }` → `{ pending: true }` until they have, then `{ token, user }`.               |
 | `POST /auth/signout`                 | End the session.                                                                             |
 | `GET /me`                            | Who the token belongs to.                                                                    |
 | `GET /workspaces`                    | The workspaces you belong to.                                                                |
 | `POST /workspaces`                   | `{ name }` → a new workspace with you in it.                                                 |
 | `GET /workspaces/:id`                | One workspace: members and review state.                                                     |
-| `POST /workspaces/:id/members`       | `{ login }` → invite by GitHub login.                                                         |
+| `POST /workspaces/:id/members`       | `{ login }` → invite by email.                                                                |
 | `POST /workspaces/:id/review`        | `{ action: request \| approve \| changes \| clear }`. The requester cannot approve.           |
 | `POST /workspaces/:id/token`         | Mint a read token for this workspace, for the factory's secrets.                             |
 | `GET /w/:id/plan.md`                 | The document as markdown — for a member's session or the workspace's read token.             |
@@ -161,5 +169,5 @@ pnpm --filter plans-workspaces test
 ```
 
 Real HTTP and a real websocket against an in-process Postgres, so the suite
-needs nothing installed. GitHub is stubbed only in the one test that is about
-the device flow.
+needs nothing installed. The tenant is stubbed only in the tests that are
+about the device flow, with a real RS256 key so verification is exercised.

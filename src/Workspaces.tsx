@@ -44,7 +44,7 @@ export function Workspaces({ account, workspaces, activeId, live, onOpen, onNew,
         <p className="ws-hint">
           A workspace is a plan argued out with others before it is a file.{" "}
           <button className="ws-link" onClick={onSignIn}>
-            Sign in with GitHub
+            Sign in
           </button>{" "}
           to open one.
         </p>
