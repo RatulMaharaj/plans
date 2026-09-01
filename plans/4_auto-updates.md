@@ -74,7 +74,7 @@ Back it up somewhere that is not the repo.
 ## The feed
 
 ```
-https://github.com/RatulMaharaj/plans/releases/latest/download/latest.json
+https://github.com/loopedautomation/plans/releases/latest/download/latest.json
 ```
 
 `tauri-action` generates `latest.json` and attaches it to the release. The

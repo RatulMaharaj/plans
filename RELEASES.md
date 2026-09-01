@@ -168,7 +168,7 @@ Check the published release actually has `latest.json`, `*.app.tar.gz` and
 draft — the feed only ever resolves to a published release.
 
 ```sh
-curl -sL https://github.com/RatulMaharaj/plans/releases/latest/download/latest.json
+curl -sL https://github.com/loopedautomation/plans/releases/latest/download/latest.json
 ```
 
 **`Signature error` when installing an update**

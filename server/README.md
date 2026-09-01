@@ -68,7 +68,7 @@ docker run --rm -p 8787:8787 plans-workspaces          # in-process database, no
 ```
 
 `.github/workflows/server-image.yml` publishes
-`ghcr.io/ratulmaharaj/plans-workspaces` on every push to `main` that touches
+`ghcr.io/loopedautomation/plans-workspaces` on every push to `main` that touches
 the server (`:main`, `:sha-…`) and on `server-vX.Y.Z` tags. Point a Coolify
 application at that image and give it the same environment the looped
 services get:
