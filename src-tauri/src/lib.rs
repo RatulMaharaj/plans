@@ -883,8 +883,7 @@ fn existing_dirs(repo: String, rel_paths: Vec<String>) -> R<Vec<String>> {
 /// launch; edits belong upstream, not here.
 #[tauri::command]
 fn sync_user_skills(skills: Vec<(String, String)>) -> R<String> {
-    let home = std::env::var("HOME").map_err(|e| e.to_string())?;
-    let root = Path::new(&home).join(".plans").join("skills");
+    let root = home_dir()?.join(".plans").join("skills");
     for (name, text) in &skills {
         // Names come from the app's own bundled table, but stay careful.
         if name.is_empty() || name.contains(['/', '\\', '.']) {
@@ -897,10 +896,18 @@ fn sync_user_skills(skills: Vec<(String, String)>) -> R<String> {
     Ok(root.display().to_string())
 }
 
+/// The user's home. `HOME` everywhere but Windows, where it is usually unset
+/// and `USERPROFILE` is the one that answers.
+fn home_dir() -> R<PathBuf> {
+    std::env::var("HOME")
+        .or_else(|_| std::env::var("USERPROFILE"))
+        .map(PathBuf::from)
+        .map_err(|_| "no home directory: neither HOME nor USERPROFILE is set".to_string())
+}
+
 /// The new-file templates: `~/.plans/templates/`, beside the skills.
 fn templates_root() -> R<PathBuf> {
-    let home = std::env::var("HOME").map_err(|e| e.to_string())?;
-    Ok(Path::new(&home).join(".plans").join("templates"))
+    Ok(home_dir()?.join(".plans").join("templates"))
 }
 
 #[derive(Serialize)]
