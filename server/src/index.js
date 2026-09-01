@@ -11,15 +11,29 @@ import { Rooms } from "./rooms.js";
 export function startServer({
   port = Number(process.env.PORT ?? 8787),
   host = process.env.HOST ?? "127.0.0.1",
-  dbPath = process.env.WORKSPACES_DB ?? "workspaces.sqlite",
+  /** Postgres; empty means an in-process one, for a laptop or a test. */
+  databaseUrl = process.env.DATABASE_URL ?? "",
   clientId = process.env.GITHUB_CLIENT_ID ?? "",
   devLogin = process.env.WORKSPACES_DEV_LOGIN === "1",
   fetchImpl = fetch,
 } = {}) {
-  const db = openDb(dbPath);
-  const auth = makeAuth({ db, clientId, devLogin, fetchImpl });
-  const rooms = new Rooms(db);
-
+  /** Resolved before `ready`; every handler awaits it through `dbReady`. */
+  let db;
+  const rooms = new Rooms();
+  const dbReady = openDb(databaseUrl).then((d) => {
+    db = d;
+    rooms.db = d;
+  });
+  const auth = makeAuth({
+    // The auth module only ever calls these after the database is up.
+    db: {
+      upsertUser: (...a) => db.upsertUser(...a),
+      createSession: (...a) => db.createSession(...a),
+    },
+    clientId,
+    devLogin,
+    fetchImpl,
+  });
   const server = createServer(async (req, res) => {
     // The app's webview is another origin — tauri://localhost, or the dev
     // server — so every answer carries the headers that let it read them.
@@ -44,17 +58,17 @@ export function startServer({
     return h.startsWith("Bearer ") ? h.slice(7).trim() : null;
   };
   /** The signed-in login, or a 401. */
-  const who = (req) => {
-    const login = db.loginFor(bearer(req));
+  const who = async (req) => {
+    const login = await db.loginFor(bearer(req));
     if (!login) throw httpError(401, "sign in first");
     return login;
   };
   /** A workspace the caller belongs to, or a 404 — never a 403, which would
    *  confirm to a stranger that the id exists. */
-  const mine = (req, id) => {
-    const login = who(req);
-    const w = db.workspace(id);
-    if (!w || !db.isMember(id, login)) throw httpError(404, "no such workspace");
+  const mine = async (req, id) => {
+    const login = await who(req);
+    const w = await db.workspace(id);
+    if (!w || !(await db.isMember(id, login))) throw httpError(404, "no such workspace");
     return { login, w };
   };
 
@@ -76,49 +90,49 @@ export function startServer({
     }
     if (req.method === "POST" && path === "/auth/dev") {
       const { login } = await body(req);
-      return json(res, 200, auth.devSession(login));
+      return json(res, 200, await auth.devSession(login));
     }
     if (req.method === "POST" && path === "/auth/signout") {
-      db.endSession(bearer(req));
+      await db.endSession(bearer(req));
       return json(res, 200, { ok: true });
     }
     if (req.method === "GET" && path === "/me") {
-      const login = who(req);
-      return json(res, 200, db.user(login));
+      const login = await who(req);
+      return json(res, 200, await db.user(login));
     }
 
     // --- workspaces --------------------------------------------------------
     if (req.method === "GET" && path === "/workspaces") {
-      return json(res, 200, db.workspacesFor(who(req)));
+      return json(res, 200, await db.workspacesFor(await who(req)));
     }
     if (req.method === "POST" && path === "/workspaces") {
-      const login = who(req);
+      const login = await who(req);
       const { name } = await body(req);
       const clean = String(name ?? "").trim().slice(0, 120);
       if (!clean) throw httpError(400, "a workspace needs a name");
-      return json(res, 201, db.createWorkspace(clean, login));
+      return json(res, 201, await db.createWorkspace(clean, login));
     }
     if ((seg = m(/^\/workspaces\/([\w-]+)$/)) && req.method === "GET") {
-      return json(res, 200, mine(req, seg[1]).w);
+      return json(res, 200, (await mine(req, seg[1])).w);
     }
     if ((seg = m(/^\/workspaces\/([\w-]+)\/members$/)) && req.method === "POST") {
-      const { w } = mine(req, seg[1]);
+      const { w } = await mine(req, seg[1]);
       const { login } = await body(req);
       if (!/^[a-z0-9-]{1,39}$/i.test(login ?? "")) throw httpError(400, "not a GitHub login");
-      db.addMember(w.id, login);
-      return json(res, 200, db.workspace(w.id));
+      await db.addMember(w.id, login);
+      return json(res, 200, await db.workspace(w.id));
     }
     if ((seg = m(/^\/workspaces\/([\w-]+)\/review$/)) && req.method === "POST") {
-      const { login, w } = mine(req, seg[1]);
+      const { login, w } = await mine(req, seg[1]);
       const { action } = await body(req);
-      const r = db.review(w.id, action, login);
+      const r = await db.review(w.id, action, login);
       if (r.error) throw httpError(r.error, r.reason);
       rooms.announceReview(w.id, r.review);
       return json(res, 200, r.review);
     }
     if ((seg = m(/^\/workspaces\/([\w-]+)\/token$/)) && req.method === "POST") {
-      const { login, w } = mine(req, seg[1]);
-      return json(res, 201, { token: db.createReadToken(w.id, login) });
+      const { login, w } = await mine(req, seg[1]);
+      return json(res, 201, { token: await db.createReadToken(w.id, login) });
     }
     if ((seg = m(/^\/w\/([\w-]+)\/plan\.md$/)) && req.method === "GET") {
       // Two doors: a member's session, or the per-workspace token that the
@@ -126,11 +140,11 @@ export function startServer({
       // URL.
       const id = seg[1];
       const t = bearer(req);
-      const viaToken = db.workspaceForReadToken(t) === id;
-      const login = viaToken ? null : db.loginFor(t);
-      if (!viaToken && !(login && db.isMember(id, login))) throw httpError(404, "no such workspace");
+      const viaToken = (await db.workspaceForReadToken(t)) === id;
+      const login = viaToken ? null : await db.loginFor(t);
+      if (!viaToken && !(login && (await db.isMember(id, login)))) throw httpError(404, "no such workspace");
       res.writeHead(200, { "Content-Type": "text/markdown; charset=utf-8" });
-      res.end(rooms.markdown(id));
+      res.end(await rooms.markdown(id));
       return;
     }
     throw httpError(404, "not found");
@@ -139,33 +153,38 @@ export function startServer({
   // --- the live document -----------------------------------------------------
   const wss = new WebSocketServer({ noServer: true });
   server.on("upgrade", (req, socket, head) => {
-    const url = new URL(req.url, "http://x");
-    const seg = url.pathname.match(/^\/ws\/([\w-]+)$/);
-    const login = db.loginFor(url.searchParams.get("token"));
-    // Membership is checked before the socket exists: a stranger gets a
-    // closed connection and nothing about the room, not even its emptiness.
-    if (!seg || !login || !db.isMember(seg[1], login)) {
-      socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n");
+    void (async () => {
+      const url = new URL(req.url, "http://x");
+      const seg = url.pathname.match(/^\/ws\/([\w-]+)$/);
+      const login = await db.loginFor(url.searchParams.get("token"));
+      // Membership is checked before the socket exists: a stranger gets a
+      // closed connection and nothing about the room, not even its emptiness.
+      if (!seg || !login || !(await db.isMember(seg[1], login))) {
+        socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n");
+        socket.destroy();
+        return;
+      }
+      const w = await db.workspace(seg[1]);
+      wss.handleUpgrade(req, socket, head, (ws) => {
+        void rooms.join(seg[1], ws, w.review);
+      });
+    })().catch((e) => {
+      console.error(e);
       socket.destroy();
-      return;
-    }
-    wss.handleUpgrade(req, socket, head, (ws) => {
-      rooms.join(seg[1], ws, db.workspace(seg[1]).review);
     });
   });
 
-  const ready = new Promise((resolve) => server.listen(port, host, () => resolve()));
-  const close = () =>
-    new Promise((resolve) => {
-      rooms.flush();
-      for (const c of wss.clients) c.terminate();
-      // Keep-alive connections would otherwise hold the process open.
-      server.closeAllConnections();
-      server.close(() => {
-        db.close();
-        resolve();
-      });
-    });
+  const ready = dbReady.then(
+    () => new Promise((resolve) => server.listen(port, host, () => resolve())),
+  );
+  const close = async () => {
+    await rooms.flush();
+    for (const c of wss.clients) c.terminate();
+    // Keep-alive connections would otherwise hold the process open.
+    server.closeAllConnections();
+    await new Promise((resolve) => server.close(resolve));
+    await db.close();
+  };
 
   return {
     ready,
@@ -173,7 +192,9 @@ export function startServer({
     get port() {
       return server.address()?.port;
     },
-    db,
+    get db() {
+      return db;
+    },
     rooms,
   };
 }

@@ -20,19 +20,25 @@ export const MSG_REVIEW = 2;
 const SAVE_AFTER_MS = 800;
 
 export class Rooms {
-  constructor(db) {
-    this.db = db;
+  constructor() {
+    /** Set by the server once the database is up; no room opens before. */
+    this.db = null;
     /** id -> { doc, awareness, conns: Set<ws>, saveTimer } */
     this.rooms = new Map();
   }
 
   /** The live document, loading it from the database on first sight. */
-  room(id) {
+  async room(id) {
     let room = this.rooms.get(id);
     if (room) return room;
     const doc = new Y.Doc();
-    const stored = this.db.loadDoc(id);
+    const stored = await this.db.loadDoc(id);
     if (stored) Y.applyUpdate(doc, stored);
+    // Two joins raced the load: the first to finish is the room.
+    if (this.rooms.has(id)) {
+      doc.destroy();
+      return this.rooms.get(id);
+    }
     const awareness = new awarenessProtocol.Awareness(doc);
     awareness.setLocalState(null);
     room = { id, doc, awareness, conns: new Set(), saveTimer: null };
@@ -46,7 +52,7 @@ export class Rooms {
       if (room.saveTimer) clearTimeout(room.saveTimer);
       room.saveTimer = setTimeout(() => {
         room.saveTimer = null;
-        this.db.saveDoc(id, Y.encodeStateAsUpdate(doc));
+        void this.db.saveDoc(id, Y.encodeStateAsUpdate(doc)).catch(logSave);
       }, SAVE_AFTER_MS);
     });
 
@@ -64,10 +70,10 @@ export class Rooms {
   }
 
   /** The markdown the clients last serialised, for the read endpoint. */
-  markdown(id) {
+  async markdown(id) {
     const room = this.rooms.get(id);
     if (room) return room.doc.getMap("meta").get("markdown") ?? "";
-    const stored = this.db.loadDoc(id);
+    const stored = await this.db.loadDoc(id);
     if (!stored) return "";
     const doc = new Y.Doc();
     Y.applyUpdate(doc, stored);
@@ -84,49 +90,29 @@ export class Rooms {
     for (const c of room.conns) send(c, msg);
   }
 
-  join(id, ws, review) {
-    const room = this.room(id);
-    room.conns.add(ws);
+  async join(id, ws, review) {
     ws.binaryType = "arraybuffer";
     /** Which awareness clients this socket spoke for, to clear on close. */
     const controlled = new Set();
-
-    ws.on("message", (data) => {
-      const bytes = new Uint8Array(data);
-      const dec = decoding.createDecoder(bytes);
-      const type = decoding.readVarUint(dec);
-      if (type === MSG_SYNC) {
-        const enc = encoding.createEncoder();
-        encoding.writeVarUint(enc, MSG_SYNC);
-        syncProtocol.readSyncMessage(dec, enc, room.doc, ws);
-        if (encoding.length(enc) > 1) send(ws, encoding.toUint8Array(enc));
-      } else if (type === MSG_AWARENESS) {
-        const update = decoding.readVarUint8Array(dec);
-        // Remember whose states arrived through this socket.
-        const peek = decoding.createDecoder(update);
-        const n = decoding.readVarUint(peek);
-        for (let i = 0; i < n; i++) {
-          controlled.add(decoding.readVarUint(peek));
-          decoding.readVarUint(peek);
-          decoding.readVarString(peek);
-        }
-        awarenessProtocol.applyAwarenessUpdate(room.awareness, update, ws);
-      }
-    });
-
+    /**
+     * Listen before the room exists. The client sends its first sync step the
+     * moment the socket opens, and loading the document from the database
+     * takes a real round trip — anything that arrived in between was lost,
+     * and a lost step one is a client that never syncs.
+     */
+    let room = null;
+    let gone = false;
+    const early = [];
+    ws.on("message", (data) => (room ? this.handle(room, ws, controlled, data) : early.push(data)));
     ws.on("close", () => {
-      room.conns.delete(ws);
-      awarenessProtocol.removeAwarenessStates(room.awareness, [...controlled], null);
-      if (room.conns.size === 0) {
-        // The last reader left: write it out now and let the memory go.
-        if (room.saveTimer) clearTimeout(room.saveTimer);
-        room.saveTimer = null;
-        this.db.saveDoc(id, Y.encodeStateAsUpdate(room.doc));
-        room.awareness.destroy();
-        room.doc.destroy();
-        this.rooms.delete(id);
-      }
+      gone = true;
+      if (room) this.leave(room, ws, controlled);
     });
+
+    room = await this.room(id);
+    if (gone) return;
+    room.conns.add(ws);
+    for (const data of early) this.handle(room, ws, controlled, data);
 
     // Open with our state vector, then everyone's presence, then the review.
     const enc = encoding.createEncoder();
@@ -146,13 +132,53 @@ export class Rooms {
     send(ws, reviewMessage(review));
   }
 
-  /** Write everything out; called on shutdown. */
-  flush() {
-    for (const room of this.rooms.values()) {
-      if (room.saveTimer) clearTimeout(room.saveTimer);
-      this.db.saveDoc(room.id, Y.encodeStateAsUpdate(room.doc));
+  handle(room, ws, controlled, data) {
+    const dec = decoding.createDecoder(new Uint8Array(data));
+    const type = decoding.readVarUint(dec);
+    if (type === MSG_SYNC) {
+      const enc = encoding.createEncoder();
+      encoding.writeVarUint(enc, MSG_SYNC);
+      syncProtocol.readSyncMessage(dec, enc, room.doc, ws);
+      if (encoding.length(enc) > 1) send(ws, encoding.toUint8Array(enc));
+    } else if (type === MSG_AWARENESS) {
+      const update = decoding.readVarUint8Array(dec);
+      // Remember whose states arrived through this socket.
+      const peek = decoding.createDecoder(update);
+      const n = decoding.readVarUint(peek);
+      for (let i = 0; i < n; i++) {
+        controlled.add(decoding.readVarUint(peek));
+        decoding.readVarUint(peek);
+        decoding.readVarString(peek);
+      }
+      awarenessProtocol.applyAwarenessUpdate(room.awareness, update, ws);
     }
   }
+
+  leave(room, ws, controlled) {
+    room.conns.delete(ws);
+    awarenessProtocol.removeAwarenessStates(room.awareness, [...controlled], null);
+    if (room.conns.size === 0) {
+      // The last reader left: write it out now and let the memory go.
+      if (room.saveTimer) clearTimeout(room.saveTimer);
+      room.saveTimer = null;
+      void this.db.saveDoc(room.id, Y.encodeStateAsUpdate(room.doc)).catch(logSave);
+      room.awareness.destroy();
+      room.doc.destroy();
+      this.rooms.delete(room.id);
+    }
+  }
+
+  /** Write everything out; called on shutdown. */
+  async flush() {
+    for (const room of this.rooms.values()) {
+      if (room.saveTimer) clearTimeout(room.saveTimer);
+      await this.db.saveDoc(room.id, Y.encodeStateAsUpdate(room.doc)).catch(logSave);
+    }
+  }
+}
+
+function logSave(e) {
+  console.error("could not save a document", e);
 }
 
 function reviewMessage(review) {

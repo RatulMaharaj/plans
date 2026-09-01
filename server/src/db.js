@@ -1,11 +1,12 @@
 /**
- * Everything the server remembers, in one SQLite file.
+ * Everything the server remembers, in Postgres.
  *
- * `node:sqlite` rather than a native module: the server is meant to be one
- * process you can run anywhere Node runs, and a build step for the database
- * driver is the first thing that would stop that being true.
+ * One database of its own on the shared looped server, reached through
+ * `DATABASE_URL`. Without that variable — a laptop, the tests — the same SQL
+ * runs against PGlite, a Postgres in the process: one dialect, one schema,
+ * and nothing to install to run the suite. The only thing the two share is
+ * `query(sql, params)`, which is all this module asks of either.
  */
-import { DatabaseSync } from "node:sqlite";
 import { randomBytes, createHash } from "node:crypto";
 
 const SCHEMA = `
@@ -17,17 +18,17 @@ const SCHEMA = `
   CREATE TABLE IF NOT EXISTS sessions (
     token_hash TEXT PRIMARY KEY,
     login TEXT NOT NULL,
-    created_at INTEGER NOT NULL
+    created_at BIGINT NOT NULL
   );
   CREATE TABLE IF NOT EXISTS workspaces (
     id TEXT PRIMARY KEY,
     name TEXT NOT NULL,
     created_by TEXT NOT NULL,
-    created_at INTEGER NOT NULL,
+    created_at BIGINT NOT NULL,
     review_state TEXT NOT NULL DEFAULT 'none',
     review_requested_by TEXT,
     review_decided_by TEXT,
-    review_at INTEGER
+    review_at BIGINT
   );
   CREATE TABLE IF NOT EXISTS members (
     workspace_id TEXT NOT NULL,
@@ -36,14 +37,14 @@ const SCHEMA = `
   );
   CREATE TABLE IF NOT EXISTS docs (
     workspace_id TEXT PRIMARY KEY,
-    state BLOB NOT NULL,
-    updated_at INTEGER NOT NULL
+    state BYTEA NOT NULL,
+    updated_at BIGINT NOT NULL
   );
   CREATE TABLE IF NOT EXISTS read_tokens (
     token_hash TEXT PRIMARY KEY,
     workspace_id TEXT NOT NULL,
     created_by TEXT NOT NULL,
-    created_at INTEGER NOT NULL
+    created_at BIGINT NOT NULL
   );
 `;
 
@@ -61,146 +62,164 @@ export function newId() {
   return randomBytes(9).toString("base64url");
 }
 
-export function openDb(path = ":memory:") {
-  const db = new DatabaseSync(path);
-  db.exec("PRAGMA journal_mode = WAL");
-  db.exec(SCHEMA);
-
-  const q = {
-    upsertUser: db.prepare(
-      `INSERT INTO users (login, name, avatar) VALUES (?, ?, ?)
-       ON CONFLICT(login) DO UPDATE SET name = excluded.name, avatar = excluded.avatar`,
-    ),
-    user: db.prepare("SELECT login, name, avatar FROM users WHERE login = ?"),
-    insertSession: db.prepare("INSERT INTO sessions (token_hash, login, created_at) VALUES (?, ?, ?)"),
-    session: db.prepare("SELECT login FROM sessions WHERE token_hash = ?"),
-    deleteSession: db.prepare("DELETE FROM sessions WHERE token_hash = ?"),
-    insertWorkspace: db.prepare(
-      "INSERT INTO workspaces (id, name, created_by, created_at) VALUES (?, ?, ?, ?)",
-    ),
-    workspace: db.prepare("SELECT * FROM workspaces WHERE id = ?"),
-    workspacesFor: db.prepare(
-      `SELECT w.* FROM workspaces w JOIN members m ON m.workspace_id = w.id
-       WHERE m.login = ? ORDER BY w.created_at DESC`,
-    ),
-    addMember: db.prepare("INSERT OR IGNORE INTO members (workspace_id, login) VALUES (?, ?)"),
-    members: db.prepare("SELECT login FROM members WHERE workspace_id = ? ORDER BY login"),
-    isMember: db.prepare("SELECT 1 FROM members WHERE workspace_id = ? AND login = ?"),
-    setReview: db.prepare(
-      `UPDATE workspaces SET review_state = ?, review_requested_by = ?, review_decided_by = ?, review_at = ?
-       WHERE id = ?`,
-    ),
-    doc: db.prepare("SELECT state FROM docs WHERE workspace_id = ?"),
-    saveDoc: db.prepare(
-      `INSERT INTO docs (workspace_id, state, updated_at) VALUES (?, ?, ?)
-       ON CONFLICT(workspace_id) DO UPDATE SET state = excluded.state, updated_at = excluded.updated_at`,
-    ),
-    insertReadToken: db.prepare(
-      "INSERT INTO read_tokens (token_hash, workspace_id, created_by, created_at) VALUES (?, ?, ?, ?)",
-    ),
-    readToken: db.prepare("SELECT workspace_id FROM read_tokens WHERE token_hash = ?"),
+/** A `query(sql, params) -> rows` over whichever Postgres is available. */
+async function connect(url) {
+  if (url) {
+    const { default: pg } = await import("pg");
+    const pool = new pg.Pool({ connectionString: url });
+    return {
+      query: async (sql, params = []) => (await pool.query(sql, params)).rows,
+      close: () => pool.end(),
+    };
+  }
+  const { PGlite } = await import("@electric-sql/pglite");
+  const lite = new PGlite();
+  await lite.waitReady;
+  return {
+    query: async (sql, params = []) => (await lite.query(sql, params)).rows,
+    close: () => lite.close(),
   };
+}
 
+export async function openDb(url = process.env.DATABASE_URL ?? "") {
+  const c = await connect(url);
+  for (const stmt of SCHEMA.split(";").map((s) => s.trim()).filter(Boolean)) await c.query(stmt);
+
+  const one = async (sql, params) => (await c.query(sql, params))[0] ?? null;
   const now = () => Date.now();
 
+  const shape = (w, members) => ({
+    id: w.id,
+    name: w.name,
+    createdBy: w.created_by,
+    createdAt: Number(w.created_at),
+    members,
+    review: {
+      state: w.review_state,
+      requestedBy: w.review_requested_by,
+      decidedBy: w.review_decided_by,
+      at: w.review_at === null ? null : Number(w.review_at),
+    },
+  });
+  const membersOf = async (id) =>
+    (await c.query("SELECT login FROM members WHERE workspace_id = $1 ORDER BY login", [id])).map(
+      (m) => m.login,
+    );
+
   return {
-    close: () => db.close(),
+    close: () => c.close(),
 
     // --- people ------------------------------------------------------------
-    upsertUser(login, name = null, avatar = null) {
-      q.upsertUser.run(login, name, avatar);
-      return q.user.get(login);
+    async upsertUser(login, name = null, avatar = null) {
+      return one(
+        `INSERT INTO users (login, name, avatar) VALUES ($1, $2, $3)
+         ON CONFLICT (login) DO UPDATE SET name = EXCLUDED.name, avatar = EXCLUDED.avatar
+         RETURNING login, name, avatar`,
+        [login, name, avatar],
+      );
     },
-    user: (login) => q.user.get(login) ?? null,
+    user: (login) => one("SELECT login, name, avatar FROM users WHERE login = $1", [login]),
     /** Mint a session for a login; the token is returned once and never stored. */
-    createSession(login) {
+    async createSession(login) {
       const token = newToken();
-      q.insertSession.run(hashToken(token), login, now());
+      await c.query("INSERT INTO sessions (token_hash, login, created_at) VALUES ($1, $2, $3)", [
+        hashToken(token),
+        login,
+        now(),
+      ]);
       return token;
     },
-    loginFor(token) {
-      return token ? (q.session.get(hashToken(token))?.login ?? null) : null;
+    async loginFor(token) {
+      if (!token) return null;
+      return (await one("SELECT login FROM sessions WHERE token_hash = $1", [hashToken(token)]))?.login ?? null;
     },
-    endSession(token) {
-      q.deleteSession.run(hashToken(token));
-    },
+    endSession: (token) =>
+      token ? c.query("DELETE FROM sessions WHERE token_hash = $1", [hashToken(token)]) : null,
 
     // --- rooms -------------------------------------------------------------
-    createWorkspace(name, login) {
+    async createWorkspace(name, login) {
       const id = newId();
-      q.insertWorkspace.run(id, name, login, now());
-      q.addMember.run(id, login);
+      await c.query(
+        "INSERT INTO workspaces (id, name, created_by, created_at) VALUES ($1, $2, $3, $4)",
+        [id, name, login, now()],
+      );
+      await this.addMember(id, login);
       return this.workspace(id);
     },
-    workspace(id) {
-      const w = q.workspace.get(id);
-      return w ? shape(w, q.members.all(id).map((m) => m.login)) : null;
+    async workspace(id) {
+      const w = await one("SELECT * FROM workspaces WHERE id = $1", [id]);
+      return w ? shape(w, await membersOf(id)) : null;
     },
-    workspacesFor(login) {
-      return q.workspacesFor.all(login).map((w) => shape(w, q.members.all(w.id).map((m) => m.login)));
+    async workspacesFor(login) {
+      const rows = await c.query(
+        `SELECT w.* FROM workspaces w JOIN members m ON m.workspace_id = w.id
+         WHERE m.login = $1 ORDER BY w.created_at DESC`,
+        [login],
+      );
+      return Promise.all(rows.map(async (w) => shape(w, await membersOf(w.id))));
     },
-    addMember(id, login) {
-      q.addMember.run(id, login);
-    },
-    isMember: (id, login) => !!q.isMember.get(id, login),
+    addMember: (id, login) =>
+      c.query("INSERT INTO members (workspace_id, login) VALUES ($1, $2) ON CONFLICT DO NOTHING", [id, login]),
+    isMember: async (id, login) =>
+      !!(await one("SELECT 1 AS ok FROM members WHERE workspace_id = $1 AND login = $2", [id, login])),
 
     // --- review ------------------------------------------------------------
     /**
      * The one rule the clients cannot be trusted with: whoever asked for the
      * review cannot be the one who grants it.
      */
-    review(id, action, login) {
-      const w = q.workspace.get(id);
+    async review(id, action, login) {
+      const w = await one("SELECT * FROM workspaces WHERE id = $1", [id]);
       if (!w) return { error: 404 };
+      const set = (state, requestedBy, decidedBy) =>
+        c.query(
+          `UPDATE workspaces SET review_state = $1, review_requested_by = $2, review_decided_by = $3, review_at = $4
+           WHERE id = $5`,
+          [state, requestedBy, decidedBy, now(), id],
+        );
       if (action === "request") {
-        q.setReview.run("requested", login, null, now(), id);
+        await set("requested", login, null);
       } else if (action === "approve" || action === "changes") {
         if (w.review_state !== "requested") return { error: 409, reason: "no review is open" };
         if (w.review_requested_by === login) {
           return { error: 403, reason: "the author cannot approve their own plan" };
         }
-        q.setReview.run(action === "approve" ? "approved" : "changes", w.review_requested_by, login, now(), id);
+        await set(action === "approve" ? "approved" : "changes", w.review_requested_by, login);
       } else if (action === "clear") {
-        q.setReview.run("none", null, null, now(), id);
+        await set("none", null, null);
       } else {
         return { error: 400, reason: `unknown action ${action}` };
       }
-      return { review: this.workspace(id).review };
+      return { review: (await this.workspace(id)).review };
     },
 
     // --- the document ------------------------------------------------------
-    loadDoc(id) {
-      const row = q.doc.get(id);
+    async loadDoc(id) {
+      const row = await one("SELECT state FROM docs WHERE workspace_id = $1", [id]);
       return row ? new Uint8Array(row.state) : null;
     },
-    saveDoc(id, state) {
-      q.saveDoc.run(id, Buffer.from(state), now());
-    },
+    saveDoc: (id, state) =>
+      c.query(
+        `INSERT INTO docs (workspace_id, state, updated_at) VALUES ($1, $2, $3)
+         ON CONFLICT (workspace_id) DO UPDATE SET state = EXCLUDED.state, updated_at = EXCLUDED.updated_at`,
+        [id, Buffer.from(state), now()],
+      ),
 
     // --- the read endpoint's key ------------------------------------------
-    createReadToken(id, login) {
+    async createReadToken(id, login) {
       const token = newToken();
-      q.insertReadToken.run(hashToken(token), id, login, now());
+      await c.query(
+        "INSERT INTO read_tokens (token_hash, workspace_id, created_by, created_at) VALUES ($1, $2, $3, $4)",
+        [hashToken(token), id, login, now()],
+      );
       return token;
     },
-    workspaceForReadToken(token) {
-      return token ? (q.readToken.get(hashToken(token))?.workspace_id ?? null) : null;
-    },
-  };
-}
-
-function shape(w, members) {
-  return {
-    id: w.id,
-    name: w.name,
-    createdBy: w.created_by,
-    createdAt: w.created_at,
-    members,
-    review: {
-      state: w.review_state,
-      requestedBy: w.review_requested_by,
-      decidedBy: w.review_decided_by,
-      at: w.review_at,
+    async workspaceForReadToken(token) {
+      if (!token) return null;
+      return (
+        (await one("SELECT workspace_id FROM read_tokens WHERE token_hash = $1", [hashToken(token)]))
+          ?.workspace_id ?? null
+      );
     },
   };
 }

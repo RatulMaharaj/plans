@@ -25,5 +25,4 @@ dist-ssr
 
 test-results/
 
-# The workspace server's database, when run from the repository
-server/*.sqlite*
+

@@ -60,8 +60,8 @@ export function makeAuth({ db, clientId, devLogin, fetchImpl = fetch }) {
       });
       if (!who.ok) throw httpError(502, `GitHub would not say who you are (${who.status})`);
       const u = await who.json();
-      const user = db.upsertUser(u.login, u.name ?? null, u.avatar_url ?? null);
-      return { token: db.createSession(u.login), user };
+      const user = await db.upsertUser(u.login, u.name ?? null, u.avatar_url ?? null);
+      return { token: await db.createSession(u.login), user };
     },
 
     /**
@@ -69,11 +69,11 @@ export function makeAuth({ db, clientId, devLogin, fetchImpl = fetch }) {
      * server was started with WORKSPACES_DEV_LOGIN=1 — it exists for tests and
      * a laptop, and a deployed server must never have it on.
      */
-    devSession(login) {
+    async devSession(login) {
       if (!devLogin) throw httpError(404, "not found");
       if (!/^[a-z0-9-]{1,39}$/i.test(login ?? "")) throw httpError(400, "not a login");
-      const user = db.upsertUser(login, login, null);
-      return { token: db.createSession(login), user };
+      const user = await db.upsertUser(login, login, null);
+      return { token: await db.createSession(login), user };
     },
   };
 }

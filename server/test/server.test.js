@@ -18,7 +18,7 @@ import { MSG_SYNC, MSG_REVIEW } from "../src/rooms.js";
 let s;
 let base;
 before(async () => {
-  s = startServer({ port: 0, dbPath: ":memory:", devLogin: true });
+  s = startServer({ port: 0, devLogin: true });
   await s.ready;
   base = `http://127.0.0.1:${s.port}`;
 });
@@ -197,7 +197,7 @@ test("plan.md answers to a member or the workspace's own token, and nobody else"
   const a = connect(id, alice);
   await Promise.all([a.open, a.synced]);
   a.doc.getMap("meta").set("markdown", "---\nstatus: ready\n---\n\n# Read\n");
-  await until(() => s.rooms.markdown(id).includes("# Read"));
+  await until(() => s.rooms.rooms.get(id)?.doc.getMap("meta").get("markdown")?.includes("# Read"));
 
   const asMember = await call(`/w/${id}/plan.md`, { token: alice });
   assert.equal(asMember.status, 200);
@@ -234,7 +234,7 @@ test("the device flow proxies GitHub and mints a session of ours", async () => {
     }
     throw new Error(`unexpected ${url}`);
   };
-  const t = startServer({ port: 0, dbPath: ":memory:", clientId: "cid", fetchImpl: fake });
+  const t = startServer({ port: 0, clientId: "cid", fetchImpl: fake });
   await t.ready;
   const b = `http://127.0.0.1:${t.port}`;
   try {

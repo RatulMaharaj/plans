@@ -18,16 +18,71 @@ moment it wants one the scope has slipped.
 node server/src/index.js
 ```
 
-| Variable               | Default             | What it is                                                                     |
-| ---------------------- | ------------------- | ------------------------------------------------------------------------------ |
-| `PORT`                 | `8787`              |                                                                                |
-| `HOST`                 | `127.0.0.1`         | Set `0.0.0.0` behind a reverse proxy that terminates TLS.                      |
-| `WORKSPACES_DB`        | `workspaces.sqlite` | The one file that is the server's state. Back this up.                          |
-| `GITHUB_CLIENT_ID`     | —                   | The GitHub OAuth app that sign-in goes through. Without it, sign-in is off.     |
-| `WORKSPACES_DEV_LOGIN` | —                   | `1` enables `POST /auth/dev`, a session for a bare login. Tests and laptops only. |
+| Variable               | Default          | What it is                                                                          |
+| ---------------------- | ---------------- | ----------------------------------------------------------------------------------- |
+| `PORT`                 | `8787`           |                                                                                     |
+| `HOST`                 | `127.0.0.1`      | `0.0.0.0` in the container, behind whatever terminates TLS.                          |
+| `DATABASE_URL`         | —                | Postgres. Unset, the server runs an in-process Postgres (PGlite): a laptop, a test.   |
+| `GITHUB_CLIENT_ID`     | —                | The GitHub OAuth app that sign-in goes through. Without it, sign-in is off.           |
+| `WORKSPACES_DEV_LOGIN` | —                | `1` enables `POST /auth/dev`, a session for a bare login. Tests and laptops only.     |
 
-Node 22.13 or newer: the database is `node:sqlite`, so there is nothing native
-to build.
+Node 22 or newer. The database driver is `pg`; the schema is created on
+start, with `IF NOT EXISTS` everywhere, so an empty database is a valid one.
+
+### The database
+
+Its own database on the looped Postgres server, not a schema in `looped`:
+nothing here joins anything of looped's, and a workspace document is a blob
+the other apps have no reason to see.
+
+```sql
+CREATE DATABASE plans_workspaces;
+CREATE USER plans_workspaces WITH PASSWORD '…';
+GRANT ALL PRIVILEGES ON DATABASE plans_workspaces TO plans_workspaces;
+```
+
+Then `DATABASE_URL=postgres://plans_workspaces:…@<looped db host>:5432/plans_workspaces`.
+
+### Secrets: Infisical
+
+The server's secrets live in the looped Infisical project, under
+`/apps/plans-workspaces` (with `/shared` merged after it, as the other apps
+do). `server/.infisical.json` names the project, so on a laptop:
+
+```sh
+pnpm --filter plans-workspaces dev      # infisical run … -- node src/index.js
+```
+
+What goes in the folder, per environment:
+
+| Secret             | dev                          | prod                         |
+| ------------------ | ---------------------------- | ---------------------------- |
+| `DATABASE_URL`     | leave unset for PGlite, or a local Postgres | the `plans_workspaces` database above |
+| `GITHUB_CLIENT_ID` | a dev OAuth app              | the real one                 |
+
+### The container
+
+```sh
+docker build -f server/Dockerfile -t plans-workspaces .
+docker run --rm -p 8787:8787 plans-workspaces          # in-process database, no sign-in
+```
+
+`.github/workflows/server-image.yml` publishes
+`ghcr.io/ratulmaharaj/plans-workspaces` on every push to `main` that touches
+the server (`:main`, `:sha-…`) and on `server-vX.Y.Z` tags. Point a Coolify
+application at that image and give it the same environment the looped
+services get:
+
+| Variable                                        | Value                                                |
+| ----------------------------------------------- | ---------------------------------------------------- |
+| `INFISICAL_CLIENT_ID`, `INFISICAL_CLIENT_SECRET` | a machine identity with read on `/apps/plans-workspaces` and `/shared` |
+| `INFISICAL_PROJECT_ID`                          | `85f068d3-bcfe-4e1e-90e0-97845cf7058c`               |
+| `INFISICAL_API_URL`                             | `https://infisical.looped.sh`                        |
+| `INFISICAL_ENV`                                 | `prod` (the default)                                 |
+
+The entrypoint exchanges the identity for a token and wraps the process in
+`infisical run`; with no Infisical variables it starts unchanged, which is
+what `docker run` above does.
 
 **The GitHub OAuth app** is an ordinary one from *Settings → Developer
 settings → OAuth Apps*, with *Device flow* enabled. No callback URL matters,
@@ -40,7 +95,7 @@ app so that changing it does not mean shipping a build.
 
 Users by GitHub login; sessions, as hashed tokens; workspaces, their members
 (by login, so an invite can precede the invitee's first sign-in), the review
-state; and each workspace's document as a Yjs update blob. The document's
+state; and each workspace's document as a Yjs update blob, in Postgres. The document's
 markdown is whatever the last editing client serialised, kept in the same Yjs
 doc under `meta.markdown`, so the read endpoint answers without needing an
 editor's schema on the server.
@@ -74,5 +129,6 @@ learns nothing, not even that the id exists.
 pnpm --filter plans-workspaces test
 ```
 
-Real HTTP and a real websocket against an in-memory database. GitHub is
-stubbed only in the one test that is about the device flow.
+Real HTTP and a real websocket against an in-process Postgres, so the suite
+needs nothing installed. GitHub is stubbed only in the one test that is about
+the device flow.

@@ -9,6 +9,6 @@ when it settles; someone other than you approves it, which the server
 enforces. "Copy to repository…" then writes the document into a repository
 as an ordinary file, stamped `status: ready` and `approved-by:` when it was
 approved, and everything downstream — agents, the factory, git — works as it
-always has. The workspace server ships in this repository under `server/`,
-one Node process with a SQLite file; the app keeps its session in the OS
-keychain, never in `settings.json`.
+always has. The workspace server ships in this repository under `server/`:
+one Node process on Postgres, as a container with its secrets from Infisical;
+the app keeps its session in the OS keychain, never in `settings.json`.
