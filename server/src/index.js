@@ -6,7 +6,7 @@ import { createServer } from "node:http";
 import { readFileSync } from "node:fs";
 import { WebSocketServer } from "ws";
 import { openDb } from "./db.js";
-import { makeAuth, httpError } from "./auth.js";
+import { makeAuth, httpError, isLogin } from "./auth.js";
 import { Rooms } from "./rooms.js";
 
 export function startServer({
@@ -14,7 +14,9 @@ export function startServer({
   host = process.env.HOST ?? "127.0.0.1",
   /** Postgres; empty means an in-process one, for a laptop or a test. */
   databaseUrl = process.env.DATABASE_URL ?? "",
-  clientId = process.env.GITHUB_CLIENT_ID ?? "",
+  /** The Auth0 tenant and the native application sign-in goes through. */
+  domain = process.env.AUTH0_DOMAIN ?? "",
+  clientId = process.env.AUTH0_CLIENT_ID ?? "",
   devLogin = process.env.WORKSPACES_DEV_LOGIN === "1",
   fetchImpl = fetch,
 } = {}) {
@@ -31,6 +33,7 @@ export function startServer({
       upsertUser: (...a) => db.upsertUser(...a),
       createSession: (...a) => db.createSession(...a),
     },
+    domain,
     clientId,
     devLogin,
     fetchImpl,
@@ -119,8 +122,8 @@ export function startServer({
     if ((seg = m(/^\/workspaces\/([\w-]+)\/members$/)) && req.method === "POST") {
       const { w } = await mine(req, seg[1]);
       const { login } = await body(req);
-      if (!/^[a-z0-9-]{1,39}$/i.test(login ?? "")) throw httpError(400, "not a GitHub login");
-      await db.addMember(w.id, login);
+      if (!isLogin(login)) throw httpError(400, "not an email");
+      await db.addMember(w.id, login.trim().toLowerCase());
       return json(res, 200, await db.workspace(w.id));
     }
     if ((seg = m(/^\/workspaces\/([\w-]+)\/review$/)) && req.method === "POST") {

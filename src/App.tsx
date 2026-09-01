@@ -2890,7 +2890,7 @@ export default function App() {
       if (!room) {
         const session = await workspaceToken();
         if (!session) return;
-        room = openRoom(ws.id, session, { name: account.login, color: colorFor(account.login) });
+        room = openRoom(ws.id, session, { name: account.name ?? account.login, color: colorFor(account.login) });
         rooms.current.set(ws.id, room);
         room.onReview((review) =>
           setWorkspaces((prev) => prev.map((w) => (w.id === ws.id ? { ...w, review } : w))),
@@ -2905,7 +2905,7 @@ export default function App() {
   /** Sign out: the session goes from the server and the keychain, and every
    *  open room closes — its socket carried that session. */
   const signOut = useCallback(async () => {
-    if (!(await confirmed(`Sign out of workspaces as @${account?.login}?`, { ok: "Sign out", kind: "info" }))) return;
+    if (!(await confirmed(`Sign out of workspaces as ${account?.login}?`, { ok: "Sign out", kind: "info" }))) return;
     for (const [id, room] of rooms.current) {
       room.close();
       rooms.current.delete(id);
@@ -2940,9 +2940,9 @@ export default function App() {
     async (id: string, login: string) => {
       setWsInviting(null);
       try {
-        const ws = await workspace.invite(id, login.replace(/^@/, "").trim());
+        const ws = await workspace.invite(id, login.trim());
         setWorkspaces((prev) => prev.map((w) => (w.id === id ? ws : w)));
-        notify(`Invited @${login.replace(/^@/, "")}`);
+        notify(`Invited ${login.trim().toLowerCase()}`);
       } catch (e) {
         notify(String(e), "error");
       }
@@ -4447,16 +4447,16 @@ export default function App() {
           <button
             className="rail-btn account"
             onClick={() => void signOut()}
-            title={`Signed in to workspaces as @${account.login} — click to sign out`}
+            title={`Signed in to workspaces as ${account.login} — click to sign out`}
             data-testid="account"
           >
-            @{account.login}
+            {account.name ?? account.login}
           </button>
         ) : (
           <button
             className="rail-btn"
             onClick={() => setSigningIn(true)}
-            title="Sign in with GitHub, for workspaces"
+            title="Sign in, for workspaces"
             data-testid="sign-in"
           >
             Sign in
@@ -4851,8 +4851,8 @@ export default function App() {
                                 className={`status-badge tone-${reviewTone(r.state)}`}
                                 title={
                                   r.state === "requested"
-                                    ? `Review requested by @${r.requestedBy}`
-                                    : `${reviewLabel(r.state)} by @${r.decidedBy}`
+                                    ? `Review requested by ${r.requestedBy}`
+                                    : `${reviewLabel(r.state)} by ${r.decidedBy}`
                                 }
                                 data-testid="review-state"
                               >
@@ -4896,7 +4896,7 @@ export default function App() {
                             <button
                               className="rail-btn"
                               onClick={() => setWsInviting(id)}
-                              title={`Members: ${ws.members.map((m) => `@${m}`).join(", ")}`}
+                              title={`Members: ${ws.members.join(", ")}`}
                             >
                               Invite
                             </button>
@@ -5396,7 +5396,7 @@ export default function App() {
             setSigningIn(false);
             setAccount(who);
             void refreshWorkspaces();
-            notify(`Signed in as @${who.login}`);
+            notify(`Signed in as ${who.login}`);
           }}
         />
       )}
@@ -5415,7 +5415,7 @@ export default function App() {
       {wsInviting && (
         <TextPrompt
           title="Invite to this workspace"
-          placeholder="GitHub login"
+          placeholder="Email address"
           note="They see it the next time they sign in."
           confirm="Invite"
           onCancel={() => setWsInviting(null)}

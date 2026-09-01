@@ -1,10 +1,10 @@
 /**
- * Signing in, GitHub's device way.
+ * Signing in, the device way.
  *
- * The app has no URL for GitHub to send anyone back to, so the exchange is a
- * code: this sheet shows it, opens the page where it is typed, and waits.
- * The server does the talking to GitHub — the app never holds a GitHub token,
- * only a session of ours, and that goes to the keychain.
+ * The app has no URL for the identity provider to send anyone back to, so
+ * the exchange is a code: this sheet shows it, opens the page that confirms
+ * it, and waits. The server does the talking to Auth0 — the app never holds
+ * a token of theirs, only a session of ours, and that goes to the keychain.
  */
 import { useEffect, useRef, useState } from "react";
 import { openUrl } from "@tauri-apps/plugin-opener";
@@ -70,20 +70,20 @@ export function SignInSheet({ onDone, onCancel }: Props) {
     <div className="matter-scrim" onMouseDown={onCancel}>
       <div className="matter-sheet signin" onMouseDown={(e) => e.stopPropagation()} data-testid="signin">
         <div className="matter-head">
-          <span className="tag">Sign in with GitHub</span>
+          <span className="tag">Sign in</span>
         </div>
         {error ? (
           <p className="signin-error">{error}</p>
         ) : !start ? (
-          <p className="ws-hint">Asking GitHub for a code…</p>
+          <p className="ws-hint">Asking for a code…</p>
         ) : (
           <>
             <p className="ws-hint">
-              Type this code at{" "}
+              Confirm this code{" "}
               <button className="ws-link" onClick={() => void openUrl(start.verificationUri)}>
-                {start.verificationUri.replace(/^https?:\/\//, "")}
+                in your browser
               </button>
-              . This sheet closes by itself once GitHub has it.
+              . This sheet closes by itself once you have.
             </p>
             <button
               className="signin-code"

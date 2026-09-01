@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@electric-sql/pglite": "^0.5.8",
+    "jose": "^6.2.10",
     "lib0": "^0.2.117",
     "pg": "^8.23.0",
     "ws": "^8.21.3",
