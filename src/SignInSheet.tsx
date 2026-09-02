@@ -6,6 +6,7 @@
  * it, and waits. The server does the talking to Auth0 — the app never holds
  * a token of theirs, only a session of ours, and that goes to the keychain.
  */
+import { track } from "./analytics";
 import { useEffect, useRef, useState } from "react";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { workspace, type Account, type DeviceStart } from "./workspace";
@@ -50,14 +51,20 @@ export function SignInSheet({ onDone, onCancel }: Props) {
             }
             if (slowDown) wait += 5000;
           } catch (e) {
-            if (!cancelled) setError(String((e as Error).message ?? e));
+            if (!cancelled) {
+              setError(String((e as Error).message ?? e));
+              track("sign_in_failed", { stage: "poll" });
+            }
             return;
           }
           timer = window.setTimeout(poll, wait);
         };
         timer = window.setTimeout(poll, wait);
       } catch (e) {
-        if (!cancelled) setError(String((e as Error).message ?? e));
+        if (!cancelled) {
+          setError(String((e as Error).message ?? e));
+          track("sign_in_failed", { stage: "start" });
+        }
       }
     })();
     return () => {

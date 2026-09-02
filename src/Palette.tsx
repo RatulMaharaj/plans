@@ -15,6 +15,7 @@ import type { ChatRef, Index as ChatIndex } from "./chats";
 import { THEMES } from "./theme";
 import { renderKeys, type KeymapEntry } from "./keys";
 import { score } from "./score";
+import { commandName, track } from "./analytics";
 import type { Template } from "./templates";
 
 export type Command = {
@@ -997,6 +998,16 @@ export function Palette(props: Props) {
     const row = rows[i];
     if (!row) return;
     onClose();
+    if (row.kind === "cmd") {
+      track("palette_command_run", {
+        command: commandName(row.key),
+        group: row.sub,
+        typed: q.length > 0,
+        position: i,
+      });
+    } else {
+      track("palette_file_opened", { typed: q.length > 0, position: i });
+    }
     row.run();
   };
 

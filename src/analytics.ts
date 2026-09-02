@@ -18,7 +18,7 @@ import posthog from "posthog-js";
 
 const KEY =
   (import.meta.env.VITE_POSTHOG_KEY as string | undefined) ??
-  "phc_zzvmaX77Jr8e7H97MYxhejaEGMGH3nZfuTTirH8PrQrf";
+  "phc_tZjU9Q32FmJUZzjwKKCXnUzuzyAbNLffne2soBgEqMGL";
 const HOST =
   (import.meta.env.VITE_POSTHOG_HOST as string | undefined) ??
   "https://us.i.posthog.com";
@@ -106,4 +106,18 @@ export function track(
 ) {
   if (!live) return;
   posthog.capture(event, props);
+}
+
+/**
+ * The command ids whose last part is someone's own thing — a chat id, a
+ * repository path, a word from their status vocabulary, an agent's name.
+ * Anything under one of these reports as the prefix alone. Every other id
+ * is a static string in this codebase, and goes as it is.
+ */
+const PERSONAL_PREFIXES = ["chat.", "repo.", "agent.use.", "skill.open.", "status.", "model.", "effort."];
+
+/** A palette command id, with the part that is not ours cut off. */
+export function commandName(id: string): string {
+  const hit = PERSONAL_PREFIXES.find((p) => id.startsWith(p));
+  return hit ? `${hit}*` : id;
 }

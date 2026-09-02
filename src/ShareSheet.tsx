@@ -8,6 +8,7 @@
  * management page: you mint one, and the thing that undoes it is right there.
  * The reasoning is in plans/sharable-links.md.
  */
+import { track } from "./analytics";
 import { useEffect, useRef, useState } from "react";
 import { workspace, type ShareLink } from "./workspace";
 
@@ -69,6 +70,7 @@ export function ShareSheet({ id, name, notify, onClose }: Props) {
     try {
       const link = await workspace.share.mint(id);
       const url = workspace.shareUrl(link.token);
+      track("share_link_created");
       setMinted(url);
       setLinks((prev) => [
         { id: link.id, createdBy: link.createdBy, createdAt: link.createdAt, expiresAt: link.expiresAt },

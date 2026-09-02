@@ -9,6 +9,7 @@
  * Nothing else changes — no selection, or a clipboard that isn't a link, falls
  * through to the normal paste.
  */
+import { track } from "./analytics";
 import { $prose } from "@milkdown/utils";
 import { linkSchema } from "@milkdown/preset-commonmark";
 import { Plugin, PluginKey } from "@milkdown/kit/prose/state";
@@ -60,6 +61,7 @@ export const pasteLink = $prose((ctx) => {
 
         const link = linkSchema.type(ctx);
         dispatch(state.tr.addMark(from, to, link.create({ href: hrefFor(text) })).scrollIntoView());
+        track("link_pasted");
       };
 
       view.dom.addEventListener("paste", onPaste, true);
