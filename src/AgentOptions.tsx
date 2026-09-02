@@ -12,6 +12,7 @@
  * silently dropped it. What an agent offers is the agent's business; the app's
  * business is to show it.
  */
+import { track } from "./analytics";
 import { api, type ConfigOption } from "./api";
 import { Dropdown } from "./Dropdown";
 
@@ -75,7 +76,10 @@ export function AgentOptions({
           ariaLabel={o.name}
           value={o.currentValue}
           disabled={busy}
-          onChange={(v) => void api.agentSetConfig(repo, chat, o.id, v).catch(() => {})}
+          onChange={(v) => {
+            track("agent_option_changed", { option: o.id });
+            void api.agentSetConfig(repo, chat, o.id, v).catch(() => {});
+          }}
           choices={(o.category === "thought_level" ? [...o.options].sort(byEffort) : o.options).map(
             (c) => ({ value: c.value, label: c.name, note: c.description }),
           )}

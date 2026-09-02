@@ -18,7 +18,7 @@ import posthog from "posthog-js";
 
 const KEY =
   (import.meta.env.VITE_POSTHOG_KEY as string | undefined) ??
-  "phc_zzvmaX77Jr8e7H97MYxhejaEGMGH3nZfuTTirH8PrQrf";
+  "phc_tZjU9Q32FmJUZzjwKKCXnUzuzyAbNLffne2soBgEqMGL";
 const HOST =
   (import.meta.env.VITE_POSTHOG_HOST as string | undefined) ??
   "https://us.i.posthog.com";
@@ -106,4 +106,16 @@ export function track(
 ) {
   if (!live) return;
   posthog.capture(event, props);
+}
+
+/**
+ * A palette command id with anything that names a person's things cut off.
+ * Ids are `group.action` or `group.action.<thing>`, where the thing is a chat
+ * id, a repository path, a status word from someone's own vocabulary — all
+ * of which stay here. Two dotted segments is the shape of every static id.
+ */
+export function commandName(id: string): string {
+  const [group, action] = id.split(".");
+  if (!action || !/^[a-zA-Z]+$/.test(action)) return `${group}.*`;
+  return id.split(".").length === 2 ? id : `${group}.${action}.*`;
 }

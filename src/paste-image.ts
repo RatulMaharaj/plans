@@ -10,6 +10,7 @@
  * Caught in the capture phase for the same reason as the link paste: Crepe's
  * own handling runs first otherwise.
  */
+import { track } from "./analytics";
 import { $prose } from "@milkdown/utils";
 import { imageSchema } from "@milkdown/preset-commonmark";
 import { Plugin, PluginKey } from "@milkdown/kit/prose/state";
@@ -51,6 +52,7 @@ async function insert(view: { state: any; dispatch: (tr: any) => void }, ctx: an
   const node = image.create({ src, alt: "" });
   const { state, dispatch } = view;
   dispatch(state.tr.replaceSelectionWith(node, false).scrollIntoView());
+  track("image_pasted", { bytes: file.size });
 }
 
 export const pasteImage = $prose((ctx) => {

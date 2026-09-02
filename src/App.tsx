@@ -59,6 +59,7 @@ import {
   renderName,
   slugOf,
   type Template,
+  BUNDLED,
 } from "./templates";
 import {
   colorFor,
@@ -912,6 +913,7 @@ export default function App() {
     setProgress(0);
     try {
       await installUpdate(update, setProgress);
+      track("update_installed");
     } catch (e) {
       setInstalling(false);
       setProgress(null);
@@ -2163,6 +2165,22 @@ export default function App() {
        * be read back to know the answer: the value was just typed here.
        */
       const status = matterValue(next ?? "", "status") || null;
+      const before = matterValue(lastMatter.current ?? "", "status") || null;
+      lastMatter.current = next;
+      if (status !== before) {
+        // The vocabulary is the user's own, so the word stays here: report
+        // its place in the configured list, and whether it means finished.
+        const choice = settings.statuses
+          .split(",")
+          .map((c) => c.trim().toLowerCase())
+          .indexOf((status ?? "").toLowerCase());
+        track("plan_status_changed", {
+          cleared: status === null,
+          done: isDone(status),
+          choice,
+          fromDone: isDone(before),
+        });
+      }
       setFilesByRepo((prev) => {
         const files = prev[activeRepoPath];
         if (!files) return prev;
@@ -2185,8 +2203,13 @@ export default function App() {
         );
       }
     },
-    [activeRepoPath, activePath, content, flush, settings.autosave, settings.autosaveDelay],
+    [activeRepoPath, activePath, content, flush, settings.autosave, settings.autosaveDelay, settings.statuses],
   );
+  /** The block as last written through here, so a status edit can be told from a re-save. */
+  const lastMatter = useRef<string | null>(null);
+  useEffect(() => {
+    lastMatter.current = matter;
+  }, [matter, activePath, activeRepoPath]);
 
   /**
    * The order the tree puts files in, when it is ordered by status at all.
@@ -2234,6 +2257,7 @@ export default function App() {
     (key: "model" | "effort", value: string | null) => {
       const next = setMatterValue(matter ?? "", key, value);
       onMatterChange(next.trim().length ? next : null);
+      track("plan_routing_changed", { key, cleared: value === null });
     },
     [matter, onMatterChange],
   );
@@ -2906,6 +2930,7 @@ export default function App() {
     async (ws: Workspace) => {
       if (!account) return;
       let room = rooms.current.get(ws.id);
+      track("workspace_opened", { fresh: !room, workspaces: workspaces.length });
       if (!room) {
         const session = await workspaceToken();
         if (!session) return;
@@ -2918,7 +2943,7 @@ export default function App() {
       }
       await openMemory(`${WS_PREFIX}${ws.id}`, `# ${ws.name}\n`);
     },
-    [account, openMemory],
+    [account, openMemory, workspaces.length],
   );
 
   /** Sign out: the session goes from the server and the keychain, and every
@@ -2930,6 +2955,7 @@ export default function App() {
       rooms.current.delete(id);
     }
     await workspace.signOut();
+    track("signed_out");
     setAccount(null);
     setWorkspaces([]);
     setTabs((prev) => prev.filter((t) => !wsIdOf(t.path)));
@@ -2946,13 +2972,14 @@ export default function App() {
       setWsNaming(false);
       try {
         const ws = await workspace.create(name);
+        track("workspace_created", { workspaces: workspaces.length + 1 });
         setWorkspaces((prev) => [ws, ...prev]);
         await openWorkspace(ws);
       } catch (e) {
         notify(String(e), "error");
       }
     },
-    [openWorkspace, notify],
+    [openWorkspace, notify, workspaces.length],
   );
 
   const inviteTo = useCallback(
@@ -2961,6 +2988,7 @@ export default function App() {
       try {
         const ws = await workspace.invite(id, login.trim());
         setWorkspaces((prev) => prev.map((w) => (w.id === id ? ws : w)));
+        track("workspace_invited");
         notify(`Invited ${login.trim().toLowerCase()}`);
       } catch (e) {
         notify(String(e), "error");
@@ -2974,6 +3002,7 @@ export default function App() {
     async (id: string, action: "request" | "approve" | "changes" | "clear") => {
       try {
         const review = await workspace.review(id, action);
+        track("workspace_review", { action });
         setWorkspaces((prev) => prev.map((w) => (w.id === id ? { ...w, review } : w)));
       } catch (e) {
         notify(String(e), "error");
@@ -3489,6 +3518,11 @@ export default function App() {
       setNaming(null);
       try {
         await api.createFile(repoPath, relPath, renderContent(template, vars(title)));
+        track("plan_created", {
+          bundled: BUNDLED.some(([f]) => f === template.file),
+          prompted: template.prompt,
+          inFolder: relPath.includes("/"),
+        });
         // Where this landed is where the next one starts.
         localStorage.setItem(
           `plans.newPlanDir::${repoPath}`,
@@ -3794,6 +3828,7 @@ export default function App() {
       const to = dir ? `${dir}/${name}` : name;
       if (to === from) return;
 
+      track("plan_moved", { toDone: inDoneFolder(to), fromDone: inDoneFolder(from), toRoot: !dir });
       fileAction(repoPath, "Moved", async () => {
         await api.renamePlan(repoPath, from, to);
         await refreshFiles();
@@ -3880,9 +3915,17 @@ export default function App() {
   const onRun = useCallback(
     (label: string, fn: () => Promise<unknown>) => {
       setBusy(label);
+      // "On <branch>" carries a name; every other label is a word of ours.
+      const command = label.startsWith("On ") ? "branch" : label.toLowerCase();
       fn()
-        .then(() => notify(label))
-        .catch((e) => notify(String(e), "error"))
+        .then(() => {
+          notify(label);
+          track("git_command_run", { command, ok: true });
+        })
+        .catch((e) => {
+          notify(String(e), "error");
+          track("git_command_run", { command, ok: false });
+        })
         .finally(async () => {
           setBusy(null);
           setEpoch((n) => n + 1);
@@ -4044,6 +4087,7 @@ export default function App() {
     const target = document.activeElement as HTMLElement | null;
     const fromComposer = !!target?.closest(".chat");
     if (!fromComposer) findReturn.current = target;
+    track("find_opened", { fromComposer });
     setFind((f) => ({
       query: f?.query ?? "",
       focusSeq: fromComposer ? (f?.focusSeq ?? 0) : (f?.focusSeq ?? 0) + 1,
@@ -4722,14 +4766,16 @@ export default function App() {
               onInstallSkill={(path) =>
                 void installConventions(path, agentPaths.current)
                   .then(
-                    (r) =>
+                    (r) => {
+                      track("skill_installed", { result: r });
                       notify(
                         r === "current"
                           ? "Conventions already up to date"
                           : r === "installed"
                             ? "Conventions installed"
                             : "Conventions updated — review them in the git panel",
-                      ),
+                      );
+                    },
                     (e: unknown) => notify(String(e), "error"),
                   )
                   .finally(() => void readInstalls())
@@ -5414,6 +5460,7 @@ export default function App() {
           onDone={(who) => {
             setSigningIn(false);
             setAccount(who);
+            track("sign_in_completed");
             void refreshWorkspaces();
             notify(`Signed in as ${who.login}`);
           }}
@@ -5667,7 +5714,10 @@ export default function App() {
         <ShortcutSheet
           overrides={settings.keyOverrides}
           preset={settings.keyPreset}
-          onOverrides={(next) => set({ keyOverrides: next })}
+          onOverrides={(next) => {
+            track("shortcut_customised", { overrides: Object.keys(next).length });
+            set({ keyOverrides: next });
+          }}
           onClose={() => setShortcuts(false)}
         />
       )}
