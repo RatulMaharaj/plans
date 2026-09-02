@@ -1,5 +1,5 @@
 ---
-status: draft
+status: ready
 ---
 # A workspace is a folder of files
 
@@ -14,10 +14,11 @@ status: draft
 > with a git repo (or s3 bucket) or just our database. I'm not sure, but I
 > need fast and realtime.
 
-The first of three plans. This one makes a workspace a tree of files that
-everyone edits live. `workspace-mirror.md` puts that tree on a git branch so
-agents can reach it; `workspace-agents-and-sharing.md` wires the factory,
-the read endpoint and share links to files rather than to a workspace.
+The first half of one feature: this makes a workspace a tree of files that
+everyone edits live, and `2_files-not-workspaces.md` re-points the read
+endpoint and share links at files and retires the review gate. Mirroring
+the tree to a git branch is `../workspace-mirror.md`, a draft left for
+later; nothing here depends on it.
 
 ## Problem
 
@@ -78,9 +79,9 @@ Everything stays on Yjs; nothing new is deployed.
 
 ## Out of scope
 
-Mirroring to git, share links and the read endpoint per file, and the
-factory: the two plans after this one. The review gate is retired in the
-third plan, not here.
+Mirroring to git (`../workspace-mirror.md`, later). Share links and the
+read endpoint per file, and the review gate, are the second half of this
+folder.
 
 ## Open questions
 

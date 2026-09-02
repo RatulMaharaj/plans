@@ -3,7 +3,7 @@ status: draft
 ---
 # A workspace mirrors to a git branch
 
-The second of three plans, after `workspace-tree.md`. A workspace's truth is
+Left as a draft for now. After `workspace-folders/`. A workspace's truth is
 the database; this puts a copy of it on a git branch, continuously, so that
 everything that works from a checkout - the factory, a local agent, a
 reviewer with a terminal - can reach it.
@@ -57,8 +57,8 @@ is built on.
 
 ## Out of scope
 
-Dispatching the factory from the mirror and anything about who is allowed
-to flip a plan to `ready` from where: `workspace-agents-and-sharing.md`.
+Dispatching the factory from the mirror, and who may flip a plan to `ready`
+from where: a plan of its own once this exists.
 
 ## Open questions
 
