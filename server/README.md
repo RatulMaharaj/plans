@@ -52,7 +52,7 @@ Then `DATABASE_URL=postgres://plans_workspaces:…@<looped db host>:5432/plans_w
 ### Secrets: Infisical
 
 The server's secrets live in the looped Infisical project, under
-`/apps/plans-workspaces` (with `/shared` merged after it, as the other apps
+`/apps/plans` (with `/shared` merged after it, as the other apps
 do). `server/.infisical.json` names the project, so on a laptop:
 
 ```sh
@@ -81,7 +81,7 @@ services get:
 
 | Variable                                        | Value                                                |
 | ----------------------------------------------- | ---------------------------------------------------- |
-| `INFISICAL_CLIENT_ID`, `INFISICAL_CLIENT_SECRET` | a machine identity with read on `/apps/plans-workspaces` and `/shared` |
+| `INFISICAL_CLIENT_ID`, `INFISICAL_CLIENT_SECRET` | a machine identity with read on `/apps/plans` and `/shared` |
 | `INFISICAL_PROJECT_ID`                          | `85f068d3-bcfe-4e1e-90e0-97845cf7058c`               |
 | `INFISICAL_API_URL`                             | `https://infisical.looped.sh`                        |
 | `INFISICAL_ENV`                                 | `prod` (the default)                                 |

@@ -12,7 +12,7 @@
 #   INFISICAL_PROJECT_ID    the Infisical project (required to inject)
 #   INFISICAL_ENV           environment slug (default: prod)
 #   INFISICAL_SECRETS_PATH  space-separated folder paths, app path first
-#                           (default: /apps/plans-workspaces /shared)
+#                           (default: /apps/plans /shared)
 #   INFISICAL_API_URL       the self-hosted instance, read by the CLI itself
 #
 # With no credentials the command runs unchanged, so a plain `docker run`
@@ -29,7 +29,7 @@ fi
 
 if [ -n "$INFISICAL_TOKEN" ]; then
   path_flags=""
-  for path in ${INFISICAL_SECRETS_PATH:-/apps/plans-workspaces /shared}; do
+  for path in ${INFISICAL_SECRETS_PATH:-/apps/plans /shared}; do
     path_flags="$path_flags --path=$path"
   done
   # shellcheck disable=SC2086
