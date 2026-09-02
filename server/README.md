@@ -32,8 +32,18 @@ The app learns where this server is at build time, from `VITE_WORKSPACE_URL`
 A build made without it shows no workspaces at all. On a laptop, point a dev
 build at a local server with `VITE_WORKSPACE_URL=http://localhost:8787 pnpm dev`.
 
-Node 22 or newer. The database driver is `pg`; the schema is created on
-start, with `IF NOT EXISTS` everywhere, so an empty database is a valid one.
+Node 22 or newer. The database driver is `pg`. The tables are drizzle's:
+`src/schema.js` is their shape, `drizzle/` holds the SQL that drizzle-kit
+generated from it, and the server applies that folder on start — under an
+advisory lock, so two replicas starting together take turns — before it
+listens. The ledger is `drizzle.plans_migrations`, the looped apps' shape.
+An empty database is a valid one.
+
+To change a table: edit `src/schema.js`, run
+`pnpm --filter plans-workspaces db:generate`, and commit the new file under
+`drizzle/`. Never edit a generated file, and never edit the schema without
+generating: the ledger records what has been applied, and a hand-made change
+is one it does not know about.
 
 ### The database
 

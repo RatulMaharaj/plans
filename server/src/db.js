@@ -6,56 +6,14 @@
  * runs against PGlite, a Postgres in the process: one dialect, one schema,
  * and nothing to install to run the suite. The only thing the two share is
  * `query(sql, params)`, which is all this module asks of either.
+ *
+ * The shape of the tables is `schema.js`, and the SQL that builds them is
+ * generated from it into `../drizzle/` and applied on open (migrate.js).
+ * Nothing here creates a table.
  */
 import { randomBytes, createHash } from "node:crypto";
 
-const SCHEMA = `
-  CREATE TABLE IF NOT EXISTS users (
-    login TEXT PRIMARY KEY,
-    name TEXT,
-    avatar TEXT
-  );
-  CREATE TABLE IF NOT EXISTS sessions (
-    token_hash TEXT PRIMARY KEY,
-    login TEXT NOT NULL,
-    created_at BIGINT NOT NULL
-  );
-  CREATE TABLE IF NOT EXISTS workspaces (
-    id TEXT PRIMARY KEY,
-    name TEXT NOT NULL,
-    created_by TEXT NOT NULL,
-    created_at BIGINT NOT NULL,
-    review_state TEXT NOT NULL DEFAULT 'none',
-    review_requested_by TEXT,
-    review_decided_by TEXT,
-    review_at BIGINT
-  );
-  CREATE TABLE IF NOT EXISTS members (
-    workspace_id TEXT NOT NULL,
-    login TEXT NOT NULL,
-    PRIMARY KEY (workspace_id, login)
-  );
-  CREATE TABLE IF NOT EXISTS docs (
-    workspace_id TEXT PRIMARY KEY,
-    state BYTEA NOT NULL,
-    updated_at BIGINT NOT NULL
-  );
-  CREATE TABLE IF NOT EXISTS read_tokens (
-    token_hash TEXT PRIMARY KEY,
-    workspace_id TEXT NOT NULL,
-    created_by TEXT NOT NULL,
-    created_at BIGINT NOT NULL
-  );
-  CREATE TABLE IF NOT EXISTS share_tokens (
-    id TEXT PRIMARY KEY,
-    token_hash TEXT NOT NULL UNIQUE,
-    workspace_id TEXT NOT NULL,
-    created_by TEXT NOT NULL,
-    created_at BIGINT NOT NULL,
-    expires_at BIGINT NOT NULL,
-    revoked_at BIGINT
-  );
-`;
+import { migratePg, migratePglite } from "./migrate.js";
 
 /**
  * How long a share link lives without anyone thinking about it.
@@ -80,11 +38,12 @@ export function newId() {
   return randomBytes(9).toString("base64url");
 }
 
-/** A `query(sql, params) -> rows` over whichever Postgres is available. */
+/** A migrated `query(sql, params) -> rows` over whichever Postgres is available. */
 async function connect(url) {
   if (url) {
     const { default: pg } = await import("pg");
     const pool = new pg.Pool({ connectionString: url });
+    await migratePg(pool);
     return {
       query: async (sql, params = []) => (await pool.query(sql, params)).rows,
       close: () => pool.end(),
@@ -93,6 +52,7 @@ async function connect(url) {
   const { PGlite } = await import("@electric-sql/pglite");
   const lite = new PGlite();
   await lite.waitReady;
+  await migratePglite(lite);
   return {
     query: async (sql, params = []) => (await lite.query(sql, params)).rows,
     close: () => lite.close(),
@@ -101,7 +61,6 @@ async function connect(url) {
 
 export async function openDb(url = process.env.DATABASE_URL ?? "") {
   const c = await connect(url);
-  for (const stmt of SCHEMA.split(";").map((s) => s.trim()).filter(Boolean)) await c.query(stmt);
 
   const one = async (sql, params) => (await c.query(sql, params))[0] ?? null;
   const now = () => Date.now();

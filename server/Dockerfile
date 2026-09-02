@@ -33,6 +33,7 @@ COPY --chown=plans:nodejs --from=deps /app/node_modules ./node_modules
 COPY --chown=plans:nodejs --from=deps /app/server/node_modules ./server/node_modules
 COPY --chown=plans:nodejs server/package.json ./server/
 COPY --chown=plans:nodejs server/src ./server/src
+COPY --chown=plans:nodejs server/drizzle ./server/drizzle
 COPY --chown=plans:nodejs server/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 USER plans
