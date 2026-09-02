@@ -42,17 +42,16 @@ nothing here joins anything of looped's, and a workspace document is a blob
 the other apps have no reason to see.
 
 ```sql
-CREATE DATABASE plans_workspaces;
-CREATE USER plans_workspaces WITH PASSWORD '…';
-GRANT ALL PRIVILEGES ON DATABASE plans_workspaces TO plans_workspaces;
+CREATE DATABASE plans OWNER <the role the other looped apps connect as>;
 ```
 
-Then `DATABASE_URL=postgres://plans_workspaces:…@<looped db host>:5432/plans_workspaces`.
+Then `DATABASE_URL` is the looped connection string with `/plans` as the
+database. The tables are created on first start.
 
 ### Secrets: Infisical
 
 The server's secrets live in the looped Infisical project, under
-`/apps/plans-workspaces` (with `/shared` merged after it, as the other apps
+`/apps/plans` (with `/shared` merged after it, as the other apps
 do). `server/.infisical.json` names the project, so on a laptop:
 
 ```sh
@@ -63,7 +62,7 @@ What goes in the folder, per environment:
 
 | Secret             | dev                          | prod                         |
 | ------------------ | ---------------------------- | ---------------------------- |
-| `DATABASE_URL`     | leave unset for PGlite, or a local Postgres | the `plans_workspaces` database above |
+| `DATABASE_URL`     | leave unset for PGlite, or a local Postgres | the `plans` database above |
 | `AUTH0_DOMAIN`, `AUTH0_CLIENT_ID` | the tenant and its native application for Plans | the same, or shared from `/shared` |
 
 ### The container
@@ -81,7 +80,7 @@ services get:
 
 | Variable                                        | Value                                                |
 | ----------------------------------------------- | ---------------------------------------------------- |
-| `INFISICAL_CLIENT_ID`, `INFISICAL_CLIENT_SECRET` | a machine identity with read on `/apps/plans-workspaces` and `/shared` |
+| `INFISICAL_CLIENT_ID`, `INFISICAL_CLIENT_SECRET` | a machine identity with read on `/apps/plans` and `/shared` |
 | `INFISICAL_PROJECT_ID`                          | `85f068d3-bcfe-4e1e-90e0-97845cf7058c`               |
 | `INFISICAL_API_URL`                             | `https://infisical.looped.sh`                        |
 | `INFISICAL_ENV`                                 | `prod` (the default)                                 |
