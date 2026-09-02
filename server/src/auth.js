@@ -37,7 +37,7 @@ export function makeAuth({ db, domain, clientId, devLogin, fetchImpl = fetch }) 
     async startDevice() {
       configured();
       const res = await form({ client_id: clientId, scope: "openid profile email" });
-      if (!res.ok) throw httpError(502, `Auth0 answered ${res.status}`);
+      if (!res.ok) throw httpError(502, `Auth0 answered ${res.status}: ${await said(res)}`);
       const j = await res.json();
       return {
         deviceCode: j.device_code,
@@ -61,7 +61,7 @@ export function makeAuth({ db, domain, clientId, devLogin, fetchImpl = fetch }) 
         device_code: deviceCode,
         client_id: clientId,
       });
-      const j = await res.json();
+      const j = await res.json().catch(async () => ({ error: `Auth0 answered ${res.status}: ${await said(res)}` }));
       if (j.error) {
         if (j.error === "authorization_pending" || j.error === "slow_down") {
           return { pending: true, slowDown: j.error === "slow_down" };
@@ -108,6 +108,21 @@ function loginOf(claims) {
 /** An email, or — for the dev path and tests — a plain word. */
 export function isLogin(s) {
   return typeof s === "string" && /^[a-z0-9._+-]+(@[a-z0-9.-]+\.[a-z]{2,})?$/i.test(s) && s.length <= 254;
+}
+
+/**
+ * What a refusing upstream actually said, trimmed to a line. Auth0's own
+ * errors are JSON with a description; a proxy in front of it may answer with
+ * a page, whose first words still say who refused and why.
+ */
+async function said(res) {
+  const text = (await res.text().catch(() => "")).replace(/\s+/g, " ").trim();
+  try {
+    const j = JSON.parse(text);
+    return j.error_description ?? j.error ?? text.slice(0, 200);
+  } catch {
+    return text.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim().slice(0, 200);
+  }
 }
 
 export function httpError(status, message) {
