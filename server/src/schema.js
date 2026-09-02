@@ -8,7 +8,7 @@
  * there are a dozen of them and every one is plainer written out.
  */
 import { sql } from "drizzle-orm";
-import { pgTable, text, bigint, primaryKey, customType , uniqueIndex } from "drizzle-orm/pg-core";
+import { pgTable, text, bigint, primaryKey, customType , uniqueIndex, index } from "drizzle-orm/pg-core";
 
 /** `bytea`, which pg-core does not ship. The Yjs document is one of these. */
 const bytea = customType({ dataType: () => "bytea" });
@@ -30,10 +30,6 @@ export const workspaces = pgTable("workspaces", {
   name: text("name").notNull(),
   createdBy: text("created_by").notNull(),
   createdAt: bigint("created_at", { mode: "number" }).notNull(),
-  reviewState: text("review_state").notNull().default("none"),
-  reviewRequestedBy: text("review_requested_by"),
-  reviewDecidedBy: text("review_decided_by"),
-  reviewAt: bigint("review_at", { mode: "number" }),
 });
 
 export const members = pgTable(
@@ -45,11 +41,23 @@ export const members = pgTable(
   (t) => [primaryKey({ columns: [t.workspaceId, t.login] })],
 );
 
-export const docs = pgTable("docs", {
-  workspaceId: text("workspace_id").primaryKey(),
-  state: bytea("state").notNull(),
-  updatedAt: bigint("updated_at", { mode: "number" }).notNull(),
-});
+/**
+ * One row per Yjs document: a workspace's tree, and each file in it. The
+ * tree's id is the workspace's own; a file's is minted by whoever created it.
+ * `kind` says which; `workspace_id` says whose, which is what authorises a
+ * socket into the room.
+ */
+export const docs = pgTable(
+  "docs",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id").notNull(),
+    kind: text("kind").notNull().default("file"),
+    state: bytea("state").notNull(),
+    updatedAt: bigint("updated_at", { mode: "number" }).notNull(),
+  },
+  (t) => [index("docs_by_workspace").on(t.workspaceId)],
+);
 
 export const readTokens = pgTable("read_tokens", {
   tokenHash: text("token_hash").primaryKey(),
@@ -83,7 +91,7 @@ export const pages = pgTable("pages", {
   // One live page per workspace, held by the database rather than by a
   // check-then-insert: two members pressing Share together must get the
   // same URL, and only a constraint can promise that.
-  uniqueIndex("pages_live_workspace").on(t.workspaceId).where(sql`revoked_at IS NULL AND workspace_id IS NOT NULL`),
+  uniqueIndex("pages_live_workspace").on(t.workspaceId, t.path).where(sql`revoked_at IS NULL AND workspace_id IS NOT NULL`),
 ]);
 
 export const shareTokens = pgTable("share_tokens", {
@@ -94,4 +102,6 @@ export const shareTokens = pgTable("share_tokens", {
   createdAt: bigint("created_at", { mode: "number" }).notNull(),
   expiresAt: bigint("expires_at", { mode: "number" }).notNull(),
   revokedAt: bigint("revoked_at", { mode: "number" }),
+  /** The file a link minted after folders names; older links mean `plan.md`. */
+  path: text("path"),
 });

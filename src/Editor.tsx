@@ -591,7 +591,7 @@ export function Editor({
               // shared document has settled, its markdown is published if the
               // room does not already carry it. Every client computes the same
               // string, so a second writer changes nothing.
-              window.setTimeout(() => {
+              const publish = () => {
                 if (disposed) return;
                 try {
                   const md = crepe.getMarkdown();
@@ -600,7 +600,13 @@ export function Editor({
                 } catch (e) {
                   trace("template publish failed", { error: String(e) });
                 }
-              }, 300);
+              };
+              // Now, because the template lands on connect and this editor
+              // may be gone before any timer fires — a file created and left
+              // in the same breath; and again after a beat, for the case
+              // where the shared document arrived a moment later.
+              publish();
+              window.setTimeout(publish, 300);
             } catch (e) {
               trace("collab connect failed", { error: String(e) });
             }
@@ -752,6 +758,10 @@ export function Editor({
     imageContext.repo = repo;
     imageContext.relPath = relPath;
     imageContext.folder = imageFolder;
+    // A shared document is never swapped: the room is the document, and a
+    // new key here is only its path changing under a rename. Replacing the
+    // text would write the template over everyone's work.
+    if (room) return;
     swap(initialValue);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [docKey]);

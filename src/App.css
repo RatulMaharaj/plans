@@ -3036,12 +3036,18 @@ body.tree-drag .tabs.drop-hot {
 .source .cm-panels { display: none; }
 
 /* ===========================================================================
-   Workspaces — a room under the tree
+   Workspaces — a folder in the tree, and the bar that makes one
    ---------------------------------------------------------------------------
-   Its own region, in the tree's register: the rows look like file rows because
-   they open like them, and the review dot is the status dot with a different
-   vocabulary behind it. See plans/hosted-workspaces.md.
+   A workspace is a heading in the file tree itself, drawn by the tree's own
+   rules; what is left here is the bar under it, which exists to hold "+ New"
+   and the sentence for someone who is not signed in. See
+   plans/hosted-workspaces.md and plans/workspace-folders/.
    ======================================================================== */
+
+/* A workspace heading says so where a repository says its branch. */
+.row.repo.ws .repo-branch {
+  font-style: italic;
+}
 
 .workspaces {
   flex: 0 0 auto;
@@ -3091,9 +3097,6 @@ body.tree-drag .tabs.drop-hot {
   line-height: 1.5;
   color: var(--ink-3);
 }
-.ws-list { display: flex; flex-direction: column; }
-.ws-row.on { color: var(--ink); }
-.ws-row .status-dot { margin-left: auto; }
 
 /* The rail's account chip reads as a name, not a command. */
 .rail-btn.account { text-transform: none; letter-spacing: 0.04em; }

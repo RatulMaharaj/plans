@@ -1,5 +1,5 @@
 ---
-status: busy
+status: done
 ---
 # A workspace is a folder of files
 
@@ -59,21 +59,22 @@ Everything stays on Yjs; nothing new is deployed.
 
 ## Implementation guide
 
-- [ ] `server/src/rooms.js` - rooms keyed by document id; a workspace's tree
+- [x] `server/src/rooms.js` - rooms keyed by document id; a workspace's tree
       room and file rooms; membership checked against the workspace the
       document belongs to
-- [ ] `server/src/schema.js` + a migration - `docs` gains `workspace_id` and
-      `kind` so a file room can be authorised; the tree entry for existing
-      workspaces is written by the migration
-- [ ] `server/src/index.js` - `GET /workspaces/:id/tree` for a cold open,
+- [x] `server/src/db.js` + a migration - `docs` gains `id` and `kind`
+      alongside `workspace_id` so a file room can be authorised; documents
+      written before folders are given ids on start, and the tree naming one
+      `plan.md` is written the first time its workspace is asked for
+- [x] `server/src/index.js` - `GET /workspaces/:id/tree` for a cold open,
       and the websocket path takes a document id
-- [ ] `src/workspace.ts` - open the tree room, expose it as a `PlanFile[]`
-      the tree can draw, and open file rooms on demand
-- [ ] `src/FileTree.tsx` / `src/App.tsx` - a workspace as a repository
+- [x] `src/workspace.ts` - open the tree room, expose it as entries the tree
+      can draw, and open file rooms on demand
+- [x] `src/FileTree.tsx` / `src/App.tsx` - a workspace as a repository
       heading with the disk-only actions hidden; new file, rename, move and
       delete as tree transactions
-- [ ] `src/Editor.tsx` - unchanged; one editor per file room
-- [ ] `e2e/workspace.spec.ts` - two contexts: one creates a folder and a
+- [x] `src/Editor.tsx` - unchanged; one editor per file room
+- [x] `e2e/workspace.spec.ts` - two contexts: one creates a folder and a
       file, the other sees them appear and opens the file; a rename lands on
       both sides mid-edit
 
@@ -83,10 +84,14 @@ Mirroring to git (`../workspace-mirror.md`, later). Share links and the
 read endpoint per file, and the review gate, are the second half of this
 folder.
 
-## Open questions
+## Open questions, as built
 
-- Does a folder exist on its own, or only as a prefix of a file path, as in
-  git? A tree map can hold folders explicitly, which the app's "show all
-  folders" mode would want.
-- One tree room per workspace means the tree's history grows with every
-  rename; Yjs handles it, but should the tree document be compacted on save?
+- **A folder exists on its own.** The tree map holds `{ kind: "folder" }` at
+  its path: a folder you make and then cannot see until you put something in
+  it is a folder that vanished, and the tree already draws empty ones for
+  disk. A file's path still implies its parents, so both ways of arriving at
+  a folder agree.
+- **The tree is not compacted.** `Y.encodeStateAsUpdate` is written on every
+  save, which is already a garbage-collected snapshot rather than the log;
+  the history that grows with renames is a tree map of a few dozen keys, and
+  compaction would be a knob to get wrong for bytes nobody is counting.
