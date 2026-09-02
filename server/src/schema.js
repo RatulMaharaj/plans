@@ -7,7 +7,8 @@
  * start (see migrate.js). The queries themselves stay as SQL in db.js —
  * there are a dozen of them and every one is plainer written out.
  */
-import { pgTable, text, bigint, primaryKey, customType } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
+import { pgTable, text, bigint, primaryKey, customType , uniqueIndex } from "drizzle-orm/pg-core";
 
 /** `bytea`, which pg-core does not ship. The Yjs document is one of these. */
 const bytea = customType({ dataType: () => "bytea" });
@@ -78,7 +79,12 @@ export const pages = pgTable("pages", {
   publishedBy: text("published_by").notNull(),
   publishedAt: bigint("published_at", { mode: "number" }).notNull(),
   revokedAt: bigint("revoked_at", { mode: "number" }),
-});
+}, (t) => [
+  // One live page per workspace, held by the database rather than by a
+  // check-then-insert: two members pressing Share together must get the
+  // same URL, and only a constraint can promise that.
+  uniqueIndex("pages_live_workspace").on(t.workspaceId).where(sql`revoked_at IS NULL AND workspace_id IS NOT NULL`),
+]);
 
 export const shareTokens = pgTable("share_tokens", {
   id: text("id").primaryKey(),

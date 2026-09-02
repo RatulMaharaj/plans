@@ -15,6 +15,13 @@
       "when": 1788468167543,
       "tag": "0001_pages",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1788386397318,
+      "tag": "0002_one-live-page-per-workspace",
+      "breakpoints": true
     }
   ]
 }

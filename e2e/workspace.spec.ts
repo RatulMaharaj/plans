@@ -211,6 +211,9 @@ const idOf = (url: string) => url.split("/").pop() as string;
 test("a plan in a repository is shared as a page, follows its saves, and stops", async ({ browser }) => {
   const alice = await boot(browser, "alice");
 
+  // The file lives in a folder the tree opens closed.
+  const folder = alice.getByRole("button", { name: "plans/" });
+  if (await folder.count()) await folder.click();
   await alice.locator(".row.file", { hasText: "existing" }).first().click();
   await expect(editor(alice).locator("h1")).toHaveText("Existing");
   await editor(alice).locator("h1").click();

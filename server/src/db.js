@@ -298,12 +298,16 @@ export async function openDb(url = process.env.DATABASE_URL ?? "") {
       const live = await this.workspacePage(workspaceId);
       if (live) return live;
       const id = randomBytes(24).toString("base64url");
-      await c.query(
+      // The partial unique index on live workspace pages is the arbiter: a
+      // second publisher racing this one loses the insert and is handed the
+      // page the winner made, so both share the same URL.
+      const rows = await c.query(
         `INSERT INTO pages (id, workspace_id, markdown, name, published_by, published_at)
-         VALUES ($1, $2, '', $3, $4, $5)`,
+         VALUES ($1, $2, '', $3, $4, $5)
+         ON CONFLICT DO NOTHING RETURNING id`,
         [id, workspaceId, name, login, now()],
       );
-      return this.page(id);
+      return rows.length > 0 ? this.page(id) : this.workspacePage(workspaceId);
     },
     /** The same page, with what the file says now. Null if it is not live. */
     async republishPage(id, markdown, name) {
