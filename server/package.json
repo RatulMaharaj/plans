@@ -8,16 +8,22 @@
   "scripts": {
     "start": "node src/index.js",
     "dev": "infisical run --env=dev --path=/apps/plans --path=/shared -- node src/index.js",
-    "test": "node --test \"test/**/*.test.js\""
+    "test": "node --test \"test/**/*.test.js\"",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "infisical run --env=dev --path=/apps/plans --path=/shared -- drizzle-kit migrate"
   },
   "dependencies": {
     "@electric-sql/pglite": "^0.5.8",
+    "drizzle-orm": "^0.45.2",
     "jose": "^6.2.10",
     "lib0": "^0.2.117",
     "pg": "^8.23.0",
     "ws": "^8.21.3",
     "y-protocols": "^1.0.7",
     "yjs": "^13.6.32"
+  },
+  "devDependencies": {
+    "drizzle-kit": "^0.31.10"
   },
   "engines": {
     "node": ">=22.13"
