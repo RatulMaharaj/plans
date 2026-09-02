@@ -1,5 +1,5 @@
 ---
-status: ready
+status: busy
 ---
 # A workspace is a folder of files
 

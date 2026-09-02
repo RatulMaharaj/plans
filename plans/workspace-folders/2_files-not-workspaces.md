@@ -1,5 +1,5 @@
 ---
-status: ready
+status: busy
 ---
 # The read endpoint and share links reach files, not workspaces
 
