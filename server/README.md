@@ -61,8 +61,9 @@ database. The tables are created on first start.
 ### Secrets: Infisical
 
 The server's secrets live in the looped Infisical project, under
-`/apps/plans` (with `/shared` merged after it, as the other apps
-do). `server/.infisical.json` names the project, so on a laptop:
+`/apps/plans` (with `/shared` merged before it: in this CLI the later path
+wins a name both folders hold, and `/shared` holds the web apps'
+`AUTH0_CLIENT_ID`). `server/.infisical.json` names the project, so on a laptop:
 
 ```sh
 pnpm --filter plans-workspaces dev      # infisical run … -- node src/index.js
@@ -90,7 +91,7 @@ services get:
 
 | Variable                                        | Value                                                |
 | ----------------------------------------------- | ---------------------------------------------------- |
-| `INFISICAL_CLIENT_ID`, `INFISICAL_CLIENT_SECRET` | a machine identity with read on `/apps/plans` and `/shared` |
+| `INFISICAL_CLIENT_ID`, `INFISICAL_CLIENT_SECRET` | a machine identity with read on `/shared` and `/apps/plans` |
 | `INFISICAL_PROJECT_ID`                          | `85f068d3-bcfe-4e1e-90e0-97845cf7058c`               |
 | `INFISICAL_API_URL`                             | `https://infisical.looped.sh`                        |
 | `INFISICAL_ENV`                                 | `prod` (the default)                                 |

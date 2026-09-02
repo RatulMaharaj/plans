@@ -7,10 +7,10 @@
   "main": "src/index.js",
   "scripts": {
     "start": "node src/index.js",
-    "dev": "infisical run --env=dev --path=/apps/plans --path=/shared -- node src/index.js",
+    "dev": "infisical run --env=dev --path=/shared --path=/apps/plans -- node src/index.js",
     "test": "node --test \"test/**/*.test.js\"",
     "db:generate": "drizzle-kit generate",
-    "db:migrate": "infisical run --env=dev --path=/apps/plans --path=/shared -- drizzle-kit migrate"
+    "db:migrate": "infisical run --env=dev --path=/shared --path=/apps/plans -- drizzle-kit migrate"
   },
   "dependencies": {
     "@electric-sql/pglite": "^0.5.8",
