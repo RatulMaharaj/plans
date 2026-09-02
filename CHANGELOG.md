@@ -1,5 +1,67 @@
 # looped-plans
 
+## 0.9.0
+
+### Minor Changes
+
+- cbbd7bf: The agent in the chat can change any setting. A new bundled skill tells it
+  where `settings.json` lives on each platform, to read the generated schema
+  before writing rather than guessing keys, and the etiquette of writing the
+  file back: one write, keep `$schema`, keep the keys this build does not know,
+  leave the app-managed ones alone. It installs with the other skills. The
+  settings poll no longer shares `watchSeconds` with the document watcher, so
+  someone who has turned repository watching off still sees the change land -
+  that knob was the one way the settings file could wedge itself shut.
+- 6ae296c: Workspaces: a room where a plan gets argued before it is a file. Sign in
+  from the rail, make a workspace, invite people by email, and edit one
+  markdown document together with everyone's cursor in it. Request a review
+  when it settles; someone other than you approves it, which the server
+  enforces. "Copy to repository…" then writes the document into a repository
+  as an ordinary file, stamped `status: ready` and `approved-by:` when it was
+  approved, and everything downstream — agents, the factory, git — works as it
+  always has. The workspace server ships in this repository under `server/`:
+  one Node process on Postgres, as a container with its secrets from Infisical;
+  the app keeps its session in the OS keychain, never in `settings.json`.
+- e38e198: The app is called Looped Plans. The wordmark in the rail, the window title and
+  the bundle's product name, the update banner and the "you are on the latest
+  version" notice, the settings hints, the dialog titles, the release-notes
+  heading, the README and the site all say the new name; the generated settings
+  schema says it too. The package is now `looped-plans`, so a changeset names it
+  that from here on.
+
+  What deliberately did not move: the bundle identifier and the updater endpoint,
+  which are how an installed copy finds its own updates, and the `plans` command
+  on your PATH. The macOS bundle is now `Looped Plans.app` — the installed shim
+  carries the app's name in its comment, so an existing one reads as stale and
+  Settings offers "Update" rather than claiming nothing is installed.
+
+- bf7dcb9: Share a workspace document with a link. "Share…" in a workspace's page head —
+  or "Copy share link" in the palette — mints a link anyone can open in a
+  browser with no account, no app and no clone: the document at reading width,
+  read-only and live, with the workspace name and its status and review chips,
+  and a print stylesheet so ⌘P is the export button. The secret rides in the
+  URL's fragment, which browsers never send, so the server's log and any link
+  unfurler see an empty `/share` page and nothing of the document, and the page
+  carries the review state but never the member list. Each link is its own
+  token: the same sheet lists the live ones and revokes them one at a time, and
+  revoking one breaks neither the others nor the read token the factory holds. A
+  link also expires thirty days after minting — revocation answers the leaked
+  link, expiry answers the forgotten one — and expired, revoked and never-minted
+  all read alike. The app also now points at the workspace server's `looped.sh`
+  address by default, so links are minted from the right place.
+
+### Patch Changes
+
+- e1c76de: `pnpm dev` is the app; `pnpm web` is the web half alone, for a browser. A
+  committed `.env` gives local builds the workspace server's address, so the
+  app run from source has workspaces too.
+- 5d7648a: More of the ⌘K family, for what the palette had and the keyboard did not:
+  ⌘K P finished plans, ⌘K I gitignored files, ⌘K F frontmatter, ⌘K M move
+  this file, ⌘K R reload from disk, ⌘K N new chat, ⌘K S swap the panes; and
+  ⌘⇧N for a new folder.
+- 66978c5: The "All files" setting is "Show all files", which is also what you type to
+  find it, and ⌘K A toggles it.
+
 ## 0.8.0
 
 ### Minor Changes

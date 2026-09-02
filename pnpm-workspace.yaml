@@ -1,6 +1,9 @@
 # The app at the root, and the workspace server beside it — one install, one
 # lockfile, two programs. See server/README.md for why the second exists.
 packages:
+  # The app itself, so changesets keeps versioning it now that it has a
+  # sibling; pnpm treats the root as the root either way.
+  - "."
   - "server"
 
 allowBuilds:
