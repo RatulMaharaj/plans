@@ -74,6 +74,9 @@ export const DEFAULT_KEYS: KeymapEntry[] = [
   { id: "v.write.pane", group: "Go", label: "Write view — this pane only", keys: "mod+k mod+1" },
   { id: "v.source.pane", group: "Go", label: "Source view — this pane only", keys: "mod+k mod+2" },
   { id: "v.keyboard", group: "Go", label: "Keyboard settings", keys: "mod+k mod+s" },
+  // Below the older chords on purpose: the first ⌘K chord in this table is
+  // the one the "taken prefix" note names, and that should stay ⌘K W.
+  { id: "showAllFiles", group: "Panels", label: "Show all files", keys: "mod+k a" },
 ];
 
 /**
