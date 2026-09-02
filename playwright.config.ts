@@ -39,7 +39,7 @@ export default defineConfig({
   },
   projects: [{ name: "chromium", use: { ...devices["Desktop Chrome"] } }],
   webServer: {
-    command: "pnpm dev --port 1430 --strictPort",
+    command: "pnpm web --port 1430 --strictPort",
     url: "http://localhost:1430",
     reuseExistingServer: true,
     timeout: 60_000,

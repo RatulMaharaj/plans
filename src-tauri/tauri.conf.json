@@ -4,7 +4,7 @@
   "version": "0.8.0",
   "identifier": "com.ratulmaharaj.plans",
   "build": {
-    "beforeDevCommand": "pnpm dev",
+    "beforeDevCommand": "pnpm web",
     "devUrl": "http://localhost:1420",
     "beforeBuildCommand": "pnpm build",
     "frontendDist": "../dist"

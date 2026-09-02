@@ -153,7 +153,8 @@ own and offer the update in a banner — never a modal, and never without a pres
 
 ```sh
 pnpm install
-pnpm app         # dev mode with hot reload
+pnpm dev         # the app, with hot reload
+pnpm web         # only the web half, in a browser
 pnpm app:build   # produces a bundled .app / installer under src-tauri/target/release/bundle
 ```
 
