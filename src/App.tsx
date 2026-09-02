@@ -63,6 +63,7 @@ import {
 } from "./templates";
 import {
   colorFor,
+  configured as workspacesConfigured,
   openRoom,
   token as workspaceToken,
   workspace,
@@ -2901,6 +2902,7 @@ export default function App() {
 
   // Who we are, once — the keychain answers, then the server confirms.
   useEffect(() => {
+    if (!workspacesConfigured()) return;
     void workspace
       .me()
       .then((who) => {
@@ -4729,15 +4731,17 @@ export default function App() {
             />
           </div>
 
-          <Workspaces
-            account={account}
-            workspaces={workspaces}
-            activeId={settingsOpen ? null : wsIdOf(activePath)}
-            live={new Set([...rooms.current].filter(([, r]) => r.status === "open").map(([id]) => id))}
-            onOpen={(ws) => void openWorkspace(ws)}
-            onNew={() => setWsNaming(true)}
-            onSignIn={() => setSigningIn(true)}
-          />
+          {workspacesConfigured() && (
+            <Workspaces
+              account={account}
+              workspaces={workspaces}
+              activeId={settingsOpen ? null : wsIdOf(activePath)}
+              live={new Set([...rooms.current].filter(([, r]) => r.status === "open").map(([id]) => id))}
+              onOpen={(ws) => void openWorkspace(ws)}
+              onNew={() => setWsNaming(true)}
+              onSignIn={() => setSigningIn(true)}
+            />
+          )}
 
           {/* Double-click restores the default width. */}
           <div

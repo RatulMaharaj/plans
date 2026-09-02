@@ -17,22 +17,27 @@ import { api } from "./api";
 /**
  * Where the server is.
  *
- * A fixed address, not a setting: the server is operated with the app, and a
- * URL field in settings would be a second thing to get wrong for the one
- * person who runs their own. The two overrides are for development — a build
- * pointed at a local server, or a browser test pointed at one it started.
+ * Not a setting: the server is operated with the app, and a URL field in
+ * settings would be a second thing to get wrong for the one person who runs
+ * their own. The address is baked in at build time from `VITE_WORKSPACE_URL`;
+ * a build made without one has no workspaces at all, and hides them. The
+ * localStorage override is for a browser test pointed at a server it started.
  */
-const DEFAULT_SERVER = "https://workspaces.plans.looped.sh";
+const BUILT = ((import.meta.env.VITE_WORKSPACE_URL as string | undefined) ?? "").trim();
 
 export function serverUrl(): string {
   try {
     const local = localStorage.getItem("plans.workspaceServer");
     if (local) return local.replace(/\/$/, "");
   } catch {
-    // no storage: the default
+    // no storage: the built address
   }
-  const built = import.meta.env.VITE_WORKSPACE_URL as string | undefined;
-  return (built || DEFAULT_SERVER).replace(/\/$/, "");
+  return BUILT.replace(/\/$/, "");
+}
+
+/** Whether this build knows a server to talk to. Without one, no workspaces. */
+export function configured(): boolean {
+  return serverUrl().length > 0;
 }
 
 export type Account = { login: string; name: string | null; avatar: string | null };
