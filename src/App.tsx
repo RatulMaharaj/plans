@@ -4274,6 +4274,7 @@ export default function App() {
         "tab.closeAll": () => void closeAllTabs(),
         showMux: () => showPanel("showMux"),
         showGit: () => showPanel("showGit"),
+        showAllFiles: () => set({ showAllFiles: !settings.showAllFiles }),
         shortcuts: () => setShortcuts((v) => !v),
         split: toggleSplit,
         "split.dir": () => setSplitDir((d) => (d === "row" ? "column" : "row")),

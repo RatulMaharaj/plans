@@ -689,9 +689,9 @@ function buildCommands(p: Props): Command[] {
   add({
     id: "showAllFiles",
     group: "Files",
-    label: "All files",
-    value: s.showAllFiles ? "shown" : "hidden",
-    terms: "every file text source code extensions markdown only show hide",
+    label: "Show all files",
+    value: s.showAllFiles ? "on" : "off",
+    terms: "show all every file text source code extensions markdown only hide",
     run: () => set({ showAllFiles: !s.showAllFiles }),
   });
 

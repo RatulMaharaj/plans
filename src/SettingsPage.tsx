@@ -295,7 +295,7 @@ export function SettingsPage({
             onChange={(showIgnored) => onChange({ showIgnored })}
           />
           <Toggle
-            label="All files"
+            label="Show all files"
             hint="Every text file, not only the markdown. Anything that is not markdown opens in Source."
             on={s.showAllFiles}
             onChange={(showAllFiles) => onChange({ showAllFiles })}
