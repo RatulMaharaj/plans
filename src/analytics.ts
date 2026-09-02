@@ -109,13 +109,15 @@ export function track(
 }
 
 /**
- * A palette command id with anything that names a person's things cut off.
- * Ids are `group.action` or `group.action.<thing>`, where the thing is a chat
- * id, a repository path, a status word from someone's own vocabulary — all
- * of which stay here. Two dotted segments is the shape of every static id.
+ * The command ids whose last part is someone's own thing — a chat id, a
+ * repository path, a word from their status vocabulary, an agent's name.
+ * Anything under one of these reports as the prefix alone. Every other id
+ * is a static string in this codebase, and goes as it is.
  */
+const PERSONAL_PREFIXES = ["chat.", "repo.", "agent.use.", "skill.open.", "status.", "model.", "effort."];
+
+/** A palette command id, with the part that is not ours cut off. */
 export function commandName(id: string): string {
-  const [group, action] = id.split(".");
-  if (!action || !/^[a-zA-Z]+$/.test(action)) return `${group}.*`;
-  return id.split(".").length === 2 ? id : `${group}.${action}.*`;
+  const hit = PERSONAL_PREFIXES.find((p) => id.startsWith(p));
+  return hit ? `${hit}*` : id;
 }
