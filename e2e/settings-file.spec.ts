@@ -160,12 +160,18 @@ test("an outside edit lands while a chat is open", async ({ page }) => {
   const shut = page.locator('.row.repo[aria-expanded="false"]');
   if (await shut.count()) await shut.first().click();
   await page.locator(".row.file").first().click();
+  // The chat is about the open buffer, so wait for it to be open before
+  // asking for the panel, as the chat specs do.
+  await expect(page.locator(".page-path")).toContainText("first.md");
   await page.keyboard.press("Meta+j");
   await expect(page.locator(".chat")).toBeVisible();
 
   // This is the whole feature, seen from the chat: the agent writes the file
-  // and the window changes without anyone touching the settings page.
-  await editOutside(page, JSON.stringify({ theme: "night", watchSeconds: 0 }));
+  // and the window changes without anyone touching the settings page. The
+  // agent edits one key in the file as it stands — a file with only two keys
+  // in it would be a settings reset, and would rightly close the panel too.
+  const current: string = await page.evaluate(() => (window as any).__fake.settingsFile.text);
+  await editOutside(page, current.replace('"theme": "day"', '"theme": "night"'));
   await expect(page.locator("html")).toHaveAttribute("data-theme", "night", {
     timeout: 10_000,
   });
@@ -227,7 +233,9 @@ test("both doors to the file open it in the system editor", async ({ page }) => 
   // shown, so "where is my file" has an answer without a document.
   await page.keyboard.press("Meta+,");
   await page.locator(".settings-filter").fill("Settings file");
-  await expect(page.locator(".settings-body")).toContainText(
+  // The filter also matches the repositories section, whose hint mentions the
+  // file; the path is in the one section that is about it.
+  await expect(page.locator(".settings-body", { hasText: "settings.json" })).toContainText(
     "/config/plans/settings.json",
   );
   await page.getByRole("button", { name: "Open settings file (JSON)" }).click();
