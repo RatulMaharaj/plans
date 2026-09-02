@@ -1,5 +1,5 @@
 ---
-status: draft
+status: ready
 ---
 # A public page for any plan
 

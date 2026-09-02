@@ -11,7 +11,7 @@ Remember to add changesets for any patched bugs - fixed bugs belong in the chang
 
 ## Open
 
-(nothing at the moment)
+- Being in a git diff view shouldn’t add a third button to the header (write, source, diff).
 
 ## Watch for
 

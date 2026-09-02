@@ -4275,6 +4275,25 @@ export default function App() {
         showMux: () => showPanel("showMux"),
         showGit: () => showPanel("showGit"),
         showAllFiles: () => set({ showAllFiles: !settings.showAllFiles }),
+        showCompleted: () => set({ showCompleted: !settings.showCompleted }),
+        showIgnored: () => set({ showIgnored: !settings.showIgnored }),
+        // The same handlers the palette's commands call, so a key and a
+        // command can never drift apart.
+        matter: () => {
+          if (!activePath) return;
+          if (matter === null) onMatterChange("");
+          setMatterOpen(true);
+        },
+        move: () => activeRepoPath && activePath && setMoving({ repo: activeRepoPath, path: activePath }),
+        "new.folder": () =>
+          activeRepoPath &&
+          newFolderIn(
+            activeRepoPath,
+            activePath?.includes("/") ? activePath.slice(0, activePath.lastIndexOf("/")) : "",
+          ),
+        reload: () => void reloadAll(),
+        "chat.new": () => chat !== false && newChat(),
+        "split.swap": () => void swapPanes(),
         shortcuts: () => setShortcuts((v) => !v),
         split: toggleSplit,
         "split.dir": () => setSplitDir((d) => (d === "row" ? "column" : "row")),

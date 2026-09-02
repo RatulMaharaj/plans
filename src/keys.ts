@@ -77,6 +77,17 @@ export const DEFAULT_KEYS: KeymapEntry[] = [
   // Below the older chords on purpose: the first ⌘K chord in this table is
   // the one the "taken prefix" note names, and that should stay ⌘K W.
   { id: "showAllFiles", group: "Panels", label: "Show all files", keys: "mod+k a" },
+  // The rest of the ⌘K family: the tree's other toggles and the commands
+  // the palette had and the keyboard did not. One letter each, the first
+  // letter of the thing where it was free.
+  { id: "showCompleted", group: "Panels", label: "Finished plans", keys: "mod+k p" },
+  { id: "showIgnored", group: "Panels", label: "Gitignored files", keys: "mod+k i" },
+  { id: "matter", group: "Plans", label: "Frontmatter", keys: "mod+k f" },
+  { id: "move", group: "Plans", label: "Move this file", keys: "mod+k m" },
+  { id: "new.folder", group: "Plans", label: "New folder", keys: "mod+shift+n" },
+  { id: "reload", group: "Plans", label: "Reload everything from disk", keys: "mod+k r" },
+  { id: "chat.new", group: "Panels", label: "New chat", keys: "mod+k n" },
+  { id: "split.swap", group: "Go", label: "Swap the panes", keys: "mod+k s" },
 ];
 
 /**
