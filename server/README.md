@@ -27,6 +27,11 @@ node server/src/index.js
 | `AUTH0_CLIENT_ID`      | —                | The tenant's *native* application for Plans, with the Device Code grant enabled.     |
 | `WORKSPACES_DEV_LOGIN` | —                | `1` enables `POST /auth/dev`, a session for a bare login. Tests and laptops only.     |
 
+The app learns where this server is at build time, from `VITE_WORKSPACE_URL`
+(the release workflow reads it from the repository variable `WORKSPACE_URL`).
+A build made without it shows no workspaces at all. On a laptop, point a dev
+build at a local server with `VITE_WORKSPACE_URL=http://localhost:8787 pnpm dev`.
+
 Node 22 or newer. The database driver is `pg`; the schema is created on
 start, with `IF NOT EXISTS` everywhere, so an empty database is a valid one.
 

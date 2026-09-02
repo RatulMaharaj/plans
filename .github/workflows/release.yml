@@ -144,6 +144,9 @@ jobs:
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Where the workspace server is. Baked into the build; a release
+          # made without it has no workspaces.
+          VITE_WORKSPACE_URL: ${{ vars.WORKSPACE_URL }}
           # tauri imports the .p12 into a temporary keychain itself.
           APPLE_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE_P12_BASE64 }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
