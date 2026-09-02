@@ -97,6 +97,10 @@
         overflow-x: auto;
       }
       pre code { background: none; padding: 0; font-size: 1em; }
+      /* A diagram is a picture, not a listing: centred, and no box around it
+         once mermaid has replaced the source with an SVG. */
+      pre.mermaid { text-align: center; }
+      pre.mermaid[data-processed] { background: none; border: 0; padding: 0; }
       blockquote {
         border-left: 2px solid var(--rule);
         padding-left: 1rem;
@@ -218,13 +222,21 @@
 
           for (var i = 0; i < lines.length; i++) {
             var line = lines[i];
-            var fence = line.match(/^\s*```+\s*[\w-]*\s*$/);
+            var fence = line.match(/^\s*```+\s*([\w-]*)\s*$/);
             if (fence) {
               closePara();
               closeList();
               var code = [];
               for (i++; i < lines.length && !/^\s*```+\s*$/.test(lines[i]); i++) code.push(lines[i]);
-              html += "<pre><code>" + esc(code.join("\n")) + "</code></pre>";
+              // A mermaid fence is a diagram in the app, so it is one here.
+              // Left as its own source until the renderer below reaches it: if
+              // mermaid never loads, a reader sees the diagram's text rather
+              // than an empty box where a picture was promised.
+              if (/^mermaid$/i.test(fence[1])) {
+                html += '<pre class="mermaid">' + esc(code.join("\n")) + "</pre>";
+              } else {
+                html += "<pre><code>" + esc(code.join("\n")) + "</code></pre>";
+              }
               continue;
             }
             if (!line.trim()) {
@@ -300,31 +312,51 @@
           return { status: status, body: md.slice(3 + close.index + close[0].length) };
         }
 
-        /** The review state in the chip's own vocabulary, as the app says it. */
-        var REVIEW = { requested: "in review", changes: "changes", approved: "approved" };
+        /**
+         * Diagrams, if the reader's browser can reach the CDN.
+         *
+         * One module import rather than a bundle of our own: this page is a
+         * single file served as a string, and mermaid is the one thing on it
+         * that is too big to write out. Failing is allowed — the fence has
+         * already been rendered as its own source, which is the honest
+         * fallback for a diagram nobody can draw.
+         */
+        function diagrams() {
+          if (!document.querySelector("pre.mermaid")) return;
+          var s = document.createElement("script");
+          s.type = "module";
+          s.textContent =
+            'import m from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";' +
+            'm.initialize({ startOnLoad: false, theme: matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "default" });' +
+            'm.run({ querySelector: "pre.mermaid" }).catch(function () {});';
+          document.body.appendChild(s);
+        }
 
+        /** The file the link names, headed by the workspace it lives in. */
         function show(doc) {
           var parts = split(doc.markdown || "");
           var head = document.createElement("div");
           head.className = "head";
           var name = document.createElement("span");
           name.className = "name";
-          name.textContent = doc.name || "";
+          name.textContent = doc.path ? doc.name + " / " + doc.path : doc.name || "";
           head.appendChild(name);
-          [parts.status, REVIEW[doc.review && doc.review.state]].forEach(function (label) {
-            if (!label) return;
+          // `status:` is the whole of what the old review chip used to say,
+          // and it travels with the file rather than with the room.
+          if (parts.status) {
             var chip = document.createElement("span");
-            chip.className = "chip" + (label === "approved" ? " approved" : "");
-            chip.textContent = label;
+            chip.className = "chip" + (parts.status === "approved" ? " approved" : "");
+            chip.textContent = parts.status;
             head.appendChild(chip);
-          });
+          }
           page.innerHTML = "";
           page.appendChild(head);
           var article = document.createElement("article");
           article.id = "doc";
           article.innerHTML = render(parts.body);
           page.appendChild(article);
-          document.title = (doc.name ? doc.name + " · " : "") + "plans";
+          document.title = (doc.path || doc.name || "") + " · plans";
+          diagrams();
         }
 
         /**

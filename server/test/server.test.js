@@ -13,7 +13,7 @@ import * as syncProtocol from "y-protocols/sync";
 import * as encoding from "lib0/encoding";
 import * as decoding from "lib0/decoding";
 import { startServer } from "../src/index.js";
-import { MSG_SYNC, MSG_REVIEW } from "../src/rooms.js";
+import { MSG_SYNC } from "../src/rooms.js";
 
 let s;
 let base;
@@ -50,11 +50,11 @@ async function signIn(login) {
 }
 
 /** A client that speaks just enough of the protocol to sync one doc. */
-function connect(id, token) {
+function connect(id, token, workspace = null) {
   const doc = new Y.Doc();
-  const ws = new WebSocket(`ws://127.0.0.1:${s.port}/ws/${id}?token=${token}`);
+  const at = workspace ? `&workspace=${workspace}` : "";
+  const ws = new WebSocket(`ws://127.0.0.1:${s.port}/ws/${id}?token=${token}${at}`);
   ws.binaryType = "arraybuffer";
-  const reviews = [];
   let synced;
   const isSynced = new Promise((r) => (synced = r));
   ws.on("message", (data) => {
@@ -66,8 +66,6 @@ function connect(id, token) {
       const kind = syncProtocol.readSyncMessage(dec, enc, doc, ws);
       if (encoding.length(enc) > 1) ws.send(encoding.toUint8Array(enc));
       if (kind === syncProtocol.messageYjsSyncStep2) synced();
-    } else if (type === MSG_REVIEW) {
-      reviews.push(JSON.parse(decoding.readVarString(dec)));
     }
   });
   doc.on("update", (update, origin) => {
@@ -88,7 +86,29 @@ function connect(id, token) {
     ws.once("error", reject);
     ws.once("unexpected-response", (_req, res) => reject(new Error(`HTTP ${res.statusCode}`)));
   });
-  return { doc, ws, reviews, open, synced: isSynced, close: () => ws.close() };
+  return { doc, ws, open, synced: isSynced, close: () => ws.close() };
+}
+
+/** The document id of one file in a workspace's tree. */
+async function fileIn(workspaceId, token, path = "plan.md") {
+  const tree = await call(`/workspaces/${workspaceId}/tree`, { token });
+  const entry = tree.value.find((e) => e.path === path);
+  assert.ok(entry, `${path} is in the tree`);
+  return entry.doc;
+}
+
+/** Open a workspace's first file, ready to be typed into. */
+async function openPlan(workspaceId, token) {
+  const docId = await fileIn(workspaceId, token);
+  const c = connect(docId, token, workspaceId);
+  await Promise.all([c.open, c.synced]);
+  return { ...c, docId };
+}
+
+/** Type markdown into an open file and wait for the server to hold it. */
+async function publish(open, markdown) {
+  open.doc.getMap("meta").set("markdown", markdown);
+  await until(() => s.rooms.rooms.get(open.docId)?.doc.getMap("meta").get("markdown") === markdown);
 }
 
 const until = async (check, ms = 3000) => {
@@ -134,14 +154,15 @@ test("a workspace belongs to whoever made it, and to whom they invite", async ()
   assert.equal((await call("/workspaces", { token: bob })).value[0].id, id);
 });
 
-test("two people edit one document, and it survives the room emptying", async () => {
+test("two people edit one file, and it survives the room emptying", async () => {
   const alice = await signIn("alice");
   const bob = await signIn("bob");
   const { id } = (await call("/workspaces", { method: "POST", token: alice, body: { name: "Doc" } })).value;
   await call(`/workspaces/${id}/members`, { method: "POST", token: alice, body: { login: "bob" } });
 
-  const a = connect(id, alice);
-  const b = connect(id, bob);
+  const doc = await fileIn(id, alice);
+  const a = connect(doc, alice, id);
+  const b = connect(doc, bob, id);
   await Promise.all([a.open, b.open, a.synced, b.synced]);
   a.doc.getText("t").insert(0, "hello");
   await until(() => b.doc.getText("t").toString() === "hello");
@@ -152,60 +173,85 @@ test("two people edit one document, and it survives the room emptying", async ()
 
   a.close();
   b.close();
-  await until(() => !s.rooms.rooms.has(id));
+  await until(() => !s.rooms.rooms.has(doc));
 
   // A newcomer gets the document from the database, not from memory.
-  const c = connect(id, bob);
+  const c = connect(doc, bob, id);
   await Promise.all([c.open, c.synced]);
   await until(() => c.doc.getText("t").toString() === "hello world");
   c.close();
+});
+
+test("a workspace is a folder: the tree is a room, and so is every file in it", async () => {
+  const alice = await signIn("alice");
+  const bob = await signIn("bob");
+  const { id } = (await call("/workspaces", { method: "POST", token: alice, body: { name: "Folder" } })).value;
+  await call(`/workspaces/${id}/members`, { method: "POST", token: alice, body: { login: "bob" } });
+
+  // Made a folder from the moment it exists, with one file in it.
+  const first = (await call(`/workspaces/${id}/tree`, { token: alice })).value;
+  assert.deepEqual(
+    first.map((e) => [e.path, e.kind]),
+    [["plan.md", "file"]],
+  );
+
+  // The tree is the room whose id is the workspace's; a file created in it is
+  // a room of its own the moment the tree names it, with nothing saved yet.
+  const treeA = connect(id, alice);
+  const treeB = connect(id, bob);
+  await Promise.all([treeA.open, treeB.open, treeA.synced, treeB.synced]);
+  const made = "notes/idea.md";
+  treeA.doc.getMap("tree").set("notes", { kind: "folder" });
+  treeA.doc.getMap("tree").set(made, { kind: "file", doc: "brand-new-doc-id" });
+  await until(() => treeB.doc.getMap("tree").get(made));
+
+  const fresh = connect("brand-new-doc-id", bob, id);
+  await Promise.all([fresh.open, fresh.synced]);
+  fresh.doc.getMap("meta").set("markdown", "# Idea\n");
+  await until(() => s.rooms.rooms.get("brand-new-doc-id")?.doc.getMap("meta").get("markdown"));
+  assert.equal((await call(`/w/${id}/${made}`, { token: alice })).value, "# Idea\n");
+
+  // A rename is a move of the key; the file's document id does not change.
+  const entry = treeA.doc.getMap("tree").get(made);
+  treeA.doc.getMap("tree").delete(made);
+  treeA.doc.getMap("tree").set("notes/plan.md", entry);
+  await until(() => treeB.doc.getMap("tree").get("notes/plan.md"));
+  assert.equal((await call(`/w/${id}/notes/plan.md`, { token: alice })).value, "# Idea\n");
+  assert.equal((await call(`/w/${id}/${made}`, { token: alice })).status, 404);
+
+  // The listing is the folder, kinds and all.
+  const listed = await call(`/w/${id}/`, { token: alice });
+  assert.deepEqual(listed.value.name, "Folder");
+  assert.deepEqual(
+    listed.value.files.map((e) => e.path).sort(),
+    ["notes", "notes/plan.md", "plan.md"],
+  );
+
+  fresh.close();
+  treeA.close();
+  treeB.close();
 });
 
 test("the websocket refuses non-members before it opens", async () => {
   const alice = await signIn("alice");
   const eve = await signIn("eve");
   const { id } = (await call("/workspaces", { method: "POST", token: alice, body: { name: "Secret" } })).value;
+  const doc = await fileIn(id, alice);
   await assert.rejects(connect(id, eve).open, /401/);
   await assert.rejects(connect(id, "garbage").open, /401/);
-});
-
-test("the author cannot approve their own plan", async () => {
-  const alice = await signIn("alice");
-  const bob = await signIn("bob");
-  const { id } = (await call("/workspaces", { method: "POST", token: alice, body: { name: "Rev" } })).value;
-  await call(`/workspaces/${id}/members`, { method: "POST", token: alice, body: { login: "bob" } });
-
-  const watching = connect(id, bob);
-  await Promise.all([watching.open, watching.synced]);
-
-  // Nothing to approve yet.
-  assert.equal(
-    (await call(`/workspaces/${id}/review`, { method: "POST", token: bob, body: { action: "approve" } })).status,
-    409,
-  );
-  const asked = await call(`/workspaces/${id}/review`, { method: "POST", token: alice, body: { action: "request" } });
-  assert.equal(asked.value.state, "requested");
-  assert.equal(asked.value.requestedBy, "alice");
-
-  const own = await call(`/workspaces/${id}/review`, { method: "POST", token: alice, body: { action: "approve" } });
-  assert.equal(own.status, 403);
-
-  const ok = await call(`/workspaces/${id}/review`, { method: "POST", token: bob, body: { action: "approve" } });
-  assert.equal(ok.value.state, "approved");
-  assert.equal(ok.value.decidedBy, "bob");
-
-  // Everyone in the room heard about it.
-  await until(() => watching.reviews.some((r) => r.state === "approved"));
-  watching.close();
+  await assert.rejects(connect(doc, eve, id).open, /401/);
+  // Naming a workspace does not get you into it — a member may open a document
+  // of theirs that has nothing written to it yet, and a stranger may not.
+  await assert.rejects(connect("not-a-document-yet", eve, id).open, /401/);
+  // And an id nobody has claimed, named against no workspace, is not a room.
+  await assert.rejects(connect("not-a-document-yet", alice).open, /401/);
 });
 
 test("plan.md answers to a member or the workspace's own token, and nobody else", async () => {
   const alice = await signIn("alice");
   const { id } = (await call("/workspaces", { method: "POST", token: alice, body: { name: "Read" } })).value;
-  const a = connect(id, alice);
-  await Promise.all([a.open, a.synced]);
-  a.doc.getMap("meta").set("markdown", "---\nstatus: ready\n---\n\n# Read\n");
-  await until(() => s.rooms.rooms.get(id)?.doc.getMap("meta").get("markdown")?.includes("# Read"));
+  const a = await openPlan(id, alice);
+  await publish(a, "---\nstatus: ready\n---\n\n# Read\n");
 
   const asMember = await call(`/w/${id}/plan.md`, { token: alice });
   assert.equal(asMember.status, 200);
@@ -226,10 +272,8 @@ test("plan.md answers to a member or the workspace's own token, and nobody else"
 test("a share link is its own token: many, listed, and revocable one at a time", async () => {
   const alice = await signIn("alice");
   const { id } = (await call("/workspaces", { method: "POST", token: alice, body: { name: "Share" } })).value;
-  const a = connect(id, alice);
-  await Promise.all([a.open, a.synced]);
-  a.doc.getMap("meta").set("markdown", "---\nstatus: ready\n---\n\n# Share\n");
-  await until(() => s.rooms.rooms.get(id)?.doc.getMap("meta").get("markdown")?.includes("# Share"));
+  const a = await openPlan(id, alice);
+  await publish(a, "---\nstatus: ready\n---\n\n# Share\n");
 
   const one = await call(`/workspaces/${id}/share`, { method: "POST", token: alice });
   assert.equal(one.status, 201);
@@ -239,10 +283,13 @@ test("a share link is its own token: many, listed, and revocable one at a time",
   const read = await call("/share/doc", { token: one.value.token });
   assert.equal(read.status, 200);
   assert.equal(read.value.name, "Share");
+  // A link names a file, and the default is the one every link minted before
+  // folders was already pointing at.
+  assert.equal(read.value.path, "plan.md");
   assert.match(read.value.markdown, /# Share/);
-  // The chip's state, and nothing else about the argument: no trail of who
-  // asked or decided, and no member list.
-  assert.deepEqual(read.value.review, { state: "none" });
+  // The file and nothing else about the room: no member list, and no review
+  // state, which the file's own `status:` has replaced.
+  assert.equal(read.value.review, undefined);
   assert.equal(read.value.members, undefined);
 
   const listed = await call(`/workspaces/${id}/share`, { token: alice });
@@ -297,13 +344,56 @@ test("an expired link answers exactly like a revoked one", async () => {
 
   // Thirty days is not something a test can wait for, so this one is minted
   // already expired — the route's own lifetime is the default, not a rule.
-  const dead = await s.db.createShareToken(id, "alice", -1000);
+  const dead = await s.db.createShareToken(id, "alice", "plan.md", -1000);
   assert.equal((await call("/share/doc", { token: dead.token })).status, 404);
   // And it never appears in the list, which only ever shows live links.
   assert.deepEqual(
     (await call(`/workspaces/${id}/share`, { token: alice })).value.map((l) => l.id),
     [live.value.id],
   );
+});
+
+test("a share link names a file, and copying out kills every link into the room", async () => {
+  const alice = await signIn("alice");
+  const { id } = (await call("/workspaces", { method: "POST", token: alice, body: { name: "Folder" } })).value;
+  const tree = connect(id, alice);
+  await Promise.all([tree.open, tree.synced]);
+  tree.doc.getMap("tree").set("notes/second.md", { kind: "file", doc: "second-doc" });
+  // The tree has to name the file before a socket into it can be authorised.
+  await until(() => s.rooms.rooms.get(id)?.doc.getMap("tree").get("notes/second.md"));
+  const second = connect("second-doc", alice, id);
+  await Promise.all([second.open, second.synced]);
+  second.doc.getMap("meta").set("markdown", "---\nstatus: draft\n---\n\n# Second\n");
+  await until(() => s.rooms.rooms.get("second-doc")?.doc.getMap("meta").get("markdown"));
+
+  const link = await call(`/workspaces/${id}/share`, {
+    method: "POST",
+    token: alice,
+    body: { path: "notes/second.md" },
+  });
+  assert.equal(link.status, 201);
+  assert.equal(link.value.path, "notes/second.md");
+  const read = await call("/share/doc", { token: link.value.token });
+  assert.equal(read.value.path, "notes/second.md");
+  assert.match(read.value.markdown, /# Second/);
+
+  // A link into a file that is not there is not a link.
+  assert.equal(
+    (await call(`/workspaces/${id}/share`, { method: "POST", token: alice, body: { path: "nope.md" } })).status,
+    404,
+  );
+
+  // Copying the plan out takes the room's links with it — one call, and the
+  // link into plan.md as well as the one into notes/second.md stop working.
+  const plan = await call(`/workspaces/${id}/share`, { method: "POST", token: alice });
+  const all = await call(`/workspaces/${id}/share/revoke`, { method: "POST", token: alice, body: { all: true } });
+  assert.equal(all.value.revoked, 2);
+  assert.equal((await call("/share/doc", { token: link.value.token })).status, 404);
+  assert.equal((await call("/share/doc", { token: plan.value.token })).status, 404);
+  assert.deepEqual((await call(`/workspaces/${id}/share`, { token: alice })).value, []);
+
+  second.close();
+  tree.close();
 });
 
 test("the share page is a shell: the fragment never reaches the server", async () => {

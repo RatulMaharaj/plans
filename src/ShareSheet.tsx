@@ -16,6 +16,9 @@ type Props = {
   /** The workspace being shared, and its name for the sheet's title. */
   id: string;
   name: string;
+  /** The file a new link opens. The token is still the workspace's, so the
+   *  list below is every live link into it, whichever file each one names. */
+  path: string;
   /** The app's toast, so failures are said in the usual voice. */
   notify: (text: string, kind?: "info" | "error") => void;
   onClose: () => void;
@@ -37,7 +40,7 @@ export function until(at: number, now = Date.now()): string {
   return `expires in ${days} days`;
 }
 
-export function ShareSheet({ id, name, notify, onClose }: Props) {
+export function ShareSheet({ id, name, path, notify, onClose }: Props) {
   const [links, setLinks] = useState<ShareLink[] | null>(null);
   const [minted, setMinted] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -68,12 +71,18 @@ export function ShareSheet({ id, name, notify, onClose }: Props) {
   const mint = async () => {
     setBusy(true);
     try {
-      const link = await workspace.share.mint(id);
+      const link = await workspace.share.mint(id, path);
       const url = workspace.shareUrl(link.token);
       track("share_link_created");
       setMinted(url);
       setLinks((prev) => [
-        { id: link.id, createdBy: link.createdBy, createdAt: link.createdAt, expiresAt: link.expiresAt },
+        {
+          id: link.id,
+          path: link.path,
+          createdBy: link.createdBy,
+          createdAt: link.createdAt,
+          expiresAt: link.expiresAt,
+        },
         ...(prev ?? []),
       ]);
       await navigator.clipboard.writeText(url).then(
@@ -114,11 +123,13 @@ export function ShareSheet({ id, name, notify, onClose }: Props) {
         }}
       >
         <div className="matter-head">
-          <span className="tag">Share “{name}”</span>
+          <span className="tag">
+            Share “{name} / {path}”
+          </span>
         </div>
         <p className="name-path">
-          A link anyone can open in a browser — read-only, live, no account. It stops working after
-          thirty days, or the moment you revoke it; the other links carry on.
+          A link to this file that anyone can open in a browser — read-only, live, no account. It
+          stops working after thirty days, or the moment you revoke it; the other links carry on.
         </p>
         {minted && (
           <input
@@ -140,7 +151,7 @@ export function ShareSheet({ id, name, notify, onClose }: Props) {
             links.map((l) => (
               <div className="share-row" key={l.id}>
                 <span className="share-who">
-                  @{l.createdBy} · {ago(l.createdAt)} · {until(l.expiresAt)}
+                  {l.path} · @{l.createdBy} · {ago(l.createdAt)} · {until(l.expiresAt)}
                 </span>
                 <button className="rail-btn" onClick={() => void revoke(l.id)}>
                   Revoke

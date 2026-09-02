@@ -42,20 +42,29 @@ export function configured(): boolean {
 
 export type Account = { login: string; name: string | null; avatar: string | null };
 
-export type Review = {
-  state: "none" | "requested" | "approved" | "changes";
-  requestedBy: string | null;
-  decidedBy: string | null;
-  at: number | null;
-};
-
 export type Workspace = {
   id: string;
   name: string;
   createdBy: string;
   createdAt: number;
   members: string[];
-  review: Review;
+};
+
+/**
+ * One line of a workspace's tree: a path, what is at it, and — for a file —
+ * the id of the document that holds it. A rename is a move of the path; `doc`
+ * does not change, so everyone editing the file carries on editing it.
+ *
+ * `status` is the file's `status:` frontmatter, written into the tree by
+ * whoever has the file open. It is a copy, and the file is the truth; it is
+ * here so a tree of fifty files can be drawn with its status dots without
+ * opening fifty rooms to read them.
+ */
+export type WorkspaceEntry = {
+  path: string;
+  kind: "file" | "folder";
+  doc: string | null;
+  status?: string | null;
 };
 
 /**
@@ -65,6 +74,8 @@ export type Workspace = {
  */
 export type ShareLink = {
   id: string;
+  /** The file in the workspace this link opens. */
+  path: string;
   createdBy: string;
   createdAt: number;
   expiresAt: number;
@@ -174,22 +185,31 @@ export const workspace = {
   get: (id: string) => call<Workspace>(`/workspaces/${id}`),
   create: (name: string) => call<Workspace>("/workspaces", { body: { name } }),
   invite: (id: string, login: string) => call<Workspace>(`/workspaces/${id}/members`, { body: { login } }),
-  review: (id: string, action: "request" | "approve" | "changes" | "clear") =>
-    call<Review>(`/workspaces/${id}/review`, { body: { action } }),
-  /** Mint the read token an outside agent uses for `GET /w/{id}/plan.md`. */
+  /**
+   * The tree, for a cold open: what the sidebar draws before a socket into
+   * the room is up. Once one is, the tree room's own map is the truth and
+   * this is not asked again.
+   */
+  tree: (id: string) => call<WorkspaceEntry[]>(`/workspaces/${id}/tree`),
+  /** Mint the read token an outside agent uses for `GET /w/{id}/{path}`. */
   readToken: (id: string) => call<{ token: string }>(`/workspaces/${id}/token`, { method: "POST" }),
-  readUrl: (id: string) => `${serverUrl()}/w/${id}/plan.md`,
+  readUrl: (id: string, path = "plan.md") => `${serverUrl()}/w/${id}/${path}`,
 
   /**
    * Share links: a token each, listed and revocable, for readers with no
-   * account. Minting, listing and revoking are member-only; the reading is
-   * the viewer's, with the token from the URL's fragment.
+   * account. A link names one file; the token is still the workspace's, so
+   * `revokeAll` is what copying a plan out of the room costs. Minting, listing
+   * and revoking are member-only; the reading is the viewer's, with the token
+   * from the URL's fragment.
    */
   share: {
-    mint: (id: string) => call<ShareLink & { token: string }>(`/workspaces/${id}/share`, { method: "POST" }),
+    mint: (id: string, path: string) =>
+      call<ShareLink & { token: string }>(`/workspaces/${id}/share`, { body: { path } }),
     list: (id: string) => call<ShareLink[]>(`/workspaces/${id}/share`),
     revoke: (id: string, linkId: string) =>
       call<{ ok: true }>(`/workspaces/${id}/share/revoke`, { body: { id: linkId } }),
+    revokeAll: (id: string) =>
+      call<{ ok: true; revoked: number }>(`/workspaces/${id}/share/revoke`, { body: { all: true } }),
   },
   /**
    * The secret rides in the fragment, which browsers never send: the server's
@@ -202,20 +222,21 @@ export const workspace = {
 
 const MSG_SYNC = 0;
 const MSG_AWARENESS = 1;
-const MSG_REVIEW = 2;
 
 export type Presence = { name: string; color: string };
 
-/** One open room: the doc, who is in it, and the server's word on review. */
+/** One open room: one document, and who else is in it. */
 export type Room = {
+  /** The document's id — a workspace's own id, for its tree. */
   id: string;
+  /** The workspace the document belongs to, which is what authorises it. */
+  workspaceId: string;
   doc: Y.Doc;
   awareness: Awareness;
   /** True once the server's state has arrived — until then the doc is empty
    *  for a reason that is not "the document is empty". */
   synced: boolean;
   onSynced: (fn: () => void) => () => void;
-  onReview: (fn: (r: Review) => void) => () => void;
   onStatus: (fn: (s: "connecting" | "open" | "closed") => void) => () => void;
   status: "connecting" | "open" | "closed";
   close: () => void;
@@ -232,17 +253,21 @@ export function colorFor(login: string): string {
 }
 
 /**
- * Open a workspace's document over a websocket that speaks y-websocket's
- * protocol, reconnecting on its own when the line drops. Yjs merges whatever
- * happened while it was away.
+ * Open one document of a workspace over a websocket that speaks
+ * y-websocket's protocol, reconnecting on its own when the line drops. Yjs
+ * merges whatever happened while it was away.
+ *
+ * `id` is the document — the workspace's own id opens its tree — and
+ * `workspaceId` is what the server checks membership against. They are both
+ * sent because a file made a moment ago is named by the tree before anything
+ * has been written to it, so the server has nothing else to look it up by.
  */
-export function openRoom(id: string, session: string, me: Presence): Room {
+export function openRoom(id: string, workspaceId: string, session: string, me: Presence): Room {
   const doc = new Y.Doc();
   const awareness = new Awareness(doc);
   awareness.setLocalStateField("user", me);
 
   const syncedFns = new Set<() => void>();
-  const reviewFns = new Set<(r: Review) => void>();
   const statusFns = new Set<(s: Room["status"]) => void>();
   let ws: WebSocket | null = null;
   let closed = false;
@@ -251,12 +276,12 @@ export function openRoom(id: string, session: string, me: Presence): Room {
 
   const room: Room = {
     id,
+    workspaceId,
     doc,
     awareness,
     synced: false,
     status: "connecting",
     onSynced: (fn) => (syncedFns.add(fn), () => syncedFns.delete(fn)),
-    onReview: (fn) => (reviewFns.add(fn), () => reviewFns.delete(fn)),
     onStatus: (fn) => (statusFns.add(fn), () => statusFns.delete(fn)),
     close: () => {
       closed = true;
@@ -296,7 +321,9 @@ export function openRoom(id: string, session: string, me: Presence): Room {
 
   const connect = () => {
     if (closed) return;
-    const url = `${serverUrl().replace(/^http/, "ws")}/ws/${id}?token=${encodeURIComponent(session)}`;
+    const url = `${serverUrl().replace(/^http/, "ws")}/ws/${id}?token=${encodeURIComponent(
+      session,
+    )}&workspace=${encodeURIComponent(workspaceId)}`;
     const sock = new WebSocket(url);
     sock.binaryType = "arraybuffer";
     ws = sock;
@@ -330,9 +357,6 @@ export function openRoom(id: string, session: string, me: Presence): Room {
         }
       } else if (type === MSG_AWARENESS) {
         applyAwarenessUpdate(awareness, decoding.readVarUint8Array(dec), "remote");
-      } else if (type === MSG_REVIEW) {
-        const r = JSON.parse(decoding.readVarString(dec)) as Review;
-        for (const fn of reviewFns) fn(r);
       }
     };
 
@@ -351,3 +375,105 @@ export function openRoom(id: string, session: string, me: Presence): Room {
   connect();
   return room;
 }
+
+// --- the tree -------------------------------------------------------------
+
+/**
+ * The shape a tree room's map holds at each path.
+ *
+ * Plain objects rather than nested Yjs types: an entry is replaced whole and
+ * never edited in place, so there is nothing here for two people to merge
+ * *within* — the merge that matters is over the map's keys, which is where
+ * two people making files at once actually meet.
+ */
+export type TreeValue = { kind: "file" | "folder"; doc?: string | null; status?: string | null };
+
+/** A workspace's tree lives in the room whose id is the workspace's own. */
+export const treeRoomId = (workspaceId: string) => workspaceId;
+
+export function treeMap(room: Room) {
+  return room.doc.getMap<TreeValue>("tree");
+}
+
+/** The tree as a sorted list, which is what the file tree draws. */
+export function treeEntries(room: Room): WorkspaceEntry[] {
+  const out: WorkspaceEntry[] = [];
+  for (const [path, v] of treeMap(room)) {
+    if (!v || typeof v !== "object") continue;
+    out.push({
+      path,
+      kind: v.kind === "folder" ? "folder" : "file",
+      doc: v.doc ?? null,
+      status: v.status ?? null,
+    });
+  }
+  return out.sort((a, b) => a.path.localeCompare(b.path));
+}
+
+/**
+ * An id for a new file's document.
+ *
+ * Made by whoever creates the file rather than asked for: creating a file is a
+ * transaction on the tree, and a round trip in the middle of it would be a
+ * file that exists for one person before it exists for anyone else. It is
+ * random enough that two people making a file at the same instant do not
+ * collide.
+ */
+export function newDocId(): string {
+  const bytes = new Uint8Array(12);
+  crypto.getRandomValues(bytes);
+  return btoa(String.fromCharCode(...bytes)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+/**
+ * Create, rename, move and delete, as transactions on the tree.
+ *
+ * Each one lands for everyone at once, and two people acting together merge
+ * rather than fight. A rename is a move of the key: the document id travels
+ * with it, so anyone with the file open carries on editing the same document
+ * under its new name.
+ */
+export const tree = {
+  /** The new file's document id, so the caller can open its room. */
+  addFile(room: Room, path: string): string {
+    const doc = newDocId();
+    treeMap(room).set(path, { kind: "file", doc });
+    return doc;
+  },
+  addFolder(room: Room, path: string) {
+    treeMap(room).set(path, { kind: "folder" });
+  },
+  /** Everything at or under `from`, moved to `to`. Folders bring their files. */
+  move(room: Room, from: string, to: string) {
+    if (from === to) return;
+    const map = treeMap(room);
+    room.doc.transact(() => {
+      for (const [path, value] of [...map]) {
+        if (path !== from && !path.startsWith(`${from}/`)) continue;
+        map.delete(path);
+        map.set(`${to}${path.slice(from.length)}`, value);
+      }
+    });
+  },
+  /** A file, or a folder and everything inside it. */
+  remove(room: Room, path: string) {
+    const map = treeMap(room);
+    room.doc.transact(() => {
+      for (const key of [...map.keys()]) {
+        if (key === path || key.startsWith(`${path}/`)) map.delete(key);
+      }
+    });
+  },
+  /**
+   * Copy a file's `status:` into the tree, so the sidebar can draw its dot.
+   * Only when it changed: a set of the same value is still an update, and
+   * every client with the file open runs this.
+   */
+  setStatus(room: Room, path: string, status: string | null) {
+    const map = treeMap(room);
+    const at = map.get(path);
+    if (!at || at.kind !== "file") return;
+    if ((at.status ?? null) === status) return;
+    map.set(path, { ...at, status });
+  },
+};

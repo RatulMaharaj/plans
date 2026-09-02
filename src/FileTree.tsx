@@ -4,6 +4,12 @@
  * Repositories are the top level; every markdown file in each one hangs below
  * it in its real folder structure. The git mark rides on each row, so the tree
  * carries state ambiently and the git panel is only needed to *act*.
+ *
+ * A workspace is a heading here too. It draws the same folders and files, and
+ * takes the same new-file, rename, move and delete — what it does not have is
+ * a disk: no git marks, no Finder, no terminal, no path to copy. Those items
+ * are absent from its menus rather than present and refusing, because a menu
+ * that offers what cannot happen is a menu that has to be learned.
  */
 import type { HandoffKind } from "./agent";
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
@@ -171,8 +177,16 @@ export function displayName(name: string, showExtensions: boolean) {
   return name.replace(/\.(md|markdown)$/i, "").replace(/[-_]+/g, " ");
 }
 
+/**
+ * A top-level heading: a repository on disk, or a workspace on the server.
+ * The tree draws both the same way and asks `workspaces` which is which.
+ */
+export type Shelf = RepoInfo & { workspace?: boolean };
+
 type Props = {
-  repos: RepoInfo[];
+  repos: Shelf[];
+  /** The paths in `repos` that are workspaces, not folders on disk. */
+  workspaces: Set<string>;
   filesByRepo: Record<string, PlanFile[]>;
   /** "<repo>::<relPath>" -> mark. */
   marks: Map<string, Mark>;
@@ -286,6 +300,8 @@ function dirKeys(nodes: Node[], repoPath: string, out: string[] = []): string[] 
  * state change at all — a keystroke, a toast, the clock in the status bar.
  */
 export const FileTree = memo(function FileTree(p: Props) {
+  /** Whether this heading is a workspace, and so has no disk under it. */
+  const isWs = (repoPath: string) => p.workspaces.has(repoPath);
   const [menu, setMenu] = useState<MenuAt | null>(null);
   /** Whether this menu's template list is showing. Per opening, not per tree. */
   const [newOpen, setNewOpen] = useState(false);
@@ -352,6 +368,9 @@ export const FileTree = memo(function FileTree(p: Props) {
   reposRef.current = p.repos;
   const reorderRef = useRef(p.onReorderRepo);
   reorderRef.current = p.onReorderRepo;
+  /** Which headings are workspaces, read from inside the bound drag handlers. */
+  const wsRef = useRef(p.workspaces);
+  wsRef.current = p.workspaces;
   /**
    * Where the dragged repository sat when the drag began.
    *
@@ -424,7 +443,10 @@ export const FileTree = memo(function FileTree(p: Props) {
    */
   const allowed = (it: Carried | null, repoPath: string, dir: string) => {
     if (!it) return false;
-    if (it.repo !== repoPath) return it.kind === "file";
+    // A workspace and a repository are not two folders on one disk: dragging
+    // between them is a copy across a boundary that has its own question —
+    // "Copy to repository", on the page — rather than a drop.
+    if (it.repo !== repoPath) return it.kind === "file" && !isWs(it.repo) && !isWs(repoPath);
     const from = it.path.includes("/") ? it.path.slice(0, it.path.lastIndexOf("/")) : "";
     if (from === dir) return false;
     if (it.kind === "dir" && (dir === it.path || dir.startsWith(`${it.path}/`))) return false;
@@ -455,7 +477,9 @@ export const FileTree = memo(function FileTree(p: Props) {
       const from = list.findIndex((r) => r.path === repoPath);
       if (from === -1) return;
       let to = 0;
-      for (const block of el.querySelectorAll<HTMLElement>(".tree-repo")) {
+      // Repositories only: a workspace's block is on the shelf but not in the
+      // list being reordered, so crossing one must not count as a slot.
+      for (const block of el.querySelectorAll<HTMLElement>(".tree-repo:not(.ws-block)")) {
         const r = block.getBoundingClientRect();
         if (y > r.top + r.height / 2) to += 1;
       }
@@ -487,7 +511,12 @@ export const FileTree = memo(function FileTree(p: Props) {
       }
       const spot = (document.elementFromPoint(e.clientX, e.clientY) as Element | null)
         ?.closest<HTMLElement>("[data-drop-key], [data-drop-pane]");
-      if (spot?.dataset.dropPane === "split" && carried.current.kind === "file") {
+      // The split pane holds files; a workspace's are not on disk to open there.
+      if (
+        spot?.dataset.dropPane === "split" &&
+        carried.current.kind === "file" &&
+        !wsRef.current.has(carried.current.repo)
+      ) {
         target.current = { split: true };
         setHot(spot);
         setOver(null);
@@ -607,6 +636,9 @@ export const FileTree = memo(function FileTree(p: Props) {
   // A filter is its own navigation — everything it matched should be visible.
   const filtering = p.filter.trim().length > 0;
 
+  /** The headings that are repositories, which are the ones that reorder. */
+  const disks = p.repos.filter((r) => !isWs(r.path));
+
   const row = (node: Node, repo: RepoInfo, depth: number): React.ReactNode => {
     const pad = { paddingLeft: `${10 + depth * 13}px` };
 
@@ -703,7 +735,9 @@ export const FileTree = memo(function FileTree(p: Props) {
    * would have to fight for room.
    */
   const newFileItems = (repo: string, dir: string) => {
-    if (p.templates.length < 2) {
+    // Templates are stamped out of a repository's templates folder, which is a
+    // folder on disk. A workspace's new file is a name and an empty document.
+    if (p.templates.length < 2 || isWs(repo)) {
       return (
         <button className="ctx-item" onClick={() => act(() => p.onNewFile(repo, dir))}>
           New file here
@@ -757,7 +791,9 @@ export const FileTree = memo(function FileTree(p: Props) {
         >
           <p className="ctx-path">
             {menu.kind === "repo"
-              ? "Repository"
+              ? isWs(menu.repo)
+                ? "Workspace"
+                : "Repository"
               : menu.path || "/"}
           </p>
 
@@ -769,17 +805,19 @@ export const FileTree = memo(function FileTree(p: Props) {
               >
                 Open
               </button>
-              <button
-                className="ctx-item"
-                onClick={() => act(() => p.onOpenSplit(menu.repo, menu.path))}
-              >
-                Open to the side
-              </button>
+              {!isWs(menu.repo) && (
+                <button
+                  className="ctx-item"
+                  onClick={() => act(() => p.onOpenSplit(menu.repo, menu.path))}
+                >
+                  Open to the side
+                </button>
+              )}
               {newFileItems(
                 menu.repo,
                 menu.path.includes("/") ? menu.path.slice(0, menu.path.lastIndexOf("/")) : "",
               )}
-              {p.onHandOff && (
+              {p.onHandOff && !isWs(menu.repo) && (
                 <>
                   <button
                     className="ctx-item"
@@ -826,36 +864,42 @@ export const FileTree = memo(function FileTree(p: Props) {
             </>
           )}
 
-          {/* The absolute path: what a terminal, an agent prompt, or another
-              app can actually open. menu.repo is the repository's absolute
-              path, so joining gives the file's. */}
-          <button
-            className="ctx-item"
-            onClick={() =>
-              act(() =>
-                void navigator.clipboard.writeText(
-                  menu.path ? `${menu.repo}/${menu.path}` : menu.repo,
-                ),
-              )
-            }
-          >
-            Copy path
-          </button>
+          {/* Everything below is about a place on disk, which is exactly what
+              a workspace does not have. */}
+          {!isWs(menu.repo) && (
+            <>
+              {/* The absolute path: what a terminal, an agent prompt, or
+                  another app can actually open. menu.repo is the repository's
+                  absolute path, so joining gives the file's. */}
+              <button
+                className="ctx-item"
+                onClick={() =>
+                  act(() =>
+                    void navigator.clipboard.writeText(
+                      menu.path ? `${menu.repo}/${menu.path}` : menu.repo,
+                    ),
+                  )
+                }
+              >
+                Copy path
+              </button>
 
-          <button
-            className="ctx-item"
-            onClick={() => act(() => p.onReveal(menu.repo, menu.path))}
-          >
-            Reveal in Finder
-          </button>
+              <button
+                className="ctx-item"
+                onClick={() => act(() => p.onReveal(menu.repo, menu.path))}
+              >
+                Reveal in Finder
+              </button>
 
-          {menu.kind === "repo" && (
-            <button
-              className="ctx-item"
-              onClick={() => act(() => p.onTerminal(menu.repo))}
-            >
-              Open in Terminal
-            </button>
+              {menu.kind === "repo" && (
+                <button
+                  className="ctx-item"
+                  onClick={() => act(() => p.onTerminal(menu.repo))}
+                >
+                  Open in Terminal
+                </button>
+              )}
+            </>
           )}
 
           {menu.kind === "file" && menu.mark !== "clean" && (
@@ -936,59 +980,61 @@ export const FileTree = memo(function FileTree(p: Props) {
                 Collapse all
               </button>
               {/* The drag without the steady hand: the same reorder, one step
-                  at a time, reachable from the keyboard. */}
-              {p.repos.findIndex((r) => r.path === menu.repo) > 0 && (
+                  at a time, reachable from the keyboard. Only the
+                  repositories are ordered by hand, and the index is into
+                  them — the workspaces sit under the shelf in the server's
+                  order and are not part of this list. */}
+              {!isWs(menu.repo) && disks.findIndex((r) => r.path === menu.repo) > 0 && (
                 <button
                   className="ctx-item"
                   onClick={() =>
                     act(() =>
-                      p.onReorderRepo(
-                        menu.repo,
-                        p.repos.findIndex((r) => r.path === menu.repo) - 1,
-                      ),
+                      p.onReorderRepo(menu.repo, disks.findIndex((r) => r.path === menu.repo) - 1),
                     )
                   }
                 >
                   Move up
                 </button>
               )}
-              {p.repos.findIndex((r) => r.path === menu.repo) < p.repos.length - 1 && (
-                <button
-                  className="ctx-item"
-                  onClick={() =>
-                    act(() =>
-                      p.onReorderRepo(
-                        menu.repo,
-                        p.repos.findIndex((r) => r.path === menu.repo) + 1,
-                      ),
-                    )
-                  }
-                >
-                  Move down
-                </button>
+              {!isWs(menu.repo) &&
+                disks.findIndex((r) => r.path === menu.repo) < disks.length - 1 && (
+                  <button
+                    className="ctx-item"
+                    onClick={() =>
+                      act(() =>
+                        p.onReorderRepo(menu.repo, disks.findIndex((r) => r.path === menu.repo) + 1),
+                      )
+                    }
+                  >
+                    Move down
+                  </button>
+                )}
+              {!isWs(menu.repo) && (
+                <>
+                  <span className="ctx-rule" />
+                  <button
+                    className="ctx-item"
+                    onClick={() => act(() => p.onRenameRepo(menu.repo))}
+                  >
+                    Rename in sidebar…
+                  </button>
+                  <button
+                    className="ctx-item warn"
+                    onClick={() =>
+                      act(() => {
+                        void confirmed(
+                          "Forget this repository? Nothing on disk is touched.",
+                          { ok: "Forget" },
+                        ).then((yes) => {
+                          if (yes) p.onForgetRepo(menu.repo);
+                        });
+                      })
+                    }
+                  >
+                    Forget this repository
+                  </button>
+                </>
               )}
-              <span className="ctx-rule" />
-              <button
-                className="ctx-item"
-                onClick={() => act(() => p.onRenameRepo(menu.repo))}
-              >
-                Rename in sidebar…
-              </button>
-              <button
-                className="ctx-item warn"
-                onClick={() =>
-                  act(() => {
-                    void confirmed(
-                      "Forget this repository? Nothing on disk is touched.",
-                      { ok: "Forget" },
-                    ).then((yes) => {
-                      if (yes) p.onForgetRepo(menu.repo);
-                    });
-                  })
-                }
-              >
-                Forget this repository
-              </button>
             </>
           )}
         </div>
@@ -999,16 +1045,22 @@ export const FileTree = memo(function FileTree(p: Props) {
         const nodes = trees[r.path]?.nodes ?? [];
         const changed = changedByRepo[r.path] ?? 0;
         return (
-          <div className="tree-repo" key={r.path}>
+          <div className={`tree-repo ${r.workspace ? "ws-block" : ""}`} key={r.path}>
             {/* Handle and drop spot at once, and not in conflict: the handle is
                 what a press on the heading starts, the drop spot is where a
                 file dragged onto it lands. Which gesture this is was settled at
                 the press, by what was pressed. */}
             <button
-              className={`row repo ${r.path === p.activeRepoPath ? "current" : ""} ${
-                over === `${r.path}::root` ? "over" : ""
-              } ${dragging?.repo === r.path && dragging.path === "" ? "lifted" : ""}`}
-              {...dragHandle(r.path, "", "repo")}
+              className={`row repo ${r.workspace ? "ws" : ""} ${
+                r.path === p.activeRepoPath ? "current" : ""
+              } ${over === `${r.path}::root` ? "over" : ""} ${
+                dragging?.repo === r.path && dragging.path === "" ? "lifted" : ""
+              }`}
+              {/* A workspace has no place on the shelf to be dragged to: the
+                  repositories are ordered by hand, the workspaces by the
+                  server's list. The heading is still a drop spot for a file
+                  moving to the workspace's root. */}
+              {...(r.workspace ? {} : dragHandle(r.path, "", "repo"))}
               {...dropSpot(r.path, "", `${r.path}::root`)}
               onClick={() => p.onToggle(key)}
               aria-expanded={open}
@@ -1042,7 +1094,7 @@ export const FileTree = memo(function FileTree(p: Props) {
                 nodes.map((n) => row(n, r, 1))
               ) : (
                 <p className="none pad small">
-                  {filtering ? "Nothing matches." : "No markdown here."}
+                  {filtering ? "Nothing matches." : r.workspace ? "Empty." : "No markdown here."}
                 </p>
               ))}
           </div>

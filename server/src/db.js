@@ -9,7 +9,13 @@
  *
  * The shape of the tables is `schema.js`, and the SQL that builds them is
  * generated from it into `../drizzle/` and applied on open (migrate.js).
- * Nothing here creates a table.
+ * Nothing here creates a table. A workspace used to be one document keyed by
+ * the workspace's id and a review state on the row; it is now a tree of
+ * documents keyed by their own ids, and the review gate is gone — `status:`
+ * in the file says what it said. `0001_workspace_folders.sql` is that change:
+ * the `docs` rows written by the old build keep their bytes and are given
+ * ids, and the tree naming one of them `plan.md` is written by the server the
+ * first time anybody asks for that workspace's tree.
  */
 import { randomBytes, createHash } from "node:crypto";
 
@@ -71,12 +77,6 @@ export async function openDb(url = process.env.DATABASE_URL ?? "") {
     createdBy: w.created_by,
     createdAt: Number(w.created_at),
     members,
-    review: {
-      state: w.review_state,
-      requestedBy: w.review_requested_by,
-      decidedBy: w.review_decided_by,
-      at: w.review_at === null ? null : Number(w.review_at),
-    },
   });
   const membersOf = async (id) =>
     (await c.query("SELECT login FROM members WHERE workspace_id = $1 ORDER BY login", [id])).map(
@@ -140,47 +140,33 @@ export async function openDb(url = process.env.DATABASE_URL ?? "") {
     isMember: async (id, login) =>
       !!(await one("SELECT 1 AS ok FROM members WHERE workspace_id = $1 AND login = $2", [id, login])),
 
-    // --- review ------------------------------------------------------------
+    // --- the documents -----------------------------------------------------
     /**
-     * The one rule the clients cannot be trusted with: whoever asked for the
-     * review cannot be the one who grants it.
+     * Which workspace a room belongs to, and whether it is that workspace's
+     * tree or one of its files. This is what the websocket's membership check
+     * is made of: a document is reachable by whoever is in the workspace that
+     * owns it, and by nobody else.
      */
-    async review(id, action, login) {
-      const w = await one("SELECT * FROM workspaces WHERE id = $1", [id]);
-      if (!w) return { error: 404 };
-      const set = (state, requestedBy, decidedBy) =>
-        c.query(
-          `UPDATE workspaces SET review_state = $1, review_requested_by = $2, review_decided_by = $3, review_at = $4
-           WHERE id = $5`,
-          [state, requestedBy, decidedBy, now(), id],
-        );
-      if (action === "request") {
-        await set("requested", login, null);
-      } else if (action === "approve" || action === "changes") {
-        if (w.review_state !== "requested") return { error: 409, reason: "no review is open" };
-        if (w.review_requested_by === login) {
-          return { error: 403, reason: "the author cannot approve their own plan" };
-        }
-        await set(action === "approve" ? "approved" : "changes", w.review_requested_by, login);
-      } else if (action === "clear") {
-        await set("none", null, null);
-      } else {
-        return { error: 400, reason: `unknown action ${action}` };
-      }
-      return { review: (await this.workspace(id)).review };
-    },
-
-    // --- the document ------------------------------------------------------
+    doc: (id) => one("SELECT id, workspace_id, kind FROM docs WHERE id = $1", [id]),
+    /** Every document of a workspace, oldest first; `kind` narrows it. */
+    docsFor: (workspaceId, kind = null) =>
+      c.query(
+        `SELECT id, workspace_id, kind FROM docs
+         WHERE workspace_id = $1 AND ($2::text IS NULL OR kind = $2)
+         ORDER BY updated_at`,
+        [workspaceId, kind],
+      ),
     async loadDoc(id) {
-      const row = await one("SELECT state FROM docs WHERE workspace_id = $1", [id]);
+      const row = await one("SELECT state FROM docs WHERE id = $1", [id]);
       return row ? new Uint8Array(row.state) : null;
     },
-    saveDoc: (id, state) =>
+    saveDoc: (id, workspaceId, kind, state) =>
       c.query(
-        `INSERT INTO docs (workspace_id, state, updated_at) VALUES ($1, $2, $3)
-         ON CONFLICT (workspace_id) DO UPDATE SET state = EXCLUDED.state, updated_at = EXCLUDED.updated_at`,
-        [id, Buffer.from(state), now()],
+        `INSERT INTO docs (id, workspace_id, kind, state, updated_at) VALUES ($1, $2, $3, $4, $5)
+         ON CONFLICT (id) DO UPDATE SET state = EXCLUDED.state, updated_at = EXCLUDED.updated_at`,
+        [id, workspaceId, kind, Buffer.from(state), now()],
       ),
+    dropDoc: (id) => c.query("DELETE FROM docs WHERE id = $1", [id]),
 
     // --- the read endpoint's key ------------------------------------------
     async createReadToken(id, login) {
@@ -207,16 +193,16 @@ export async function openDb(url = process.env.DATABASE_URL ?? "") {
      * should never have the other in it. The reasoning is in
      * plans/sharable-links.md.
      */
-    async createShareToken(workspaceId, login, ttl = SHARE_TTL) {
+    async createShareToken(workspaceId, login, path = "plan.md", ttl = SHARE_TTL) {
       const token = newToken();
       const id = newId();
       const at = now();
       await c.query(
-        `INSERT INTO share_tokens (id, token_hash, workspace_id, created_by, created_at, expires_at)
-         VALUES ($1, $2, $3, $4, $5, $6)`,
-        [id, hashToken(token), workspaceId, login, at, at + ttl],
+        `INSERT INTO share_tokens (id, token_hash, workspace_id, created_by, created_at, expires_at, path)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+        [id, hashToken(token), workspaceId, login, at, at + ttl, path],
       );
-      return { id, token, createdBy: login, createdAt: at, expiresAt: at + ttl };
+      return { id, token, path, createdBy: login, createdAt: at, expiresAt: at + ttl };
     },
     /**
      * The live links, newest first. A revoked or expired one is nobody's
@@ -225,13 +211,14 @@ export async function openDb(url = process.env.DATABASE_URL ?? "") {
      */
     async shareTokens(workspaceId) {
       const rows = await c.query(
-        `SELECT id, created_by, created_at, expires_at FROM share_tokens
+        `SELECT id, created_by, created_at, expires_at, path FROM share_tokens
          WHERE workspace_id = $1 AND revoked_at IS NULL AND expires_at > $2
          ORDER BY created_at DESC`,
         [workspaceId, now()],
       );
       return rows.map((r) => ({
         id: r.id,
+        path: r.path ?? "plan.md",
         createdBy: r.created_by,
         createdAt: Number(r.created_at),
         expiresAt: Number(r.expires_at),
@@ -246,18 +233,30 @@ export async function openDb(url = process.env.DATABASE_URL ?? "") {
       );
       return rows.length > 0;
     },
-    /** Revoked, expired, or never minted here: all three answer `null`. */
-    async workspaceForShareToken(token) {
-      if (!token) return null;
-      return (
-        (
-          await one(
-            `SELECT workspace_id FROM share_tokens
-             WHERE token_hash = $1 AND revoked_at IS NULL AND expires_at > $2`,
-            [hashToken(token), now()],
-          )
-        )?.workspace_id ?? null
+    /**
+     * Kill every live link into a workspace at once.
+     *
+     * The token is per workspace even though a link names a file, so this is
+     * what "the argument has left the room" costs: copying a plan out into a
+     * repository revokes the links that were pointing at the room's copy of it.
+     */
+    async revokeShareTokens(workspaceId) {
+      const rows = await c.query(
+        `UPDATE share_tokens SET revoked_at = $1
+         WHERE workspace_id = $2 AND revoked_at IS NULL RETURNING id`,
+        [now(), workspaceId],
       );
+      return rows.length;
+    },
+    /** Revoked, expired, or never minted here: all three answer `null`. */
+    async shareTarget(token) {
+      if (!token) return null;
+      const row = await one(
+        `SELECT workspace_id, path FROM share_tokens
+         WHERE token_hash = $1 AND revoked_at IS NULL AND expires_at > $2`,
+        [hashToken(token), now()],
+      );
+      return row ? { workspaceId: row.workspace_id, path: row.path ?? "plan.md" } : null;
     },
   };
 }

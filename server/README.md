@@ -1,16 +1,45 @@
 # The workspace server
 
-A workspace is a room where a plan gets argued: a hosted markdown document
-several people edit at once, with cursors and presence, and a review gate at
-the end. When the argument settles, the plan leaves the room — copied into a
-local repository from the app — and everything downstream works exactly as it
-does for any other file. The workspace is upstream of the file world, not a
-replacement for it. The reasoning is in
-[`plans/hosted-workspaces.md`](../plans/hosted-workspaces.md).
+A workspace is a folder of markdown files several people edit at once, with
+cursors and presence, hosted rather than backed by a repository. Files and
+folders are created, renamed, moved and deleted as on disk, and every change
+lands for everyone as it happens. When an argument settles, the plan leaves the
+folder — copied into a local repository from the app — and everything
+downstream works exactly as it does for any other file. The workspace is
+upstream of the file world, not a replacement for it. The reasoning is in
+[`plans/hosted-workspaces.md`](../plans/hosted-workspaces.md) and
+[`plans/workspace-folders/`](../plans/workspace-folders).
 
-This is the room. One Node process, one SQLite file, one websocket per open
-document. Nothing here is a queue, a second database, or a framework, and the
-moment it wants one the scope has slipped.
+This is the folder. One Node process, one Postgres database, one websocket per
+open document. Nothing here is a queue, a second database, or a framework, and
+the moment it wants one the scope has slipped.
+
+## Rooms, trees and files
+
+A room is one Yjs document, and a workspace is made of several:
+
+- **The tree** is the room whose id *is* the workspace's id. It holds a map of
+  path → `{ kind: "file" | "folder", doc: <id> }`, so create, rename, move and
+  delete are transactions on a map everyone is looking at, and two people
+  acting at once merge rather than fight. A rename is a move of the key: the
+  document id does not change, so anyone with the file open carries on editing
+  the same document under its new name.
+- **Each file** is a room of its own, keyed by the document id the tree gives
+  it. Its `meta.markdown` is whatever the last editing client serialised, which
+  is what the read endpoint and the share viewer answer with — the server needs
+  no editor schema to serve a file.
+
+Which workspace a document belongs to is what authorises the socket, and it
+comes from the `docs` table. A file made a moment ago has no row there — its
+id is minted by whoever created it, because a round trip in the middle of a
+tree transaction would be a file that exists for one person before it exists
+for anyone — so the socket carries `?workspace=<id>` and membership of that
+workspace is what lets it in. A document that *does* have a row is judged by
+that row, so naming your own workspace cannot reach anyone else's document.
+
+Every workspace has a `plan.md`. A new one is created with it; a workspace
+made before folders keeps its one document under that name, so the read
+endpoint and every share link minted back then carry on answering.
 
 ## Running it
 
@@ -115,13 +144,20 @@ its subject has ever signed in.
 
 ## What it holds
 
-Users by email; sessions, as hashed tokens; workspaces, their members (by
-email, so an invite can precede the invitee's first sign-in), the review
-state; the read token and any share links, hashed; and each workspace's
-document as a Yjs update blob, in Postgres. The document's
-markdown is whatever the last editing client serialised, kept in the same Yjs
-doc under `meta.markdown`, so the read endpoint answers without needing an
-editor's schema on the server.
+Users by email; sessions, as hashed tokens; workspaces and their members (by
+email, so an invite can precede the invitee's first sign-in); the read token
+and any share links, hashed, each link naming a file; and every document as a
+Yjs update blob in `docs`, keyed by its own id and carrying the workspace it
+belongs to and whether it is that workspace's tree or one of its files.
+
+There is no review state. A workspace used to hold one — requested, approved,
+changes, with the rule that the author could not approve their own plan — and
+it has been retired: `status:` in a file's frontmatter and `approved` as a
+human's word say what the gate said, and they travel with the file into the
+repository instead of staying behind on a server. `0001_workspace_folders.sql`
+is where both go: the review columns are dropped, and the old
+one-document-per-workspace shape of `docs` becomes one row per document, each
+old row keeping its bytes and gaining an id of its own.
 
 ## The API
 
@@ -136,23 +172,30 @@ Every call is JSON, and every call that needs a person carries
 | `GET /me`                            | Who the token belongs to.                                                                    |
 | `GET /workspaces`                    | The workspaces you belong to.                                                                |
 | `POST /workspaces`                   | `{ name }` → a new workspace with you in it.                                                 |
-| `GET /workspaces/:id`                | One workspace: members and review state.                                                     |
+| `GET /workspaces/:id`                | One workspace: its name and members.                                                          |
 | `POST /workspaces/:id/members`       | `{ login }` → invite by email.                                                                |
-| `POST /workspaces/:id/review`        | `{ action: request \| approve \| changes \| clear }`. The requester cannot approve.           |
+| `GET /workspaces/:id/tree`           | The tree, for a cold open: `[{ path, kind, doc, status }]`.                                   |
 | `POST /workspaces/:id/token`         | Mint a read token for this workspace, for the factory's secrets.                             |
-| `GET /w/:id/plan.md`                 | The document as markdown — for a member's session or the workspace's read token.             |
-| `POST /workspaces/:id/share`         | Mint a share link's token → `{ id, token, createdBy, createdAt, expiresAt }`.                  |
+| `GET /w/:id/`                        | The folder: `{ name, files: [{ path, kind }] }`.                                              |
+| `GET /w/:id/<path>`                  | One file as markdown — for a member's session or the workspace's read token.                  |
+| `POST /workspaces/:id/share`         | `{ path }` → a link to that file: `{ id, token, path, createdBy, createdAt, expiresAt }`.      |
 | `GET /workspaces/:id/share`          | The live links, newest first, for the revoke list.                                            |
-| `POST /workspaces/:id/share/revoke`  | `{ id }` → that one link stops working. The others, and the read token, do not.               |
-| `GET /share/doc`                     | The shared document, for a share token: `{ name, review: { state }, markdown }`.               |
+| `POST /workspaces/:id/share/revoke`  | `{ id }` → that one link stops working; `{ all: true }` → every link into this workspace does. |
+| `GET /share/doc`                     | The shared file, for a share token: `{ name, path, markdown }`.                                |
 | `GET /share`                         | The viewer page: a static shell that reads the token from `location.hash`.                    |
-| `WS /ws/:id?token=<session>`         | The live document: y-websocket's sync and awareness messages, plus review announcements.     |
+| `WS /ws/:id?token=<session>&workspace=<id>` | One live document — a tree or a file: y-websocket's sync and awareness messages.       |
 
 A workspace you are not a member of answers `404`, never `403`: a stranger
 learns nothing, not even that the id exists. A share token that was revoked,
 that has expired, or that was never minted here answers the same way.
 
 ### Share links
+
+A share link names one file: `POST /workspaces/:id/share` takes the path, and
+the viewer shows that file. The token is still the workspace's, so one
+revocation kills one link and `{ all: true }` kills every link into the
+workspace — which is what copying a plan out into a repository does, because
+the document the links point at is a file with a repository's own rules now.
 
 A share link is `https://<server>/share#<token>`. Browsers never send the
 fragment, so the access log, any proxy and any unfurler see `/share` and get a
@@ -172,9 +215,10 @@ from outside. The reasoning is in
 [`plans/sharable-links.md`](../plans/sharable-links.md).
 
 `server/src/share.html` is the whole viewer: one self-contained file, no build
-step and no framework, with the document rendered at reading width, raw HTML
-escaped, frontmatter shown as a status chip, and a print stylesheet — ⌘P is the
-export button.
+step and no framework, with the file rendered at reading width, raw HTML
+escaped, frontmatter shown as a status chip, mermaid fences drawn as diagrams
+(one module import from a CDN; failing leaves the diagram's own source on the
+page), and a print stylesheet — ⌘P is the export button.
 
 ## Tests
 

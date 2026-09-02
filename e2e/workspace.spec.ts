@@ -1,12 +1,12 @@
 /**
- * A workspace, end to end: two people in one document.
+ * A workspace, end to end: two people in one folder of files.
  *
  * The Rust boundary is faked as everywhere else, but the workspace server is
  * real — started here, in memory, with the dev sign-in on — because the whole
  * feature is the wire, and a fake of the wire would prove nothing. Two browser
  * contexts play two people; what is asserted is what each of them sees.
  */
-import { test, expect, type Browser, type Page } from "@playwright/test";
+import { test, expect, type Browser, type Locator, type Page } from "@playwright/test";
 import { spawn, type ChildProcess } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
@@ -94,25 +94,45 @@ async function boot(browser: Browser, login: string): Promise<Page> {
 }
 
 const editor = (page: Page) => page.locator(".milkdown .ProseMirror");
+/** The heading a workspace has in the file tree. */
+const heading = (page: Page, name: string) => page.locator(".row.repo.ws", { hasText: name });
+const row = (page: Page, name: string) => page.locator(".row.file", { hasText: name });
 
-test("two people argue a plan in one room, review it, and copy it out", async ({ browser }) => {
+/** Right-click a row and press one item of the menu that opens. */
+async function menu(page: Page, at: Locator, item: string) {
+  await at.click({ button: "right" });
+  await page.locator(".ctx .ctx-item", { hasText: item }).first().click();
+}
+
+/** Answer the one-line question a menu item asked. */
+async function answer(page: Page, value: string, confirm: string) {
+  await page.locator(".matter-sheet .name-field").fill(value);
+  await page.locator(".matter-sheet .act", { hasText: confirm }).click();
+}
+
+/** The workspace the signed-in person has, for the endpoints below. */
+async function only(token: string) {
+  const list = await (await fetch(`${base}/workspaces`, { headers: { Authorization: `Bearer ${token}` } })).json();
+  return list[0].id;
+}
+
+test("a workspace is a folder in the tree, and both people see every change", async ({ browser }) => {
   const alice = await boot(browser, "alice");
 
-  // A room with only alice in it.
+  // A workspace is a heading in the file tree, with one file already in it.
   await alice.locator(".ws-new").click();
-  await alice.locator(".matter-sheet .name-field").fill("Roadmap");
-  await alice.locator(".matter-sheet .act", { hasText: "Create" }).click();
-  await expect(alice.locator(".page-path")).toHaveText("workspace · Roadmap");
+  await answer(alice, "Roadmap", "Create");
+  await expect(heading(alice, "Roadmap")).toBeVisible();
+  await expect(alice.locator(".page-path")).toHaveText("Roadmap · plan.md");
   await expect(editor(alice).locator("h1")).toHaveText("Roadmap");
-  await expect(alice.locator(".ws-row", { hasText: "Roadmap" })).toBeVisible();
 
-  // Untouched, the room already answers as a file: the template is published
+  // Untouched, the file already answers as a file: the template is published
   // without anyone typing, or the factory would read an empty plan.
   const aliceToken = await session("alice");
-  const fresh = await (await fetch(`${base}/workspaces`, { headers: { Authorization: `Bearer ${aliceToken}` } })).json();
+  const id = await only(aliceToken);
   await expect
     .poll(async () =>
-      (await fetch(`${base}/w/${fresh[0].id}/plan.md`, { headers: { Authorization: `Bearer ${aliceToken}` } })).text(),
+      (await fetch(`${base}/w/${id}/plan.md`, { headers: { Authorization: `Bearer ${aliceToken}` } })).text(),
     )
     .toContain("# Roadmap");
 
@@ -121,13 +141,15 @@ test("two people argue a plan in one room, review it, and copy it out", async ({
   await expect(bob.locator(".ws-hint")).toContainText("None yet");
 
   await alice.locator(".page-actions .rail-btn", { hasText: "Invite" }).click();
-  await alice.locator(".matter-sheet .name-field").fill("bob");
-  await alice.locator(".matter-sheet .act", { hasText: "Invite" }).click();
+  await answer(alice, "bob", "Invite");
 
-  // The invite reaches bob on his next look at the list.
+  // The invite reaches bob on his next look at the list, and what he gets is
+  // the folder — drawn from the tree, without a socket into it yet.
   await bob.reload();
   await expect(bob.getByTestId("account")).toHaveText("bob");
-  await bob.locator(".ws-row", { hasText: "Roadmap" }).click();
+  await expect(heading(bob, "Roadmap")).toBeVisible();
+  await heading(bob, "Roadmap").click();
+  await row(bob, "plan").click();
   await expect(editor(bob).locator("h1")).toHaveText("Roadmap");
 
   // Alice types; bob sees the words and where alice is.
@@ -139,68 +161,110 @@ test("two people argue a plan in one room, review it, and copy it out", async ({
   await expect(bob.locator(".ProseMirror-yjs-cursor")).toBeVisible();
   await expect(bob.locator(".ProseMirror-yjs-cursor > div")).toHaveText("alice");
 
-  // And the other way.
-  await editor(bob).locator("p", { hasText: "Ship the room" }).click();
+  // Alice makes a folder and a file in it. Bob's tree grows on its own.
+  await heading(alice, "Roadmap").click({ button: "right" });
+  await alice.locator(".ctx .ctx-item", { hasText: "New folder here" }).click();
+  await answer(alice, "notes", "Create");
+  await expect(alice.locator(".row.dir", { hasText: "notes" })).toBeVisible();
+  await expect(bob.locator(".row.dir", { hasText: "notes" })).toBeVisible();
+
+  await alice.locator(".row.dir", { hasText: "notes" }).click({ button: "right" });
+  await alice.locator(".ctx .ctx-item", { hasText: "New file here" }).click();
+  await answer(alice, "risks.md", "Create");
+  await expect(alice.locator(".page-path")).toHaveText("Roadmap · notes/risks.md");
+  await expect(editor(alice).locator("h1")).toHaveText("Risks");
+
+  // Bob sees it appear and opens it — the same document, not a copy.
+  await expect(row(bob, "risks")).toBeVisible();
+  await row(bob, "risks").click();
+  await editor(bob).locator("h1").click();
   await bob.keyboard.press("End");
-  await bob.keyboard.type(" Then the door.");
-  await expect(editor(alice)).toContainText("Ship the room first. Then the door.");
+  await bob.keyboard.press("Enter");
+  await bob.keyboard.type("The server falls over.");
+  await expect(editor(alice)).toContainText("The server falls over.");
 
-  // Alice asks for review, and cannot be the one who grants it.
-  await alice.locator(".page-actions .rail-btn", { hasText: "Request review" }).click();
-  await expect(alice.getByTestId("review-state")).toHaveText("in review");
-  await expect(alice.locator(".page-actions .rail-btn", { hasText: "Approve" })).toBeDisabled();
+  // A rename lands on both sides mid-edit, and the document travels with it:
+  // alice is still typing into the file bob renamed.
+  await menu(bob, row(bob, "risks"), "Rename…");
+  await answer(bob, "dangers.md", "Rename");
+  await expect(row(alice, "dangers")).toBeVisible();
+  await expect(alice.locator(".page-path")).toHaveText("Roadmap · notes/dangers.md");
+  await alice.keyboard.type(" Twice.");
+  await expect(editor(bob)).toContainText("The server falls over. Twice.");
 
-  // Bob heard about it over the wire, and can.
-  await expect(bob.getByTestId("review-state")).toHaveText("in review");
-  const approve = bob.locator(".page-actions .rail-btn", { hasText: "Approve" });
-  await expect(approve).toBeEnabled();
-  await approve.click();
-  await expect(bob.getByTestId("review-state")).toHaveText("approved");
-  await expect(alice.getByTestId("review-state")).toHaveText("approved");
-  await expect(alice.locator(".ws-row .status-dot.tone-approved")).toBeVisible();
-
-  // Out of the room and into the repository, stamped with the outcome.
-  await alice.locator(".page-actions .rail-btn", { hasText: "Copy to repository" }).click();
-  await expect(alice.locator(".matter-sheet .name-field")).toHaveValue("Roadmap");
-  // Nothing has been created in this repository yet, so the root it is.
-  await expect(alice.locator(".matter-sheet .name-path")).toHaveText("Roadmap.md");
-  await alice.locator(".matter-sheet .act", { hasText: "Copy" }).click();
-
-  await expect(alice.locator(".page-path")).toHaveText("Roadmap.md");
-  const written = await alice.evaluate(() => (window as any).__fake.repos[0].files["Roadmap.md"]);
-  expect(written).toContain("status: ready");
-  expect(written).toContain("approved-by: bob");
-  expect(written).toContain("# Roadmap");
-  expect(written).toContain("Ship the room first. Then the door.");
-
-  // The server hands the same text to anyone holding the workspace's token.
-  const token = await session("alice");
-  const list = await (await fetch(`${base}/workspaces`, { headers: { Authorization: `Bearer ${token}` } })).json();
-  const minted = await (
-    await fetch(`${base}/workspaces/${list[0].id}/token`, { method: "POST", headers: { Authorization: `Bearer ${token}` } })
-  ).json();
-  const served = await (await fetch(`${base}/w/${list[0].id}/plan.md`, { headers: { Authorization: `Bearer ${minted.token}` } })).text();
-  expect(served).toContain("Ship the room first. Then the door.");
+  // And the read endpoint knows the folder by its new name.
+  await expect
+    .poll(async () =>
+      (
+        await fetch(`${base}/w/${id}/notes/dangers.md`, {
+          headers: { Authorization: `Bearer ${aliceToken}` },
+        })
+      ).text(),
+    )
+    .toContain("The server falls over. Twice.");
 
   expect((alice as any).__faults).toEqual([]);
   expect((bob as any).__faults).toEqual([]);
 });
 
-test("a share link opens the document for someone with no account, until it is revoked", async ({
+test("the read endpoint lists the tree and answers a path, for a member or the workspace's token", async ({
   browser,
 }) => {
   const alice = await boot(browser, "alice");
   await alice.locator(".ws-new").click();
-  await alice.locator(".matter-sheet .name-field").fill("Sharing");
-  await alice.locator(".matter-sheet .act", { hasText: "Create" }).click();
+  await answer(alice, "Reading", "Create");
+  await expect(editor(alice).locator("h1")).toHaveText("Reading");
+
+  await heading(alice, "Reading").click({ button: "right" });
+  await alice.locator(".ctx .ctx-item", { hasText: "New file here" }).click();
+  await answer(alice, "second.md", "Create");
+  await expect(alice.locator(".page-path")).toHaveText("Reading · second.md");
+
+  const token = await session("alice");
+  const id = await only(token);
+  const minted = await (
+    await fetch(`${base}/workspaces/${id}/token`, { method: "POST", headers: { Authorization: `Bearer ${token}` } })
+  ).json();
+  const key = { Authorization: `Bearer ${minted.token}` };
+
+  // The listing is the folder; the old `plan.md` shape still answers.
+  await expect
+    .poll(async () => {
+      const r = await fetch(`${base}/w/${id}/`, { headers: key });
+      return r.ok ? (await r.json()).files.map((f: { path: string }) => f.path).sort() : [];
+    })
+    .toEqual(["plan.md", "second.md"]);
+  expect(await (await fetch(`${base}/w/${id}/plan.md`, { headers: key })).text()).toContain("# Reading");
+  await expect
+    .poll(async () => (await fetch(`${base}/w/${id}/second.md`, { headers: key })).text())
+    .toContain("# Second");
+
+  // A file the tree does not name, and a stranger, are both nothing.
+  expect((await fetch(`${base}/w/${id}/nope.md`, { headers: key })).status).toBe(404);
+  const eve = await session("eve");
+  expect((await fetch(`${base}/w/${id}/`, { headers: { Authorization: `Bearer ${eve}` } })).status).toBe(404);
+
+  expect((alice as any).__faults).toEqual([]);
+});
+
+test("a share link opens the file it names, and copying out kills every link", async ({ browser }) => {
+  const alice = await boot(browser, "alice");
+  await alice.locator(".ws-new").click();
+  await answer(alice, "Sharing", "Create");
   await expect(editor(alice).locator("h1")).toHaveText("Sharing");
 
+  await heading(alice, "Sharing").click({ button: "right" });
+  await alice.locator(".ctx .ctx-item", { hasText: "New file here" }).click();
+  await answer(alice, "detail.md", "Create");
+  await expect(alice.locator(".page-path")).toHaveText("Sharing · detail.md");
   await editor(alice).locator("h1").click();
   await alice.keyboard.press("End");
   await alice.keyboard.press("Enter");
   await alice.keyboard.type("Anyone with the link can read this.");
 
+  // The sheet names the open file, and so does the link it mints.
   await alice.locator(".page-actions .rail-btn", { hasText: "Share" }).click();
+  await expect(alice.getByTestId("share-sheet")).toContainText("Sharing / detail.md");
   await alice.getByTestId("share-sheet").locator(".act", { hasText: "New link" }).click();
   const link = await alice.getByTestId("share-link").inputValue();
   expect(link).toContain("/share#");
@@ -218,7 +282,8 @@ test("a share link opens the document for someone with no account, until it is r
   // A reader with no session, no app and no repository — a browser and a URL.
   const reader = await (await browser.newContext()).newPage();
   await reader.goto(link);
-  await expect(reader.locator("#doc h1")).toHaveText("Sharing");
+  await expect(reader.locator(".head .name")).toHaveText("Sharing / detail.md");
+  await expect(reader.locator("#doc h1")).toHaveText("Detail");
   await expect(reader.locator("#doc")).toContainText("Anyone with the link can read this.");
 
   // A link whose fragment was cleaned off is a different failure from a dead
@@ -232,6 +297,27 @@ test("a share link opens the document for someone with no account, until it is r
   await expect(alice.getByTestId("share-sheet")).toContainText("No links yet");
   await reader.goto(link);
   await expect(reader.locator(".note")).toContainText("no longer works");
+
+  // Out of the room and into the repository. The plan's own frontmatter is
+  // what travels — there is no review gate to stamp — and the workspace's
+  // remaining links stop working, because the document is a file now.
+  await alice.getByTestId("share-sheet").locator(".act", { hasText: "New link" }).click();
+  const second = await alice.getByTestId("share-link").inputValue();
+  await alice.locator(".matter-scrim").click({ position: { x: 5, y: 5 } });
+  await expect(alice.getByTestId("share-sheet")).toHaveCount(0);
+  await alice.locator(".page-actions .rail-btn", { hasText: "Copy to repository" }).click();
+  await expect(alice.locator(".matter-sheet .name-field")).toHaveValue("Detail");
+  await expect(alice.locator(".matter-sheet .name-path")).toHaveText("Detail.md");
+  await alice.locator(".matter-sheet .act", { hasText: "Copy" }).click();
+
+  await expect(alice.locator(".page-path")).toHaveText("Detail.md");
+  const written = await alice.evaluate(() => (window as any).__fake.repos[0].files["Detail.md"]);
+  expect(written).toContain("Anyone with the link can read this.");
+  await expect
+    .poll(async () =>
+      (await fetch(`${base}/share/doc`, { headers: { Authorization: `Bearer ${second.split("#")[1]}` } })).status,
+    )
+    .toBe(404);
 
   expect((alice as any).__faults).toEqual([]);
 });
