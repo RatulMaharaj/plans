@@ -105,6 +105,14 @@ test("a stranger sees nothing", async () => {
   assert.equal((await call("/me", { token: "nope" })).status, 401);
 });
 
+test("an invite is an email, kept lowercase", async () => {
+  const alice = await signIn("alice");
+  const { id } = (await call("/workspaces", { method: "POST", token: alice, body: { name: "Mail" } })).value;
+  const r = await call(`/workspaces/${id}/members`, { method: "POST", token: alice, body: { login: "Dana@Example.com" } });
+  assert.deepEqual(r.value.members, ["alice", "dana@example.com"]);
+  assert.equal((await call(`/workspaces/${id}/members`, { method: "POST", token: alice, body: { login: "not an email" } })).status, 400);
+});
+
 test("a workspace belongs to whoever made it, and to whom they invite", async () => {
   const alice = await signIn("alice");
   const bob = await signIn("bob");
@@ -309,38 +317,80 @@ test("the share page is a shell: the fragment never reaches the server", async (
   assert.doesNotMatch(html, /workspace_id/);
 });
 
-test("the device flow proxies GitHub and mints a session of ours", async () => {
+test("the device flow goes through Auth0 and mints a session of ours", async () => {
+  const { generateKeyPair, exportJWK, SignJWT } = await import("jose");
+  const { privateKey, publicKey } = await generateKeyPair("RS256");
+  const jwk = { ...(await exportJWK(publicKey)), kid: "k1", alg: "RS256", use: "sig" };
+  const idToken = await new SignJWT({ email: "Carol@Example.com", name: "Carol", picture: "https://a/c.png" })
+    .setProtectedHeader({ alg: "RS256", kid: "k1" })
+    .setIssuer("https://looped.eu.auth0.com/")
+    .setAudience("cid")
+    .setSubject("auth0|carol")
+    .setIssuedAt()
+    .setExpirationTime("1h")
+    .sign(privateKey);
+
   const calls = [];
   const fake = async (url, init) => {
     calls.push(url);
     const j = (v) => new Response(JSON.stringify(v), { status: 200 });
-    if (url.endsWith("/login/device/code")) {
-      return j({ device_code: "dc", user_code: "ABCD-1234", verification_uri: "https://github.com/login/device", interval: 5, expires_in: 900 });
+    if (url.endsWith("/oauth/device/code")) {
+      assert.match(init.body, /client_id=cid/);
+      assert.match(init.body, /scope=openid\+profile\+email/);
+      return j({ device_code: "dc", user_code: "ABCD-1234", verification_uri: "https://looped.eu.auth0.com/activate", verification_uri_complete: "https://looped.eu.auth0.com/activate?user_code=ABCD-1234", interval: 5, expires_in: 900 });
     }
-    if (url.endsWith("/login/oauth/access_token")) {
-      return calls.filter((u) => u.endsWith("access_token")).length === 1
-        ? j({ error: "authorization_pending" })
-        : j({ access_token: "gh" });
+    if (url.endsWith("/oauth/token")) {
+      assert.match(init.body, /grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Adevice_code/);
+      return calls.filter((u) => u.endsWith("/oauth/token")).length === 1
+        ? j({ error: "slow_down" })
+        : j({ access_token: "opaque", id_token: idToken, token_type: "Bearer" });
     }
-    if (url.endsWith("/user")) {
-      assert.equal(init.headers.Authorization, "Bearer gh");
-      return j({ login: "carol", name: "Carol", avatar_url: "https://a/c.png" });
-    }
+    if (url.endsWith("/.well-known/jwks.json")) return j({ keys: [jwk] });
     throw new Error(`unexpected ${url}`);
   };
-  const t = startServer({ port: 0, clientId: "cid", fetchImpl: fake });
+  const t = startServer({ port: 0, domain: "looped.eu.auth0.com", clientId: "cid", fetchImpl: fake });
   await t.ready;
   const b = `http://127.0.0.1:${t.port}`;
   try {
     const start = await (await fetch(`${b}/auth/device`, { method: "POST" })).json();
     assert.equal(start.userCode, "ABCD-1234");
+    assert.equal(start.verificationUri, "https://looped.eu.auth0.com/activate?user_code=ABCD-1234");
     const poll = async () =>
       (await fetch(`${b}/auth/device/poll`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ deviceCode: start.deviceCode }) })).json();
-    assert.deepEqual(await poll(), { pending: true, slowDown: false });
+    assert.deepEqual(await poll(), { pending: true, slowDown: true });
     const done = await poll();
-    assert.equal(done.user.login, "carol");
+    // The email is the login, lowercased; the tenant's spelling is not kept.
+    assert.equal(done.user.login, "carol@example.com");
+    assert.equal(done.user.name, "Carol");
     const me = await (await fetch(`${b}/me`, { headers: { Authorization: `Bearer ${done.token}` } })).json();
-    assert.equal(me.name, "Carol");
+    assert.equal(me.login, "carol@example.com");
+  } finally {
+    await t.close();
+  }
+});
+
+test("an identity the tenant did not sign is refused", async () => {
+  const { generateKeyPair, exportJWK, SignJWT } = await import("jose");
+  const tenant = await generateKeyPair("RS256");
+  const other = await generateKeyPair("RS256");
+  const jwk = { ...(await exportJWK(tenant.publicKey)), kid: "k1", alg: "RS256", use: "sig" };
+  const forged = await new SignJWT({ email: "eve@example.com" })
+    .setProtectedHeader({ alg: "RS256", kid: "k1" })
+    .setIssuer("https://looped.eu.auth0.com/")
+    .setAudience("cid")
+    .setExpirationTime("1h")
+    .sign(other.privateKey);
+  const fake = async (url) => {
+    const j = (v) => new Response(JSON.stringify(v), { status: 200 });
+    if (url.endsWith("/oauth/token")) return j({ id_token: forged });
+    if (url.endsWith("/.well-known/jwks.json")) return j({ keys: [jwk] });
+    throw new Error(`unexpected ${url}`);
+  };
+  const t = startServer({ port: 0, domain: "looped.eu.auth0.com", clientId: "cid", fetchImpl: fake });
+  await t.ready;
+  try {
+    const r = await fetch(`http://127.0.0.1:${t.port}/auth/device/poll`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ deviceCode: "dc" }) });
+    assert.equal(r.status, 401);
   } finally {
     await t.close();
   }

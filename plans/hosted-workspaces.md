@@ -22,10 +22,13 @@ answered rather than guessed, and the plan went through as one unit:
   their own and point the app at it through `localStorage`. The address is a
   constant in `src/workspace.ts`; deploying the server is what makes it true.
 
-What the GitHub OAuth app needs is one client id, held by the server as an
-environment variable so that changing it never means shipping a build. Until
-one is registered the server says sign-in is not configured, and the app's
-sheet says so too.
+Sign-in went through Auth0 rather than GitHub in the end: the looped apps
+already sign in through a tenant, so a workspace member is the identity
+they have everywhere else, and people are known by email — which is also
+what an invite can name before its subject has signed in. The server holds
+the tenant and the native application's client id as environment
+variables; until they are set it says sign-in is not configured, and the
+app's sheet says so too.
 
 A workspace is a room where a plan gets argued: a hosted markdown document
 several people edit at once, with cursors, presence, and a review gate at the
@@ -191,9 +194,9 @@ workspace list UI beyond a section in the sidebar.
 
 ## Next
 
-- [x] Workspace server in `server/`: GitHub device-flow auth proxied so the
-      app never holds a GitHub token, SQLite, Yjs websocket relay with
-      per-doc rooms, membership checked on socket upgrade
+- [x] Workspace server in `server/`: Auth0 device-flow auth proxied so the
+      app never holds a token of the tenant's, Postgres, Yjs websocket relay
+      with per-doc rooms, membership checked on socket upgrade
 - [x] Sign-in UI in the rail (top left), token in the OS keychain through
       the `keyring` crate, account chip with sign-out
 - [x] The workspace buffer rides the MEMORY rails: repo `MEMORY`, path

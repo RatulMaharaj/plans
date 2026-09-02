@@ -1,52 +1,65 @@
 /**
- * Who you are, by way of GitHub.
+ * Who you are, by way of Auth0 — the same tenant the rest of looped signs
+ * in through, so a workspace member is the identity they already have.
  *
- * Device flow, not a redirect: the app is a desktop program with no URL of its
- * own for GitHub to send anyone back to. The server holds the OAuth app's
- * client id and does the talking; the app only ever sees a code to type and,
- * at the end, a session token of ours. GitHub's token never leaves here, and
- * is not kept: once it has said who you are, the session is the only thing
- * that matters.
+ * Device flow, not a redirect: the app is a desktop program with no URL of
+ * its own for Auth0 to send anyone back to. This server holds the native
+ * application's client id and does the talking; the app only ever sees a
+ * code to type and, at the end, a session token of ours. What comes back
+ * from the tenant is an ID token, verified here against the tenant's signing
+ * keys; it is read once for who the person is and then dropped.
  */
+import { createLocalJWKSet, jwtVerify } from "jose";
 
-const GITHUB = "https://github.com";
-const GITHUB_API = "https://api.github.com";
+export function makeAuth({ db, domain, clientId, devLogin, fetchImpl = fetch }) {
+  const issuer = domain ? `https://${domain}/` : "";
+  /** The tenant's keys, fetched once; a key rotation is a restart away. */
+  let jwks = null;
+  const keys = async () => {
+    if (jwks) return jwks;
+    const res = await fetchImpl(`${issuer}.well-known/jwks.json`);
+    if (!res.ok) throw httpError(502, `Auth0 would not hand over its keys (${res.status})`);
+    jwks = createLocalJWKSet(await res.json());
+    return jwks;
+  };
+  const configured = () => {
+    if (!domain || !clientId) throw httpError(503, "sign-in is not configured on this server");
+  };
+  const form = (fields) =>
+    fetchImpl(`${issuer}oauth/${fields.grant_type ? "token" : "device/code"}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded", Accept: "application/json" },
+      body: new URLSearchParams(fields).toString(),
+    });
 
-export function makeAuth({ db, clientId, devLogin, fetchImpl = fetch }) {
   return {
-    /** Step one: a code for the person to type at github.com/login/device. */
+    /** Step one: a code for the person to type, and the page to type it at. */
     async startDevice() {
-      if (!clientId) throw httpError(503, "sign-in is not configured on this server");
-      const res = await fetchImpl(`${GITHUB}/login/device/code`, {
-        method: "POST",
-        headers: { Accept: "application/json", "Content-Type": "application/json" },
-        body: JSON.stringify({ client_id: clientId, scope: "read:user" }),
-      });
-      if (!res.ok) throw httpError(502, `GitHub answered ${res.status}`);
+      configured();
+      const res = await form({ client_id: clientId, scope: "openid profile email" });
+      if (!res.ok) throw httpError(502, `Auth0 answered ${res.status}`);
       const j = await res.json();
       return {
         deviceCode: j.device_code,
         userCode: j.user_code,
-        verificationUri: j.verification_uri,
+        // The complete URI carries the code, so the browser lands on a page
+        // that only asks "is this you?" — the bare one is kept for the sheet.
+        verificationUri: j.verification_uri_complete ?? j.verification_uri,
         interval: j.interval ?? 5,
         expiresIn: j.expires_in ?? 900,
       };
     },
 
     /**
-     * Step two, repeated: has the person finished on GitHub yet? `pending`
-     * until they have; a session of ours once they have.
+     * Step two, repeated: has the person finished yet? `pending` until they
+     * have; a session of ours once they have.
      */
     async pollDevice(deviceCode) {
-      if (!clientId) throw httpError(503, "sign-in is not configured on this server");
-      const res = await fetchImpl(`${GITHUB}/login/oauth/access_token`, {
-        method: "POST",
-        headers: { Accept: "application/json", "Content-Type": "application/json" },
-        body: JSON.stringify({
-          client_id: clientId,
-          device_code: deviceCode,
-          grant_type: "urn:ietf:params:oauth:grant-type:device_code",
-        }),
+      configured();
+      const res = await form({
+        grant_type: "urn:ietf:params:oauth:grant-type:device_code",
+        device_code: deviceCode,
+        client_id: clientId,
       });
       const j = await res.json();
       if (j.error) {
@@ -55,27 +68,46 @@ export function makeAuth({ db, clientId, devLogin, fetchImpl = fetch }) {
         }
         throw httpError(400, j.error_description ?? j.error);
       }
-      const who = await fetchImpl(`${GITHUB_API}/user`, {
-        headers: { Authorization: `Bearer ${j.access_token}`, Accept: "application/vnd.github+json" },
-      });
-      if (!who.ok) throw httpError(502, `GitHub would not say who you are (${who.status})`);
-      const u = await who.json();
-      const user = await db.upsertUser(u.login, u.name ?? null, u.avatar_url ?? null);
-      return { token: await db.createSession(u.login), user };
+      if (!j.id_token) throw httpError(502, "Auth0 answered without an identity");
+      let claims;
+      try {
+        ({ payload: claims } = await jwtVerify(j.id_token, await keys(), { issuer, audience: clientId }));
+      } catch (e) {
+        throw httpError(401, `the identity could not be verified: ${e.message}`);
+      }
+      const login = loginOf(claims);
+      const user = await db.upsertUser(login, claims.name ?? claims.nickname ?? null, claims.picture ?? null);
+      return { token: await db.createSession(login), user };
     },
 
     /**
-     * A session for a bare login, with no GitHub in the loop. Only when the
+     * A session for a bare login, with no tenant in the loop. Only when the
      * server was started with WORKSPACES_DEV_LOGIN=1 — it exists for tests and
      * a laptop, and a deployed server must never have it on.
      */
     async devSession(login) {
       if (!devLogin) throw httpError(404, "not found");
-      if (!/^[a-z0-9-]{1,39}$/i.test(login ?? "")) throw httpError(400, "not a login");
-      const user = await db.upsertUser(login, login, null);
-      return { token: await db.createSession(login), user };
+      if (!isLogin(login)) throw httpError(400, "not a login");
+      const user = await db.upsertUser(login.toLowerCase(), login, null);
+      return { token: await db.createSession(login.toLowerCase()), user };
     },
   };
+}
+
+/**
+ * What a person is called throughout: their email, lowercased. It is what an
+ * invite names before its subject has ever signed in, and it is stable
+ * across the connections a tenant may allow behind one account.
+ */
+function loginOf(claims) {
+  const email = typeof claims.email === "string" ? claims.email.trim().toLowerCase() : "";
+  if (!email) throw httpError(401, "the identity carries no email");
+  return email;
+}
+
+/** An email, or — for the dev path and tests — a plain word. */
+export function isLogin(s) {
+  return typeof s === "string" && /^[a-z0-9._+-]+(@[a-z0-9.-]+\.[a-z]{2,})?$/i.test(s) && s.length <= 254;
 }
 
 export function httpError(status, message) {
