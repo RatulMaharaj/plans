@@ -42,12 +42,11 @@ nothing here joins anything of looped's, and a workspace document is a blob
 the other apps have no reason to see.
 
 ```sql
-CREATE DATABASE plans_workspaces;
-CREATE USER plans_workspaces WITH PASSWORD '…';
-GRANT ALL PRIVILEGES ON DATABASE plans_workspaces TO plans_workspaces;
+CREATE DATABASE plans OWNER <the role the other looped apps connect as>;
 ```
 
-Then `DATABASE_URL=postgres://plans_workspaces:…@<looped db host>:5432/plans_workspaces`.
+Then `DATABASE_URL` is the looped connection string with `/plans` as the
+database. The tables are created on first start.
 
 ### Secrets: Infisical
 
@@ -63,7 +62,7 @@ What goes in the folder, per environment:
 
 | Secret             | dev                          | prod                         |
 | ------------------ | ---------------------------- | ---------------------------- |
-| `DATABASE_URL`     | leave unset for PGlite, or a local Postgres | the `plans_workspaces` database above |
+| `DATABASE_URL`     | leave unset for PGlite, or a local Postgres | the `plans` database above |
 | `AUTH0_DOMAIN`, `AUTH0_CLIENT_ID` | the tenant and its native application for Plans | the same, or shared from `/shared` |
 
 ### The container
