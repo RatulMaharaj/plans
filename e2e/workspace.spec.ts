@@ -186,7 +186,67 @@ test("two people argue a plan in one room, review it, and copy it out", async ({
   expect((bob as any).__faults).toEqual([]);
 });
 
-test("a share link opens the document for someone with no account, until it is revoked", async ({
+/**
+ * A reader: a browser with no session, no app and no repository.
+ *
+ * The page is normally at `/{id}`, served by the server out of the reader
+ * build. Nothing here is built — these tests run off the Vite dev server — so
+ * the reader is opened at its entry with the id said explicitly, which is the
+ * same document reading the same address out of a different place. What the
+ * build adds is the routing, and that is the server test's business.
+ */
+async function readerFor(browser: Browser, id: string): Promise<Page> {
+  const ctx = await browser.newContext();
+  const page = await ctx.newPage();
+  await page.addInitScript((url) => {
+    localStorage.setItem("plans.workspaceServer", url as string);
+  }, base);
+  await page.goto(`/src/share/index.html?id=${id}`);
+  return page;
+}
+
+/** The id out of the address the share sheet is showing. */
+const idOf = (url: string) => url.split("/").pop() as string;
+
+test("a plan in a repository is shared as a page, follows its saves, and stops", async ({ browser }) => {
+  const alice = await boot(browser, "alice");
+
+  await alice.locator(".row.file", { hasText: "existing" }).first().click();
+  await expect(editor(alice).locator("h1")).toHaveText("Existing");
+  await editor(alice).locator("h1").click();
+  await alice.keyboard.press("End");
+  await alice.keyboard.press("Enter");
+  await alice.keyboard.type("Anyone with the address can read this.");
+
+  await alice.getByTestId("share-plan").click();
+  await alice.getByTestId("publish").click();
+  const url = await alice.getByTestId("share-link").inputValue();
+  expect(url).toContain(base);
+  await alice.keyboard.press("Escape");
+
+  // The page is the app's own renderer: the same heading, the same prose.
+  const reader = await readerFor(browser, idOf(url));
+  await expect(reader.locator(".milkdown h1")).toHaveText("Existing");
+  await expect(reader.locator(".milkdown")).toContainText("Anyone with the address can read this.");
+
+  // A save republishes, and the page catches up on its next poll.
+  await editor(alice).locator("p", { hasText: "Anyone with the address" }).click();
+  await alice.keyboard.press("End");
+  await alice.keyboard.type(" Even after a save.");
+  await alice.keyboard.press("Meta+s");
+  await expect(reader.locator(".milkdown")).toContainText("Even after a save.", { timeout: 20_000 });
+
+  // Stopped from the same control that started it, and the address dies.
+  await alice.getByTestId("share-plan").click();
+  await alice.getByTestId("stop-sharing").click();
+  await expect(alice.getByTestId("share-plan")).toHaveText("Share…");
+  await reader.reload();
+  await expect(reader.locator(".share-gone")).toContainText("This plan is not shared");
+
+  expect((alice as any).__faults).toEqual([]);
+});
+
+test("a workspace document's page follows the room, and an old share link still lands on it", async ({
   browser,
 }) => {
   const alice = await boot(browser, "alice");
@@ -198,40 +258,42 @@ test("a share link opens the document for someone with no account, until it is r
   await editor(alice).locator("h1").click();
   await alice.keyboard.press("End");
   await alice.keyboard.press("Enter");
-  await alice.keyboard.type("Anyone with the link can read this.");
+  await alice.keyboard.type("Argued in a room, read in a browser.");
 
-  await alice.locator(".page-actions .rail-btn", { hasText: "Share" }).click();
-  await alice.getByTestId("share-sheet").locator(".act", { hasText: "New link" }).click();
-  const link = await alice.getByTestId("share-link").inputValue();
-  expect(link).toContain("/share#");
+  await alice.getByTestId("share-plan").click();
+  await alice.getByTestId("publish").click();
+  const url = await alice.getByTestId("share-link").inputValue();
+  await alice.keyboard.press("Escape");
 
-  // The editor serialises once the typing stops, so wait for the sentence to
-  // reach the room rather than racing it into the reader's browser.
-  const token = link.split("#")[1];
-  await expect
-    .poll(async () => {
-      const r = await fetch(`${base}/share/doc`, { headers: { Authorization: `Bearer ${token}` } });
-      return r.ok ? (await r.json()).markdown : "";
+  const reader = await readerFor(browser, idOf(url));
+  await expect(reader.locator(".milkdown h1")).toHaveText("Sharing");
+  await expect(reader.locator(".milkdown")).toContainText("Argued in a room, read in a browser.", {
+    timeout: 20_000,
+  });
+
+  // Nothing is saved here — the page reads the room, so it follows the typing.
+  await editor(alice).locator("p", { hasText: "Argued in a room" }).click();
+  await alice.keyboard.press("End");
+  await alice.keyboard.type(" And it keeps up.");
+  await expect(reader.locator(".milkdown")).toContainText("And it keeps up.", { timeout: 20_000 });
+
+  // A link minted before pages existed resolves to the document's page.
+  const token = await session("alice");
+  const list = await (await fetch(`${base}/workspaces`, { headers: { Authorization: `Bearer ${token}` } })).json();
+  const minted = await (
+    await fetch(`${base}/workspaces/${list[0].id}/share`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}` },
     })
-    .toContain("Anyone with the link can read this.");
-
-  // A reader with no session, no app and no repository — a browser and a URL.
-  const reader = await (await browser.newContext()).newPage();
-  await reader.goto(link);
-  await expect(reader.locator("#doc h1")).toHaveText("Sharing");
-  await expect(reader.locator("#doc")).toContainText("Anyone with the link can read this.");
-
-  // A link whose fragment was cleaned off is a different failure from a dead
-  // one, and says so rather than showing an error that looks like revocation.
-  await reader.goto(link.split("#")[0]);
-  await expect(reader.locator(".note")).toContainText("missing its key");
-  await expect(reader.locator("#doc")).toHaveCount(0);
-
-  // Revoked from the same control that minted it.
-  await alice.locator(".share-row .rail-btn", { hasText: "Revoke" }).click();
-  await expect(alice.getByTestId("share-sheet")).toContainText("No links yet");
-  await reader.goto(link);
-  await expect(reader.locator(".note")).toContainText("no longer works");
+  ).json();
+  const resolved = await (
+    await fetch(`${base}/api/share/resolve`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ token: minted.token }),
+    })
+  ).json();
+  expect(resolved.id).toBe(idOf(url));
 
   expect((alice as any).__faults).toEqual([]);
 });

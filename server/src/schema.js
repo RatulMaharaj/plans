@@ -57,6 +57,29 @@ export const readTokens = pgTable("read_tokens", {
   createdAt: bigint("created_at", { mode: "number" }).notNull(),
 });
 
+/**
+ * A published plan: one page at `/{id}`, readable by anyone holding the URL.
+ *
+ * The source is one of two shapes, and exactly one of them is filled in: a
+ * workspace document (`workspace_id`), whose page reads the live room and so
+ * keeps no copy, or a repository file (`repo` + `path`), whose markdown is
+ * pushed here on every save while sharing is on. `revoked_at` is how sharing
+ * stops — a timestamp rather than a delete, the same as `share_tokens`, so a
+ * URL that leaked stays dead instead of being reachable again by luck.
+ * See plans/public-plan-pages.md.
+ */
+export const pages = pgTable("pages", {
+  id: text("id").primaryKey(),
+  workspaceId: text("workspace_id"),
+  repo: text("repo"),
+  path: text("path"),
+  markdown: text("markdown").notNull().default(""),
+  name: text("name").notNull(),
+  publishedBy: text("published_by").notNull(),
+  publishedAt: bigint("published_at", { mode: "number" }).notNull(),
+  revokedAt: bigint("revoked_at", { mode: "number" }),
+});
+
 export const shareTokens = pgTable("share_tokens", {
   id: text("id").primaryKey(),
   tokenHash: text("token_hash").notNull().unique(),

@@ -78,6 +78,18 @@ export async function openDb(url = process.env.DATABASE_URL ?? "") {
       at: w.review_at === null ? null : Number(w.review_at),
     },
   });
+  /** A page as everything above it speaks of one: a source, and a document. */
+  const shapePage = (p) => ({
+    id: p.id,
+    source: p.workspace_id ? "workspace" : "repository",
+    workspaceId: p.workspace_id,
+    repo: p.repo,
+    path: p.path,
+    name: p.name,
+    markdown: p.markdown,
+    publishedBy: p.published_by,
+    publishedAt: Number(p.published_at),
+  });
   const membersOf = async (id) =>
     (await c.query("SELECT login FROM members WHERE workspace_id = $1 ORDER BY login", [id])).map(
       (m) => m.login,
@@ -246,6 +258,83 @@ export async function openDb(url = process.env.DATABASE_URL ?? "") {
       );
       return rows.length > 0;
     },
+    // --- published pages ---------------------------------------------------
+    /**
+     * The page's id is the whole of its security, so it is longer than the
+     * ids handed out elsewhere: 24 random bytes, which is not something a
+     * crawler walks into. Everything else about a page is public to whoever
+     * holds it.
+     */
+    async publishRepoPage(repo, path, markdown, name, login) {
+      /*
+       * Sharing the same file twice is sharing it once. The app remembers its
+       * own pages, so this only happens when that memory is gone — a cleared
+       * browser store, a reinstall — and handing back the address that is
+       * already out there beats minting a second one nobody can stop.
+       */
+      const mine = await one(
+        `SELECT * FROM pages
+         WHERE repo = $1 AND path = $2 AND published_by = $3 AND revoked_at IS NULL`,
+        [repo, path, login],
+      );
+      if (mine) return this.republishPage(mine.id, markdown, name);
+      const id = randomBytes(24).toString("base64url");
+      const at = now();
+      await c.query(
+        `INSERT INTO pages (id, repo, path, markdown, name, published_by, published_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+        [id, repo, path, markdown, name, login, at],
+      );
+      return this.page(id);
+    },
+    /**
+     * A workspace document's page keeps no markdown — the page reads the room
+     * — and there is only ever one live page per workspace: publishing a
+     * second time hands back the first, so the URL a member shared stays the
+     * URL. That is also what lets an old `/share#token` link resolve to a
+     * page whether or not anyone has pressed Share.
+     */
+    async publishWorkspacePage(workspaceId, name, login) {
+      const live = await this.workspacePage(workspaceId);
+      if (live) return live;
+      const id = randomBytes(24).toString("base64url");
+      await c.query(
+        `INSERT INTO pages (id, workspace_id, markdown, name, published_by, published_at)
+         VALUES ($1, $2, '', $3, $4, $5)`,
+        [id, workspaceId, name, login, now()],
+      );
+      return this.page(id);
+    },
+    /** The same page, with what the file says now. Null if it is not live. */
+    async republishPage(id, markdown, name) {
+      const rows = await c.query(
+        `UPDATE pages SET markdown = $1, name = COALESCE($2, name), published_at = $3
+         WHERE id = $4 AND revoked_at IS NULL RETURNING id`,
+        [markdown, name ?? null, now(), id],
+      );
+      return rows.length > 0 ? this.page(id) : null;
+    },
+    /** Revoked and never-published answer alike: null. */
+    async page(id) {
+      if (!id) return null;
+      const r = await one("SELECT * FROM pages WHERE id = $1 AND revoked_at IS NULL", [id]);
+      return r ? shapePage(r) : null;
+    },
+    async workspacePage(workspaceId) {
+      const r = await one("SELECT * FROM pages WHERE workspace_id = $1 AND revoked_at IS NULL", [
+        workspaceId,
+      ]);
+      return r ? shapePage(r) : null;
+    },
+    /** Stop sharing. A timestamp, so the address stays dead for good. */
+    async revokePage(id) {
+      const rows = await c.query(
+        "UPDATE pages SET revoked_at = $1 WHERE id = $2 AND revoked_at IS NULL RETURNING id",
+        [now(), id],
+      );
+      return rows.length > 0;
+    },
+
     /** Revoked, expired, or never minted here: all three answer `null`. */
     async workspaceForShareToken(token) {
       if (!token) return null;

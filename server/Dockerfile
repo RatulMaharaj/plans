@@ -15,6 +15,22 @@ COPY server/package.json server/
 RUN --mount=type=cache,id=pnpm,target=/pnpm/store \
   pnpm install --frozen-lockfile --prefer-offline --filter plans-workspaces --prod
 
+# The reader: the app's own read-only build, which the server serves at `/`
+# and `/{id}`. Built here rather than committed, so the page and the editor
+# can never be two different versions of the same renderer. Its dependencies
+# are the app's, which is why this stage installs the root workspace and the
+# one above it does not. See plans/public-plan-pages.md.
+FROM node:24-alpine AS reader
+RUN apk add --no-cache libc6-compat && corepack enable
+WORKDIR /app
+COPY pnpm-workspace.yaml pnpm-lock.yaml package.json ./
+COPY server/package.json server/
+RUN --mount=type=cache,id=pnpm,target=/pnpm/store \
+  pnpm install --frozen-lockfile --prefer-offline --filter looped-plans
+COPY vite.config.ts tsconfig.json tsconfig.node.json ./
+COPY src ./src
+RUN pnpm exec vite build --mode share
+
 FROM node:24-alpine AS runner
 ENV NODE_ENV=production
 WORKDIR /app
@@ -34,6 +50,7 @@ COPY --chown=plans:nodejs --from=deps /app/server/node_modules ./server/node_mod
 COPY --chown=plans:nodejs server/package.json ./server/
 COPY --chown=plans:nodejs server/src ./server/src
 COPY --chown=plans:nodejs server/drizzle ./server/drizzle
+COPY --chown=plans:nodejs --from=reader /app/server/public ./server/public
 COPY --chown=plans:nodejs server/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 USER plans

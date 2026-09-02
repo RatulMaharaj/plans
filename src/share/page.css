@@ -1,0 +1,63 @@
+/**
+ * The little the page adds to App.css.
+ *
+ * Everything that makes a plan look like a plan — the paper, the ink, the
+ * reading face, the measure, the editor's own frame — is the app's, imported
+ * whole. What is left is a page with no window around it: no rail, no tree,
+ * and two states the app has no need of.
+ */
+
+.share-page {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background: var(--paper);
+}
+
+/* The head is the app's, one line shorter: a name, its status, how fresh. */
+.share-page .page-head {
+  border-bottom: 1px solid var(--rule);
+}
+
+.share-when {
+  font-family: var(--mono);
+  font-size: 9.5px;
+  letter-spacing: 0.11em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+  white-space: nowrap;
+}
+
+.share-wait,
+.share-gone {
+  height: 100%;
+  display: grid;
+  align-content: center;
+  justify-items: center;
+  gap: 10px;
+  padding: 0 24px;
+  text-align: center;
+  color: var(--ink-2);
+  font-family: var(--doc-font);
+}
+
+.share-wait {
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.11em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+
+.share-gone h1 {
+  margin: 0;
+  font-size: 1.35rem;
+  font-weight: 500;
+  color: var(--ink);
+}
+
+.share-gone p {
+  margin: 0;
+  max-width: 34rem;
+  line-height: 1.6;
+}

@@ -317,6 +317,148 @@ test("the share page is a shell: the fragment never reaches the server", async (
   assert.doesNotMatch(html, /workspace_id/);
 });
 
+test("the app's API is under /api, and the old addresses still answer", async () => {
+  const alice = await signIn("alice");
+  const made = await call("/api/workspaces", { method: "POST", token: alice, body: { name: "Prefixed" } });
+  assert.equal(made.status, 201);
+  // The same workspace, asked for the old way: a build already on someone's
+  // machine keeps working through the move.
+  assert.equal((await call(`/workspaces/${made.value.id}`, { token: alice })).value.name, "Prefixed");
+  assert.equal((await call("/api/me", { token: alice })).value.login, "alice");
+  assert.equal((await call("/api/health")).value.ok, true);
+});
+
+test("a repository file published is a page, republished by its author, and stopped", async () => {
+  const alice = await signIn("alice");
+  const made = await call("/api/pages", {
+    method: "POST",
+    token: alice,
+    body: { repo: "/repo/one", path: "plans/ship.md", name: "ship.md", markdown: "# Ship\n" },
+  });
+  assert.equal(made.status, 201);
+  const { id } = made.value;
+  // Long enough that the address is the whole of the security.
+  assert.ok(id.length >= 32);
+
+  // No session, no token, no membership: the URL is the credential.
+  const read = await call(`/api/pages/${id}`);
+  assert.equal(read.status, 200);
+  assert.equal(read.value.name, "ship.md");
+  assert.equal(read.value.markdown, "# Ship\n");
+  assert.equal(read.value.source, "repository");
+  assert.equal(read.value.live, false);
+  // Nothing about where the plan came from, or who published it.
+  assert.equal(read.value.repo, undefined);
+  assert.equal(read.value.publishedBy, undefined);
+
+  // A save republishes the same page: same address, newer plan.
+  const again = await call("/api/pages", {
+    method: "POST",
+    token: alice,
+    body: { id, name: "ship.md", markdown: "# Ship\n\nSoon.\n" },
+  });
+  assert.equal(again.status, 200);
+  assert.equal(again.value.id, id);
+  assert.match((await call(`/api/pages/${id}`)).value.markdown, /Soon\./);
+
+  // Nobody else's to republish or to stop, and saying so as a 404 rather than
+  // a 403 — which would confirm the id exists.
+  const eve = await signIn("eve");
+  assert.equal(
+    (await call("/api/pages", { method: "POST", token: eve, body: { id, markdown: "mine now" } })).status,
+    404,
+  );
+  assert.equal((await call(`/api/pages/${id}`, { method: "DELETE", token: eve })).status, 404);
+  assert.match((await call(`/api/pages/${id}`)).value.markdown, /Soon\./);
+
+  assert.equal((await call(`/api/pages/${id}`, { method: "DELETE", token: alice })).status, 200);
+  assert.equal((await call(`/api/pages/${id}`)).status, 404);
+  // Stopped twice is the state that was asked for, not an error — but the
+  // address stays dead, since republishing it would raise the dead.
+  assert.equal((await call(`/api/pages/${id}`, { method: "DELETE", token: alice })).status, 200);
+  assert.equal(
+    (await call("/api/pages", { method: "POST", token: alice, body: { id, markdown: "back" } })).status,
+    404,
+  );
+});
+
+test("a workspace document's page reads the room, and there is only ever one of it", async () => {
+  const alice = await signIn("alice");
+  const { id } = (await call("/api/workspaces", { method: "POST", token: alice, body: { name: "Live" } })).value;
+  const a = connect(id, alice);
+  await Promise.all([a.open, a.synced]);
+  a.doc.getMap("meta").set("markdown", "# Live\n");
+  await until(() => s.rooms.rooms.get(id)?.doc.getMap("meta").get("markdown")?.includes("# Live"));
+
+  const made = await call("/api/pages", { method: "POST", token: alice, body: { workspaceId: id } });
+  assert.equal(made.status, 201);
+  const page = made.value.id;
+  const read = await call(`/api/pages/${page}`);
+  assert.equal(read.value.source, "workspace");
+  assert.equal(read.value.live, true);
+  assert.match(read.value.markdown, /# Live/);
+
+  // The room moves on; the page is already there.
+  a.doc.getMap("meta").set("markdown", "# Live\n\nAnd moving.\n");
+  await until(() => s.rooms.rooms.get(id)?.doc.getMap("meta").get("markdown")?.includes("moving"));
+  assert.match((await call(`/api/pages/${page}`)).value.markdown, /And moving\./);
+
+  // Sharing twice hands back the page that exists, so the address a member
+  // gave out stays the address.
+  const twice = await call("/api/pages", { method: "POST", token: alice, body: { workspaceId: id } });
+  assert.equal(twice.value.id, page);
+  assert.equal((await call(`/api/workspaces/${id}/page`, { token: alice })).value.id, page);
+
+  // A member who did not publish it can still stop it: the page is the
+  // room's, not one member's. A stranger cannot even see that it is shared.
+  const eve = await signIn("eve");
+  assert.equal((await call(`/api/workspaces/${id}/page`, { token: eve })).status, 404);
+  await call(`/api/workspaces/${id}/members`, { method: "POST", token: alice, body: { login: "eve@x.com" } });
+  const bob = await signIn("eve@x.com");
+  assert.equal((await call(`/api/pages/${page}`, { method: "DELETE", token: bob })).status, 200);
+  assert.equal((await call(`/api/pages/${page}`)).status, 404);
+  a.close();
+});
+
+test("an old share link resolves to the document's page", async () => {
+  const alice = await signIn("alice");
+  const { id } = (await call("/api/workspaces", { method: "POST", token: alice, body: { name: "Old link" } })).value;
+  const minted = await call(`/api/workspaces/${id}/share`, { method: "POST", token: alice });
+  const resolved = await call("/api/share/resolve", { method: "POST", body: { token: minted.value.token } });
+  assert.equal(resolved.status, 200);
+  // Resolving publishes if nobody had — the link was a promise to a reader,
+  // and it is kept whether or not anyone has pressed Share since.
+  assert.equal((await call(`/api/workspaces/${id}/page`, { token: alice })).value.id, resolved.value.id);
+  // The same link twice lands in the same place.
+  assert.equal(
+    (await call("/api/share/resolve", { method: "POST", body: { token: minted.value.token } })).value.id,
+    resolved.value.id,
+  );
+
+  await call(`/api/workspaces/${id}/share/revoke`, { method: "POST", token: alice, body: { id: minted.value.id } });
+  assert.equal(
+    (await call("/api/share/resolve", { method: "POST", body: { token: minted.value.token } })).status,
+    404,
+  );
+  assert.equal((await call("/api/share/resolve", { method: "POST", body: { token: "never" } })).status, 404);
+});
+
+test("the reader's addresses are the reader's, whether or not it is built", async () => {
+  // `/` and `/{id}` are one document — the page reads the id out of its own
+  // address. Nothing is built in a test, so what is asserted is that the
+  // server claims those addresses and says plainly why it cannot serve them,
+  // rather than 404ing as if the plan were not shared.
+  for (const path of ["/", "/aaaaaaaaaaaaaaaaaaaaaaaa"]) {
+    const res = await fetch(base + path);
+    assert.equal(res.status, 503);
+    assert.match((await res.json()).error, /reader/);
+  }
+  // Not an id and not a file: that really is a 404.
+  assert.equal((await fetch(`${base}/not/a/page`)).status, 404);
+  // And nothing above the reader's folder is servable.
+  assert.equal((await fetch(`${base}/../src/db.js`)).status, 404);
+});
+
 test("the device flow goes through Auth0 and mints a session of ours", async () => {
   const { generateKeyPair, exportJWK, SignJWT } = await import("jose");
   const { privateKey, publicKey } = await generateKeyPair("RS256");

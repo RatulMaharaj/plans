@@ -62,6 +62,16 @@ type Props = {
    * different workspace is a different editor rather than a swap.
    */
   room?: Room;
+  /**
+   * A document nobody may type into: the public page (src/share).
+   *
+   * The same editor, the same markdown pipeline, the same mermaid and the
+   * same HTML view — only with the caret taken away, which is the whole
+   * point of building the page out of this component rather than a second
+   * renderer that would drift from it. A plain click on a link follows it
+   * too: nothing here is an editing click.
+   */
+  readOnly?: boolean;
 };
 
 /**
@@ -136,6 +146,7 @@ export function Editor({
   selectionRef,
   markdownRef,
   room,
+  readOnly = false,
 }: Props) {
   const hostRef = useRef<HTMLDivElement | null>(null);
   const instance = useRef<Crepe | null>(null);
@@ -561,6 +572,9 @@ export function Editor({
         }
         created.current = true;
         trace("editor created");
+        // Set after create() rather than passed to it: Crepe only has a
+        // setter, and the view has to exist for it to reach.
+        if (readOnly) crepe.setReadonly(true);
         if (room) {
           // Bind now; connect once the server's state has arrived, or the
           // template would be applied to a document that only looks empty.
@@ -769,7 +783,9 @@ export function Editor({
         const a = (e.target as Element).closest?.("a[href]");
         if (!a) return;
         e.preventDefault();
-        if (!(e.metaKey || e.ctrlKey)) return;
+        // Read-only: there is no caret to land, so a plain click is the
+        // reader following the link.
+        if (!readOnly && !(e.metaKey || e.ctrlKey)) return;
         e.stopPropagation();
         onOpenLink?.(a.getAttribute("href") ?? "");
       }}

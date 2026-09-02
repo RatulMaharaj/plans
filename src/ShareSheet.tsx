@@ -1,45 +1,33 @@
 /**
- * Share links, minted and killed.
+ * Sharing a plan: one address, on or off.
  *
- * A share link is a person publishing one document to chosen readers, so the
- * residual risk — the link travels further than intended — is answered with
- * revocation rather than by pretending the link is not a capability. Which is
- * why minting and the list of live links are one small sheet and not a
- * management page: you mint one, and the thing that undoes it is right there.
- * The reasoning is in plans/sharable-links.md.
+ * What this used to be — a list of minted tokens, each with its own expiry
+ * and its own Revoke — was a management page for a capability. A published
+ * plan is simpler and says more: there is one page, its URL is the whole of
+ * the secret, and the thing that undoes it is "Stop sharing". While it is on
+ * the page follows the file, so what a reader sees is what the author last
+ * saved. The reasoning is in plans/public-plan-pages.md.
  */
-import { track } from "./analytics";
 import { useEffect, useRef, useState } from "react";
-import { workspace, type ShareLink } from "./workspace";
 
 type Props = {
-  /** The workspace being shared, and its name for the sheet's title. */
-  id: string;
+  /** What is being shared, for the sheet's title. */
   name: string;
-  /** The app's toast, so failures are said in the usual voice. */
-  notify: (text: string, kind?: "info" | "error") => void;
+  /** Whether the page is live, and where — null when nothing is shared yet. */
+  url: string | null;
+  /**
+   * A workspace document's page reads the room, so it is live without anyone
+   * saving anything; a file's page follows its saves. The sheet says which,
+   * because they are different promises.
+   */
+  live: boolean;
+  onPublish: () => Promise<void> | void;
+  onStop: () => Promise<void> | void;
+  onCopy: () => Promise<void> | void;
   onClose: () => void;
 };
 
-/** "today", "3 days ago" — enough to shame a link nobody remembers minting. */
-export function ago(at: number, now = Date.now()): string {
-  const days = Math.floor((now - at) / 86_400_000);
-  if (days <= 0) return "today";
-  if (days === 1) return "yesterday";
-  return `${days} days ago`;
-}
-
-/** The other half of the same sentence: how long this one has left. */
-export function until(at: number, now = Date.now()): string {
-  const days = Math.ceil((at - now) / 86_400_000);
-  if (days <= 0) return "expired";
-  if (days === 1) return "expires tomorrow";
-  return `expires in ${days} days`;
-}
-
-export function ShareSheet({ id, name, notify, onClose }: Props) {
-  const [links, setLinks] = useState<ShareLink[] | null>(null);
-  const [minted, setMinted] = useState<string | null>(null);
+export function ShareSheet({ name, url, live, onPublish, onStop, onCopy, onClose }: Props) {
   const [busy, setBusy] = useState(false);
   const field = useRef<HTMLInputElement | null>(null);
   const sheet = useRef<HTMLDivElement | null>(null);
@@ -48,52 +36,18 @@ export function ShareSheet({ id, name, notify, onClose }: Props) {
   // it reaches the app's own Escape — which would leave zen, not close this.
   useEffect(() => sheet.current?.focus(), []);
 
-  useEffect(() => {
-    let alive = true;
-    void workspace.share
-      .list(id)
-      .then((l) => alive && setLinks(l))
-      .catch(() => alive && setLinks([]));
-    return () => {
-      alive = false;
-    };
-  }, [id]);
-
-  // The link is on the clipboard, and also in a field: a copy that silently
+  // The URL is on the clipboard, and also in a field: a copy that silently
   // failed would leave nothing to paste and nothing to see.
   useEffect(() => {
-    if (minted) field.current?.select();
-  }, [minted]);
+    if (url) field.current?.select();
+  }, [url]);
 
-  const mint = async () => {
+  const run = async (fn: () => Promise<void> | void) => {
     setBusy(true);
     try {
-      const link = await workspace.share.mint(id);
-      const url = workspace.shareUrl(link.token);
-      track("share_link_created");
-      setMinted(url);
-      setLinks((prev) => [
-        { id: link.id, createdBy: link.createdBy, createdAt: link.createdAt, expiresAt: link.expiresAt },
-        ...(prev ?? []),
-      ]);
-      await navigator.clipboard.writeText(url).then(
-        () => notify("Share link copied"),
-        () => notify("The link is below; the clipboard refused it", "error"),
-      );
-    } catch (e) {
-      notify(e instanceof Error ? e.message : "Could not mint a link", "error");
+      await fn();
     } finally {
       setBusy(false);
-    }
-  };
-
-  const revoke = async (linkId: string) => {
-    try {
-      await workspace.share.revoke(id, linkId);
-      setLinks((prev) => (prev ?? []).filter((l) => l.id !== linkId));
-      notify("Link revoked");
-    } catch (e) {
-      notify(e instanceof Error ? e.message : "Could not revoke that link", "error");
     }
   };
 
@@ -117,43 +71,39 @@ export function ShareSheet({ id, name, notify, onClose }: Props) {
           <span className="tag">Share “{name}”</span>
         </div>
         <p className="name-path">
-          A link anyone can open in a browser — read-only, live, no account. It stops working after
-          thirty days, or the moment you revoke it; the other links carry on.
+          {url
+            ? live
+              ? "This plan has a page. Anyone with the address can read it, and it follows the document as it changes."
+              : "This plan has a page. Anyone with the address can read it, and it follows every save while sharing is on."
+            : "A page anyone can open in a browser — read-only, no account. The address is the whole of the secret: share it with the people you mean to, and stop sharing to take it back."}
         </p>
-        {minted && (
+        {url && (
           <input
             ref={field}
             className="name-field share-link"
             data-testid="share-link"
-            value={minted}
+            value={url}
             readOnly
             spellCheck={false}
             onFocus={(e) => e.currentTarget.select()}
           />
         )}
-        <div className="share-links">
-          {links === null ? (
-            <p className="name-path">Looking…</p>
-          ) : links.length === 0 ? (
-            <p className="name-path">No links yet.</p>
-          ) : (
-            links.map((l) => (
-              <div className="share-row" key={l.id}>
-                <span className="share-who">
-                  @{l.createdBy} · {ago(l.createdAt)} · {until(l.expiresAt)}
-                </span>
-                <button className="rail-btn" onClick={() => void revoke(l.id)}>
-                  Revoke
-                </button>
-              </div>
-            ))
-          )}
-        </div>
         <div className="matter-foot">
           <span>esc close</span>
-          <button className="act" onClick={() => void mint()} disabled={busy}>
-            New link
-          </button>
+          {url ? (
+            <>
+              <button className="rail-btn" onClick={() => void run(onStop)} disabled={busy} data-testid="stop-sharing">
+                Stop sharing
+              </button>
+              <button className="act" onClick={() => void run(onCopy)} disabled={busy}>
+                Copy link
+              </button>
+            </>
+          ) : (
+            <button className="act" onClick={() => void run(onPublish)} disabled={busy} data-testid="publish">
+              Share
+            </button>
+          )}
         </div>
       </div>
     </div>
