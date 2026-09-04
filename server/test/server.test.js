@@ -154,6 +154,27 @@ test("a workspace belongs to whoever made it, and to whom they invite", async ()
   assert.equal((await call("/workspaces", { token: bob })).value[0].id, id);
 });
 
+test("a workspace names its members as people: login, name and face", async () => {
+  const alice = await signIn("alice");
+  const { id } = (await call("/workspaces", { method: "POST", token: alice, body: { name: "Faces" } })).value;
+  // Bob has signed in before, so the server knows his name; carol has only
+  // ever been invited, and is a login with nothing behind it yet.
+  await signIn("bob");
+  await call(`/workspaces/${id}/members`, { method: "POST", token: alice, body: { login: "bob" } });
+  const r = await call(`/workspaces/${id}/members`, { method: "POST", token: alice, body: { login: "carol" } });
+  assert.deepEqual(r.value.members, ["alice", "bob", "carol"]);
+  assert.deepEqual(r.value.profiles, [
+    { login: "alice", name: "alice", avatar: null },
+    { login: "bob", name: "bob", avatar: null },
+    { login: "carol", name: null, avatar: null },
+  ]);
+  // The same shape wherever a workspace is answered.
+  const got = await call(`/workspaces/${id}`, { token: alice });
+  assert.deepEqual(got.value.profiles.map((p) => p.login), ["alice", "bob", "carol"]);
+  const listed = (await call("/workspaces", { token: alice })).value.find((w) => w.id === id);
+  assert.equal(listed.profiles.length, 3);
+});
+
 test("two people edit one file, and it survives the room emptying", async () => {
   const alice = await signIn("alice");
   const bob = await signIn("bob");
