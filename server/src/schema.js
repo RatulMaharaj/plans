@@ -7,7 +7,8 @@
  * start (see migrate.js). The queries themselves stay as SQL in db.js —
  * there are a dozen of them and every one is plainer written out.
  */
-import { pgTable, text, bigint, primaryKey, customType } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
+import { pgTable, text, bigint, primaryKey, customType , uniqueIndex } from "drizzle-orm/pg-core";
 
 /** `bytea`, which pg-core does not ship. The Yjs document is one of these. */
 const bytea = customType({ dataType: () => "bytea" });
@@ -56,6 +57,34 @@ export const readTokens = pgTable("read_tokens", {
   createdBy: text("created_by").notNull(),
   createdAt: bigint("created_at", { mode: "number" }).notNull(),
 });
+
+/**
+ * A published plan: one page at `/{id}`, readable by anyone holding the URL.
+ *
+ * The source is one of two shapes, and exactly one of them is filled in: a
+ * workspace document (`workspace_id`), whose page reads the live room and so
+ * keeps no copy, or a repository file (`repo` + `path`), whose markdown is
+ * pushed here on every save while sharing is on. `revoked_at` is how sharing
+ * stops — a timestamp rather than a delete, the same as `share_tokens`, so a
+ * URL that leaked stays dead instead of being reachable again by luck.
+ * See plans/public-plan-pages.md.
+ */
+export const pages = pgTable("pages", {
+  id: text("id").primaryKey(),
+  workspaceId: text("workspace_id"),
+  repo: text("repo"),
+  path: text("path"),
+  markdown: text("markdown").notNull().default(""),
+  name: text("name").notNull(),
+  publishedBy: text("published_by").notNull(),
+  publishedAt: bigint("published_at", { mode: "number" }).notNull(),
+  revokedAt: bigint("revoked_at", { mode: "number" }),
+}, (t) => [
+  // One live page per workspace, held by the database rather than by a
+  // check-then-insert: two members pressing Share together must get the
+  // same URL, and only a constraint can promise that.
+  uniqueIndex("pages_live_workspace").on(t.workspaceId).where(sql`revoked_at IS NULL AND workspace_id IS NOT NULL`),
+]);
 
 export const shareTokens = pgTable("share_tokens", {
   id: text("id").primaryKey(),

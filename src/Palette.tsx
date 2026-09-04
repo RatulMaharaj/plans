@@ -116,9 +116,11 @@ type Props = {
   onCycleTab: (step: number) => void;
   onCopyAgentCommand: () => void;
   /** The open buffer's workspace, when it is one: share links are per room. */
-  shareWorkspaceId: string | null;
-  onCopyShareLink: (id: string) => void;
-  onShareLinks: (id: string) => void;
+  canShare: boolean;
+  /** Whether this plan already has a page, which is what "copy" means. */
+  sharedPage: boolean;
+  onShare: () => void;
+  onCopyPageLink: () => void;
   onMatter: () => void;
   /**
    * The bundled skills, openable like any other file. Empty when no
@@ -283,26 +285,26 @@ function buildCommands(p: Props): Command[] {
   }
 
   /*
-   * Sharing, only where there is something to share: a link addresses a
-   * workspace, and a file on disk has no room behind it to serve.
+   * Sharing, on any plan: a page addresses a document, and since
+   * plans/public-plan-pages.md a file on disk can have one too. It needs a
+   * server to publish to, which is what `canShare` is.
    */
-  if (p.shareWorkspaceId) {
-    const id = p.shareWorkspaceId;
+  if (p.canShare) {
     add({
-      id: "workspace.share.copy",
-      group: "Workspace",
-      label: "Copy share link",
-      hint: "read-only, for anyone with the link",
-      terms: "publish url public send read only browser",
-      run: () => p.onCopyShareLink(id),
+      id: "plan.share.copy",
+      group: "Plans",
+      label: p.sharedPage ? "Copy public link" : "Share and copy link",
+      hint: "read-only, for anyone with the address",
+      terms: "publish url public send read only browser share",
+      run: () => p.onCopyPageLink(),
     });
     add({
-      id: "workspace.share.links",
-      group: "Workspace",
-      label: "Share links…",
-      hint: "list and revoke",
-      terms: "revoke unshare manage links",
-      run: () => p.onShareLinks(id),
+      id: "plan.share",
+      group: "Plans",
+      label: p.sharedPage ? "Sharing…" : "Share…",
+      hint: p.sharedPage ? "the address, or stop sharing" : "a page anyone can open",
+      terms: "unshare stop revoke publish public page",
+      run: () => p.onShare(),
     });
   }
 

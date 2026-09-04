@@ -59,15 +59,20 @@ export type Workspace = {
 };
 
 /**
- * One share link, as the revoke list shows it. The token itself is returned
- * once, when it is minted, and never again; `expiresAt` is when it stops
- * working on its own, thirty days after minting.
+ * A published plan, as the server answers when one is made or asked after.
+ * `markdown` is what the server holds — empty for a workspace document, whose
+ * page reads the live room instead of a copy.
  */
-export type ShareLink = {
+export type Page = {
   id: string;
-  createdBy: string;
-  createdAt: number;
-  expiresAt: number;
+  source: "workspace" | "repository";
+  workspaceId: string | null;
+  repo: string | null;
+  path: string | null;
+  name: string;
+  markdown: string;
+  publishedBy: string;
+  publishedAt: number;
 };
 
 export type DeviceStart = {
@@ -94,6 +99,12 @@ async function setToken(t: string | null) {
   else await api.workspaceTokenClear();
 }
 
+/**
+ * Everything the app asks the server for is under `/api`.
+ *
+ * The root belongs to the reader now — `/` and `/{id}` serve public pages —
+ * so the API moved out of its way. See plans/public-plan-pages.md.
+ */
 async function call<T>(path: string, init: { method?: string; body?: unknown; auth?: boolean } = {}): Promise<T> {
   const headers: Record<string, string> = {};
   if (init.body !== undefined) headers["Content-Type"] = "application/json";
@@ -101,7 +112,7 @@ async function call<T>(path: string, init: { method?: string; body?: unknown; au
     const t = await token();
     if (t) headers.Authorization = `Bearer ${t}`;
   }
-  const res = await fetch(`${serverUrl()}${path}`, {
+  const res = await fetch(`${serverUrl()}/api${path}`, {
     method: init.method ?? (init.body !== undefined ? "POST" : "GET"),
     headers,
     body: init.body !== undefined ? JSON.stringify(init.body) : undefined,
@@ -178,24 +189,29 @@ export const workspace = {
     call<Review>(`/workspaces/${id}/review`, { body: { action } }),
   /** Mint the read token an outside agent uses for `GET /w/{id}/plan.md`. */
   readToken: (id: string) => call<{ token: string }>(`/workspaces/${id}/token`, { method: "POST" }),
-  readUrl: (id: string) => `${serverUrl()}/w/${id}/plan.md`,
+  readUrl: (id: string) => `${serverUrl()}/api/w/${id}/plan.md`,
 
   /**
-   * Share links: a token each, listed and revocable, for readers with no
-   * account. Minting, listing and revoking are member-only; the reading is
-   * the viewer's, with the token from the URL's fragment.
+   * Publishing: a plan at an address anyone can open.
+   *
+   * A repository file publishes a copy, republished on every save while
+   * sharing is on. A workspace document publishes nothing — its page reads
+   * the room — and publishing it twice hands back the page it already has,
+   * so the URL a member shared stays the URL.
    */
-  share: {
-    mint: (id: string) => call<ShareLink & { token: string }>(`/workspaces/${id}/share`, { method: "POST" }),
-    list: (id: string) => call<ShareLink[]>(`/workspaces/${id}/share`),
-    revoke: (id: string, linkId: string) =>
-      call<{ ok: true }>(`/workspaces/${id}/share/revoke`, { body: { id: linkId } }),
+  pages: {
+    publishFile: (repo: string, path: string, name: string, markdown: string) =>
+      call<Page>("/pages", { body: { repo, path, name, markdown } }),
+    publishWorkspace: (workspaceId: string) => call<Page>("/pages", { body: { workspaceId } }),
+    republish: (id: string, name: string, markdown: string) =>
+      call<Page>("/pages", { body: { id, name, markdown } }),
+    stop: (id: string) => call<{ ok: true }>(`/pages/${id}`, { method: "DELETE" }),
+    /** Whether this workspace document is published, for a member. */
+    forWorkspace: (id: string) => call<Page | null>(`/workspaces/${id}/page`),
   },
-  /**
-   * The secret rides in the fragment, which browsers never send: the server's
-   * log, any proxy and any unfurler see `/share` and nothing else.
-   */
-  shareUrl: (token: string) => `${serverUrl()}/share#${token}`,
+  /** Where a published plan lives. The id is the whole of the secret. */
+  pageUrl: (id: string) => `${serverUrl()}/${id}`,
+
 };
 
 // --- the live document ---------------------------------------------------------
@@ -296,7 +312,7 @@ export function openRoom(id: string, session: string, me: Presence): Room {
 
   const connect = () => {
     if (closed) return;
-    const url = `${serverUrl().replace(/^http/, "ws")}/ws/${id}?token=${encodeURIComponent(session)}`;
+    const url = `${serverUrl().replace(/^http/, "ws")}/api/ws/${id}?token=${encodeURIComponent(session)}`;
     const sock = new WebSocket(url);
     sock.binaryType = "arraybuffer";
     ws = sock;

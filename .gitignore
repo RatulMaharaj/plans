@@ -12,6 +12,10 @@ dist
 dist-ssr
 *.local
 
+# The reader, built into the server by `pnpm build:share`. Built, never
+# committed: the page and the editor must be the same renderer.
+server/public
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

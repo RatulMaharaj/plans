@@ -1,5 +1,5 @@
 ---
-status: busy
+status: done
 ---
 # A public page for any plan
 
@@ -44,26 +44,26 @@ mermaid, its own idea of a table, its own idea of a comment.
 
 ## Implementation guide
 
-- [ ] `server/src/schema.js` + a migration - `pages`: id, source (workspace
+- [x] `server/src/schema.js` + a migration - `pages`: id, source (workspace
       document or repository + path), markdown, name, published by, at,
       revoked at
-- [ ] `server/src/index.js` - routes under `/api`; `GET /api/pages/:id`
+- [x] `server/src/index.js` - routes under `/api`; `GET /api/pages/:id`
       answers the markdown (live, for a workspace source); `POST
       /api/pages` publishes or republishes; `DELETE /api/pages/:id` stops
       sharing; `/` and `/{id}` serve the static build; `/share#token`
       redirects
-- [ ] `src/share/` - the second Vite entry: fetch the page, render it with
+- [x] `src/share/` - the second Vite entry: fetch the page, render it with
       the app's pipeline, follow a live source by polling; a 404 page that
       reads as "this plan is not shared", never as an error
-- [ ] `vite.config.ts` - the `share` entry, built into `server/public/`
-- [ ] `server/Dockerfile` - build the entry in the image, so the server
+- [x] `vite.config.ts` - the `share` entry, built into `server/public/`
+- [x] `server/Dockerfile` - build the entry in the image, so the server
       ships its own page
-- [ ] `src/workspace.ts` - the `/api` prefix; publish, republish on save
+- [x] `src/workspace.ts` - the `/api` prefix; publish, republish on save
       while sharing, stop
-- [ ] `src/App.tsx` - "Share" on any file's page head: publish and copy the
+- [x] `src/App.tsx` - "Share" on any file's page head: publish and copy the
       URL; a shared file shows a small mark and a "Stop sharing"; the
       workspace's share sheet becomes this
-- [ ] `e2e/workspace.spec.ts` + `server/test/` - a repository file shared
+- [x] `e2e/workspace.spec.ts` + `server/test/` - a repository file shared
       from the app appears at its URL to a browser with no session, follows
       a save, and disappears when sharing stops; a workspace file's page
       follows the room
@@ -74,12 +74,23 @@ Comments or reactions on the page, a listing of one's shared pages, custom
 slugs, and anything about who may share: anyone signed in may share
 anything they can read.
 
-## Open questions
+## Open questions, as answered
 
-- Should a page update live over a websocket rather than by polling? Cheap
-  to add later; polling every few seconds is enough for a reader.
-- Does a page for a repository file show a "last published" time, so a
-  reader knows how fresh it is?
-- A plan links to other plans by relative path. On the page those links go
-  nowhere unless the linked plan is also shared; should they render as
-  plain text, or resolve when a shared page exists for the target?
+- **Websocket or polling?** Polling, every five seconds. A reader is not a
+  collaborator, and a socket per reader is a cost the page does not need. The
+  page stops asking once the plan is gone, which is the only final answer.
+- **A "last published" time?** Yes, for a repository file — its page is a
+  copy, so how fresh it is a real question. A workspace document's page reads
+  the room and has no "then" to report, so it says nothing.
+- **Relative links to other plans?** They render as links and do nothing when
+  clicked: there is no repository behind the page to open them in, and
+  following one would land the reader on a 404 dressed as a plan. Anything
+  with a scheme opens in a new tab.
+
+One thing the approach did not decide, decided here: **the app remembers
+which of its files are shared, not the server** (`src/shared.ts`,
+localStorage). The server cannot honestly answer "is this file shared?" — a
+page's id is its whole secret, and an endpoint that traded a repository path
+for one would be a way to ask after other people's pages. The cost is that
+the "Shared" mark follows the machine rather than the person; the page keeps
+working either way.

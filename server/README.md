@@ -8,9 +8,14 @@ does for any other file. The workspace is upstream of the file world, not a
 replacement for it. The reasoning is in
 [`plans/hosted-workspaces.md`](../plans/hosted-workspaces.md).
 
-This is the room. One Node process, one SQLite file, one websocket per open
+This is the room. One Node process, one database, one websocket per open
 document. Nothing here is a queue, a second database, or a framework, and the
 moment it wants one the scope has slipped.
+
+It also serves the public reader — the app's own read-only build — at `/` and
+`/{id}`, so a plan can be shared with someone who has no account. That is one
+static folder and one table, not a second program; see
+[`plans/public-plan-pages.md`](../plans/public-plan-pages.md).
 
 ## Running it
 
@@ -124,10 +129,33 @@ markdown is whatever the last editing client serialised, kept in the same Yjs
 doc under `meta.markdown`, so the read endpoint answers without needing an
 editor's schema on the server.
 
+## The two halves of the port
+
+Everything the app talks to is under `/api`. The root belongs to the reader:
+`/` and `/{id}` serve public plan pages out of `public/`, which is the app's
+own read-only build. The one exception is `/share`, the redirect that keeps
+links minted before pages existed working.
+
+| Route          | What it does                                                                     |
+| -------------- | -------------------------------------------------------------------------------- |
+| `GET /`        | The reader. With no id in the address it says so; there is no index of pages.     |
+| `GET /{id}`    | A published plan. The id is the whole of the secret — no session, no token.       |
+| `GET /assets/…`| The reader's bundle, content-hashed and cached for a year.                        |
+| `GET /share`   | A shim: reads the old link's token from `location.hash` and leaves for its page.  |
+| `GET /health`  | `{ ok: true }`, also at `/api/health`.                                            |
+
+`public/` is not in the repository. `pnpm build:share` writes it (that is
+`vite build --mode share`), and the image builds it in a stage of its own, so
+the page and the editor can never be two versions of the same renderer.
+Without it the server still answers the API and says `503` at the reader's
+addresses rather than pretending the plan is not shared.
+
 ## The API
 
 Every call is JSON, and every call that needs a person carries
-`Authorization: Bearer <session>`.
+`Authorization: Bearer <session>`. Paths below are relative to `/api`; the
+handful the app used to call at the root still answer there, for builds that
+predate the move.
 
 | Route                                | What it does                                                                               |
 | ------------------------------------ | ------------------------------------------------------------------------------------------ |
@@ -142,25 +170,52 @@ Every call is JSON, and every call that needs a person carries
 | `POST /workspaces/:id/review`        | `{ action: request \| approve \| changes \| clear }`. The requester cannot approve.           |
 | `POST /workspaces/:id/token`         | Mint a read token for this workspace, for the factory's secrets.                             |
 | `GET /w/:id/plan.md`                 | The document as markdown — for a member's session or the workspace's read token.             |
+| `GET /pages/:id`                     | A published plan, to anyone: `{ id, name, source, live, publishedAt, markdown }`. No auth.     |
+| `POST /pages`                        | Publish or republish. `{ workspaceId }`, or `{ repo, path, name, markdown }`, or `{ id, … }`.   |
+| `DELETE /pages/:id`                  | Stop sharing. The publisher, or any member of the page's workspace.                          |
+| `GET /workspaces/:id/page`           | Whether this document is published, for a member. Not a listing of anyone's pages.           |
+| `POST /share/resolve`                | `{ token }` → `{ id }`: an old share link, traded for its document's page.                     |
 | `POST /workspaces/:id/share`         | Mint a share link's token → `{ id, token, createdBy, createdAt, expiresAt }`.                  |
 | `GET /workspaces/:id/share`          | The live links, newest first, for the revoke list.                                            |
 | `POST /workspaces/:id/share/revoke`  | `{ id }` → that one link stops working. The others, and the read token, do not.               |
 | `GET /share/doc`                     | The shared document, for a share token: `{ name, review: { state }, markdown }`.               |
-| `GET /share`                         | The viewer page: a static shell that reads the token from `location.hash`.                    |
-| `WS /ws/:id?token=<session>`         | The live document: y-websocket's sync and awareness messages, plus review announcements.     |
+| `WS /api/ws/:id?token=<session>`     | The live document: y-websocket's sync and awareness messages, plus review announcements.     |
 
 A workspace you are not a member of answers `404`, never `403`: a stranger
 learns nothing, not even that the id exists. A share token that was revoked,
-that has expired, or that was never minted here answers the same way.
+that has expired, or that was never minted here answers the same way, and so
+does a page whose sharing was stopped.
+
+### Published pages
+
+A page is a plan at an address anyone can open: `https://<server>/{id}`, where
+the id is twenty-four random bytes and the whole of the security. A page
+nobody has the URL for is unreachable; a URL that leaks is answered by
+stopping the share, which is a timestamp rather than a delete, so the dead
+address stays dead. There is no session, no fragment and no token — a public
+page is public, and its address is what is shared.
+
+The source is one of two shapes. A workspace document's page keeps no copy:
+it reads the room, and there is only ever one live page per workspace, so
+publishing twice hands back the address a member already gave out. A
+repository file's page is a copy, pushed by the app on every save while
+sharing is on. Both are read by the same document, at the same address, and
+the reader is not told which it is looking at beyond whether it is `live`.
+The reasoning is in
+[`plans/public-plan-pages.md`](../plans/public-plan-pages.md).
 
 ### Share links
 
+Superseded by pages, and kept only so links already in circulation keep
+working: `/share#<token>` resolves the token to its document's page and
+redirects there. The app mints no new ones.
+
 A share link is `https://<server>/share#<token>`. Browsers never send the
 fragment, so the access log, any proxy and any unfurler see `/share` and get a
-static shell with nothing in it; the viewer's script reads `location.hash` and
-fetches `/share/doc` with `Authorization: Bearer`, which is the discipline the
-rest of the API already speaks. The token is the address — the workspace id is
-never in the URL.
+static shell with nothing in it; the shim's script reads `location.hash` and
+posts it to `/api/share/resolve`, which publishes the document's page if
+nobody had and answers with its id. The token is the address — the workspace
+id is never in the URL.
 
 Share tokens are their own table rather than a flag on `read_tokens`, because
 the two have different lives: the factory's read token is minted once and lives
@@ -172,10 +227,10 @@ forgotten one — and an expired link is indistinguishable from a revoked one
 from outside. The reasoning is in
 [`plans/sharable-links.md`](../plans/sharable-links.md).
 
-`server/src/share.html` is the whole viewer: one self-contained file, no build
-step and no framework, with the document rendered at reading width, raw HTML
-escaped, frontmatter shown as a status chip, and a print stylesheet — ⌘P is the
-export button.
+`server/src/share.html` is all that is left of the old viewer: a page that
+resolves a token and leaves. It used to render the document itself, which was
+a second renderer with its own idea of a table and no mermaid at all — and
+that is exactly what the reader replaced.
 
 ## Tests
 

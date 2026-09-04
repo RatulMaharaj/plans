@@ -1,0 +1,1 @@
+CREATE UNIQUE INDEX "pages_live_workspace" ON "pages" USING btree ("workspace_id") WHERE revoked_at IS NULL AND workspace_id IS NOT NULL;

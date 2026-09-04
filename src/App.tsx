@@ -67,11 +67,13 @@ import {
   openRoom,
   token as workspaceToken,
   workspace,
+  WorkspaceError,
   type Account,
   type Room,
   type Workspace,
 } from "./workspace";
 import { Workspaces, reviewLabel, reviewTone } from "./Workspaces";
+import { shareKey, sharedPages, saveSharedPages, type SharedPages } from "./shared";
 import { ShareSheet } from "./ShareSheet";
 import { SignInSheet } from "./SignInSheet";
 import { MoveSheet } from "./MoveSheet";
@@ -551,8 +553,14 @@ export default function App() {
   const [wsNaming, setWsNaming] = useState(false);
   const [wsInviting, setWsInviting] = useState<string | null>(null);
   const [wsCopying, setWsCopying] = useState<null | { id: string; repo: string; dir: string }>(null);
-  /** The workspace whose share links are open, if any. */
-  const [wsSharing, setWsSharing] = useState<string | null>(null);
+  /** Whether the share sheet is open for whatever the page is showing. */
+  const [sharing, setSharing] = useState(false);
+  /**
+   * The pages this machine has published, by `repo path` — a file's, and a
+   * workspace document's under its own key. Held here so the page head can
+   * show a mark without asking the server on every render.
+   */
+  const [pages, setPages] = useState<SharedPages>(() => sharedPages());
   /** Opening the notes is defined below the buffer machinery it needs. */
   const openNotesRef = useRef<
     ((seen: string | null, running: string) => Promise<void>) | null
@@ -1314,27 +1322,6 @@ export default function App() {
     );
   }, [activePath, settings.agentCommand, notify]);
 
-  /**
-   * A share link, minted and on the clipboard in one gesture: sharing and
-   * asking for review are siblings, and neither should cost a detour through a
-   * management page. The links this makes are listed and revocable in the
-   * sheet behind the same control.
-   */
-  const copyShareLink = useCallback(
-    async (id: string) => {
-      try {
-        const link = await workspace.share.mint(id);
-        const url = workspace.shareUrl(link.token);
-        await navigator.clipboard.writeText(url).then(
-          () => notify("Share link copied"),
-          () => notify("Could not write to the clipboard", "error"),
-        );
-      } catch (e) {
-        notify(e instanceof Error ? e.message : "Could not mint a share link", "error");
-      }
-    },
-    [notify],
-  );
 
   const changeCount = status?.entries.length ?? 0;
   /** Git's answer once status has been read, the repo's own until then. */
@@ -1902,6 +1889,30 @@ export default function App() {
       // Only the repository that was written to. Re-reading every open repo's
       // status on each autosave is a lot of work for one file's worth of news.
       void refreshStatusFor(p.repo);
+      /**
+       * While sharing is on, every save republishes: the page follows the
+       * author, which is the whole promise of it. Fire-and-forget on purpose
+       * — the file is on disk either way, and a server that is not answering
+       * must not turn a save into an error. The next save catches the page up.
+       */
+      const key = shareKey(p.repo, p.path);
+      const page = pages[key];
+      if (page) {
+        void workspace.pages
+          .republish(page, p.path.split("/").pop() ?? p.path, p.text)
+          .catch((e) => {
+            // Sharing was stopped somewhere else. Forget it here too, so the
+            // mark in the page head stops claiming a page that is gone.
+            if (e instanceof WorkspaceError && e.status === 404) {
+              setPages((prev) => {
+                const next = { ...prev };
+                delete next[key];
+                saveSharedPages(next);
+                return next;
+              });
+            }
+          });
+      }
       return true;
     } catch (e) {
       if (String(e).includes("STALE")) {
@@ -1932,7 +1943,7 @@ export default function App() {
     } finally {
       writing.current = false;
     }
-  }, [notify, refreshStatus, settings.autosave]);
+  }, [notify, refreshStatus, settings.autosave, pages]);
 
   /**
    * Write the pending buffer out.
@@ -2004,6 +2015,105 @@ export default function App() {
   );
 
   const source = useMemo(() => assemble(matter, content), [assemble, matter, content]);
+
+  // --- sharing ---------------------------------------------------------------
+
+  /**
+   * What sharing would publish, for whatever the page is showing.
+   *
+   * A workspace document and a file on disk are one gesture here even though
+   * they are two things on the server: the document's page reads the room,
+   * the file's is a copy pushed on every save. Which one this is comes from
+   * the path, the same way everything else in this component decides.
+   */
+  const shareTarget = useMemo(() => {
+    if (!activePath) return null;
+    const ws = wsIdOf(activePath);
+    if (ws) {
+      return {
+        kind: "workspace" as const,
+        key: shareKey("workspace", ws),
+        id: ws,
+        name: workspaces.find((w) => w.id === ws)?.name ?? "this document",
+      };
+    }
+    if (!activeRepoOrPath) return null;
+    return {
+      kind: "file" as const,
+      key: shareKey(activeRepoOrPath, activePath),
+      repo: activeRepoOrPath,
+      path: activePath,
+      name: activePath.split("/").pop() ?? activePath,
+    };
+  }, [activePath, activeRepoOrPath, workspaces]);
+
+  /** The page this buffer has, if this machine published one. */
+  const sharedPageId = shareTarget ? (pages[shareTarget.key] ?? null) : null;
+
+  const rememberPage = useCallback((key: string, id: string | null) => {
+    setPages((prev) => {
+      const next = { ...prev };
+      if (id) next[key] = id;
+      else delete next[key];
+      saveSharedPages(next);
+      return next;
+    });
+  }, []);
+
+  /**
+   * Publish, and put the address on the clipboard: sharing and asking for
+   * review are siblings, and neither should cost a detour through a
+   * management page.
+   *
+   * What goes up is the buffer, not the file on disk — the reader is being
+   * shown this plan, not the last version of it that happened to be saved.
+   * The keystrokes still inside the editor's debounce are the one exception,
+   * and the save that lands a moment later republishes them.
+   */
+  const publish = useCallback(async () => {
+    if (!shareTarget) return;
+    try {
+      const page =
+        shareTarget.kind === "workspace"
+          ? await workspace.pages.publishWorkspace(shareTarget.id)
+          : await workspace.pages.publishFile(
+              shareTarget.repo,
+              shareTarget.path,
+              shareTarget.name,
+              source,
+            );
+      rememberPage(shareTarget.key, page.id);
+      track("plan_published", { source: shareTarget.kind });
+      const url = workspace.pageUrl(page.id);
+      await navigator.clipboard.writeText(url).then(
+        () => notify("Link copied — anyone with it can read this plan"),
+        () => notify("The link is in the sheet; the clipboard refused it", "error"),
+      );
+    } catch (e) {
+      notify(e instanceof Error ? e.message : "Could not share this plan", "error");
+    }
+  }, [shareTarget, source, rememberPage, notify]);
+
+  const stopSharing = useCallback(async () => {
+    if (!shareTarget || !sharedPageId) return;
+    try {
+      await workspace.pages.stop(sharedPageId);
+      rememberPage(shareTarget.key, null);
+      track("plan_unpublished");
+      notify("Stopped sharing — that address is dead");
+      setSharing(false);
+    } catch (e) {
+      notify(e instanceof Error ? e.message : "Could not stop sharing", "error");
+    }
+  }, [shareTarget, sharedPageId, rememberPage, notify]);
+
+  const copyPageLink = useCallback(async () => {
+    if (!sharedPageId) return;
+    await navigator.clipboard.writeText(workspace.pageUrl(sharedPageId)).then(
+      () => notify("Link copied"),
+      () => notify("Could not write to the clipboard", "error"),
+    );
+  }, [sharedPageId, notify]);
 
   /**
    * Rewrite the selected passage, by asking the agent to.
@@ -4916,6 +5026,26 @@ export default function App() {
                 </span>
                 {activePath && (
                   <span className="page-actions">
+                    {/* Sharing, on any file: a plan is a plan whether it lives
+                        in a room or on someone's disk, and the reader on the
+                        other end of the address cannot tell the difference.
+                        Shared shows a mark, and the way to stop is behind it. */}
+                    {/* Signed in, because publishing is: an offer to share
+                        that can only answer "sign in first" is not an offer. */}
+                    {shareTarget && account && (
+                      <button
+                        className={`rail-btn ${sharedPageId ? "on" : ""}`}
+                        onClick={() => setSharing(true)}
+                        data-testid="share-plan"
+                        title={
+                          sharedPageId
+                            ? "Shared — anyone with the address can read this"
+                            : "A page anyone can open in a browser, with no account"
+                        }
+                      >
+                        {sharedPageId ? "Shared" : "Share…"}
+                      </button>
+                    )}
                     {/* A workspace's chrome: where the review stands, the
                         moves available to this person, and the way out. The
                         author rule is the server's; the buttons only avoid
@@ -4972,16 +5102,6 @@ export default function App() {
                                 </button>
                               </>
                             ) : null}
-                            {/* Sharing sits next to review: "look at this" in
-                                two strengths, one for members and one for
-                                anyone holding the link. */}
-                            <button
-                              className="rail-btn"
-                              onClick={() => setWsSharing(id)}
-                              title="A read-only link for someone with no account"
-                            >
-                              Share…
-                            </button>
                             <button
                               className="rail-btn"
                               onClick={() => setWsInviting(id)}
@@ -5513,12 +5633,15 @@ export default function App() {
         />
       )}
 
-      {wsSharing && (
+      {sharing && shareTarget && (
         <ShareSheet
-          id={wsSharing}
-          name={workspaces.find((w) => w.id === wsSharing)?.name ?? "this document"}
-          notify={notify}
-          onClose={() => setWsSharing(null)}
+          name={shareTarget.name}
+          url={sharedPageId ? workspace.pageUrl(sharedPageId) : null}
+          live={shareTarget.kind === "workspace"}
+          onPublish={publish}
+          onStop={stopSharing}
+          onCopy={copyPageLink}
+          onClose={() => setSharing(false)}
         />
       )}
 
@@ -5656,9 +5779,10 @@ export default function App() {
         canHandOff={!!activePath && chat !== false}
         onHandOff={(kind) => void handOff(kind)}
         onCopyAgentCommand={() => void copyAgentCommand()}
-        shareWorkspaceId={wsIdOf(activePath)}
-        onCopyShareLink={(id) => void copyShareLink(id)}
-        onShareLinks={(id) => setWsSharing(id)}
+        canShare={!!shareTarget && !!account}
+        sharedPage={!!sharedPageId}
+        onShare={() => setSharing(true)}
+        onCopyPageLink={() => void (sharedPageId ? copyPageLink() : publish())}
         chats={chats}
         onNewChat={newChat}
         onOpenChat={openChat}
