@@ -304,6 +304,12 @@ type Thread = {
   /** The plan *file* named to the agent most recently, so a change can be mentioned. */
   plan?: string | null;
   options?: ConfigOption[];
+  /**
+   * Choices made before this chat had a session — a model, an effort. Shown
+   * in the pickers meanwhile, and handed to the session as it starts, so the
+   * first message goes to the model that was chosen for it.
+   */
+  wanted?: Record<string, string>;
   commands?: AgentCommand[];
   /**
    * The agent's own session id, kept so a crashed or restarted process can be
@@ -494,6 +500,8 @@ export function ChatPanel({
   const titleRef = useRef<Props["onTitle"] | null>(null);
   titleRef.current = onTitle;
 
+  /** The agent's options as last advertised for this repository, any chat. */
+  const lastOptions = useRef<ConfigOption[] | null>(null);
   const commit = useCallback((k: string, up: (t: Thread) => Thread) => {
     const cur = threads.current.get(k) ?? load(k);
     const next = up(cur);
@@ -682,7 +690,11 @@ export function ChatPanel({
       "agent-config",
       (e) => {
         const k = to(e.payload);
-        if (k) commit(k, (t) => ({ ...t, options: e.payload.options ?? [] }));
+        // The last set seen for this repository is what a chat with no
+        // session yet draws its pickers from: the agent's choices do not
+        // change between one conversation and the next.
+        if (e.payload.repo === repo && e.payload.options?.length) lastOptions.current = e.payload.options;
+        if (k) commit(k, (t) => ({ ...t, options: e.payload.options ?? [], wanted: undefined }));
       },
     );
     const commands = listen<{ repo: string; chat: string; commands: AgentCommand[] }>(
@@ -949,6 +961,8 @@ export function ChatPanel({
           cmd,
           where + outgoing,
           same ? t.session : null,
+          // A chat with no session yet starts one with what was picked for it.
+          t.options ? null : (t.wanted ?? null),
         );
         if (!same) {
           commit(k, (cur) => ({
@@ -1336,7 +1350,23 @@ export function ChatPanel({
           * said, they are setting what happens next.
           */}
         <div className="chat-foot">
-          <AgentOptions repo={repo} chat={chats.current} options={thread.options} busy={busy} />
+          <AgentOptions
+            repo={repo}
+            chat={chats.current}
+            options={
+              thread.options ??
+              lastOptions.current?.map((o) => ({
+                ...o,
+                currentValue: thread.wanted?.[o.id] ?? o.currentValue,
+              }))
+            }
+            busy={busy}
+            onPick={(id, value) => {
+              if (thread.options || !key) return false;
+              commit(key, (t) => ({ ...t, wanted: { ...t.wanted, [id]: value } }));
+              return true;
+            }}
+          />
           {/* Stop sits in the composer itself, at the end of the options row —
               the answer is stopped where the next message is typed, and Esc in
               the box does the same. */}

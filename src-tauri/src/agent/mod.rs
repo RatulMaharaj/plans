@@ -98,6 +98,7 @@ fn ensure(
     chat: &str,
     agent_id: &str,
     resume: Option<String>,
+    initial: Vec<(String, String)>,
 ) -> R<()> {
     let state: State<Agents> = app.state();
     /*
@@ -149,6 +150,7 @@ fn ensure(
             gen,
             argv,
             resume,
+            initial,
             rx,
             perms,
             asks,
@@ -198,8 +200,12 @@ pub fn agent_prompt(
     agent: String,
     text: String,
     resume: Option<String>,
+    // Options chosen before the session existed, applied as it starts. Only
+    // read when a session is started here; a live one already heard them.
+    config: Option<std::collections::HashMap<String, String>>,
 ) -> R<u64> {
-    ensure(&app, &repo, &chat, &agent, resume)?;
+    let initial = config.map(|m| m.into_iter().collect()).unwrap_or_default();
+    ensure(&app, &repo, &chat, &agent, resume, initial)?;
     let turn = NEXT_TURN.fetch_add(1, Ordering::Relaxed);
     send(&app, &repo, &chat, session::Op::Prompt { turn, text })?;
     Ok(turn)

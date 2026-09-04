@@ -11,10 +11,6 @@ Remember to add changesets for any patched bugs - fixed bugs belong in the chang
 
 ## Open
 
-- Agents cannot reach a workspace yet: an agent runs against a checkout, and
-  a workspace has none. `plans/workspace-mirror.md` (a draft) is the answer —
-  a workspace mirrored to a git branch — and until then "Copy to repository"
-  is the way to hand one to an agent.
 
 ## Watch for
 

@@ -55,6 +55,7 @@ export function AgentOptions({
   chat,
   options,
   busy,
+  onPick,
 }: {
   repo: string;
   /** The conversation these options belong to — a session is per chat. */
@@ -62,6 +63,11 @@ export function AgentOptions({
   options: ConfigOption[] | undefined;
   /** A turn in flight: changing a model mid-answer is not a thing to allow. */
   busy: boolean;
+  /**
+   * Take a choice before there is a session to send it to. Answers true when
+   * it did; otherwise the choice goes to the agent as usual.
+   */
+  onPick?: (id: string, value: string) => boolean;
 }) {
   // Nothing at all rather than an empty toolbar: a minimal agent that
   // advertises no options should cost no chrome.
@@ -78,6 +84,7 @@ export function AgentOptions({
           disabled={busy}
           onChange={(v) => {
             track("agent_option_changed", { option: o.id });
+            if (onPick?.(o.id, v)) return;
             void api.agentSetConfig(repo, chat, o.id, v).catch(() => {});
           }}
           choices={(o.category === "thought_level" ? [...o.options].sort(byEffort) : o.options).map(

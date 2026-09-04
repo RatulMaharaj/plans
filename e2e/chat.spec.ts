@@ -1451,6 +1451,30 @@ test("the model and effort pickers come from the agent", async ({ page }) => {
   await expect(page.locator('.agent-option [aria-label="Model"]')).toContainText("Fable");
 });
 
+test("a new chat shows the pickers before it has a session, and starts with what was picked", async ({ page }) => {
+  await open(page);
+  await openPlan(page);
+  await page.keyboard.press("Meta+j");
+  await advertise(page);
+  await expect(page.locator('.agent-option [aria-label="Model"]')).toContainText("Fable");
+
+  // A fresh conversation has no session, so the agent has told it nothing —
+  // the pickers still show, drawn from what the agent said last time.
+  await page.locator(".mux-key", { hasText: "New" }).click();
+  await expect(page.locator('.agent-option [aria-label="Model"]')).toContainText("Fable");
+
+  // Picking here is remembered rather than sent: there is nothing to send to.
+  await page.locator('.agent-option [aria-label="Model"]').click();
+  await page.locator(".dd-item", { hasText: "Haiku" }).click();
+  await expect(page.locator('.agent-option [aria-label="Model"]')).toContainText("Haiku");
+  expect(await calls(page, "agent_set_config")).toBe(0);
+
+  // The first message starts the session with that choice, not after it.
+  await say(page, "hello, haiku");
+  const [prompt] = await argsOf(page, "agent_prompt");
+  expect(prompt).toMatchObject({ config: { model: "haiku" } });
+});
+
 test("choosing a model asks the agent, and shows the agent's answer", async ({ page }) => {
   await open(page);
   await openPlan(page);

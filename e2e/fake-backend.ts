@@ -428,11 +428,20 @@ export function installFakeBackend(
      * owns a counter. What the two have in common is the boundary — a turn id
      * out, events in — which is all the panel can see of either.
      */
-    agent_prompt: () => {
+    agent_prompt: ({ config }) => {
       if (state.failNextSend) {
         const why = state.failNextSend;
         state.failNextSend = null;
         throw new Error(why);
+      }
+      // Choices made before the session: the real side applies them as the
+      // session starts and re-advertises the set; so does this.
+      if (config && typeof config === "object") {
+        for (const [id, value] of Object.entries(config as Record<string, string>)) {
+          state.options = state.options.map((o: Record<string, unknown>) =>
+            o.id === id ? { ...o, currentValue: value } : o,
+          );
+        }
       }
       const id = nextChat++;
       state.chats[id] = true;

@@ -52,6 +52,9 @@ pub async fn run(
     argv: Vec<String>,
     // A session id from a previous run, if there is one to pick up.
     resume: Option<String>,
+    // Choices made in the panel before this session existed — a model, an
+    // effort — applied the moment it does, before the first prompt.
+    initial: Vec<(String, String)>,
     mut ops: UnboundedReceiver<Op>,
     perms: crate::agent::client::Pending,
     asks: crate::agent::client::Asks,
@@ -187,6 +190,27 @@ pub async fn run(
                     sid = Some(opened.session_id);
                 }
                 let sid = sid.expect("a session, one way or the other");
+
+                // What was picked before there was a session to pick it in.
+                // Each answer carries the whole set, so the last one is what
+                // the pickers are drawn from.
+                for (id, value) in initial {
+                    if let Ok(r) = c
+                        .send_request(SetSessionConfigOptionRequest::new(
+                            sid.clone(),
+                            id,
+                            SessionConfigOptionValue::ValueId {
+                                value: value.into(),
+                            },
+                        ))
+                        .block_task()
+                        .await
+                    {
+                        if let Ok(v) = serde_json::to_value(&r) {
+                            options = v["configOptions"].clone();
+                        }
+                    }
+                }
 
                 // Told to the UI so the next window can offer it back: this is
                 // the whole of what resuming needs to remember.

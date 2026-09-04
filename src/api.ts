@@ -391,7 +391,17 @@ export const api = {
     agent: string,
     text: string,
     resume?: string | null,
-  ) => invoke<ChatId>("agent_prompt", { repo, chat, agent, text, resume: resume ?? null }),
+    /** Choices made before the session existed, applied as it starts. */
+    config?: Record<string, string> | null,
+  ) =>
+    invoke<ChatId>("agent_prompt", {
+      repo,
+      chat,
+      agent,
+      text,
+      resume: resume ?? null,
+      config: config ?? null,
+    }),
 
   agentCancel: (repo: string, chat: string, turn: ChatId) =>
     invoke<null>("agent_cancel", { repo, chat, turn }),
