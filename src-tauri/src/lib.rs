@@ -153,6 +153,11 @@ pub struct GitStatus {
 pub struct CliStatus {
     path: String,
     current: bool,
+    /// Whether the folder the script sits in is on this process's PATH. On
+    /// Linux the script goes to `~/.local/bin`, which most shells put on PATH
+    /// and some do not, and "installed but unreachable" deserves its own word.
+    #[serde(rename = "onPath")]
+    on_path: bool,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -1158,32 +1163,198 @@ fn reveal_in_finder(repo: String, rel_path: String) -> R<()> {
 const KEYCHAIN_SERVICE: &str = "com.ratulmaharaj.plans";
 const KEYCHAIN_USER: &str = "workspaces";
 
+/// The file the token falls back to when there is no keychain to hold it.
+const TOKEN_FILE: &str = "token";
+
 fn keychain_entry() -> R<keyring::Entry> {
     keyring::Entry::new(KEYCHAIN_SERVICE, KEYCHAIN_USER).map_err(|e| e.to_string())
 }
 
+/// Whether this error means there is no keychain to talk to, as opposed to
+/// a keychain that answered "no" or "nothing".
+///
+/// On Linux `keyring` speaks Secret Service over D-Bus, and a desktop without
+/// gnome-keyring or KWallet running (Omarchy, most window-manager setups,
+/// any container) has no one on the other end. The crate reports that as
+/// `NoStorageAccess` or as `PlatformFailure`, depending on whether the bus
+/// itself or the service is what is missing. Every other error - a locked
+/// collection, a bad attribute - is the keychain speaking, and is passed on.
+fn keychain_unavailable(e: &keyring::Error) -> bool {
+    matches!(
+        e,
+        keyring::Error::NoStorageAccess(_) | keyring::Error::PlatformFailure(_)
+    )
+}
+
+/// Only Linux falls back to a file. macOS and Windows always have a
+/// keychain, and a keychain error there is a fault worth surfacing rather
+/// than a state to route around.
+fn token_file_allowed() -> bool {
+    cfg!(target_os = "linux")
+}
+
+/// Said once per process, the first time the file stands in for the
+/// keychain, so a reader of the log knows where the token went.
+fn note_token_fallback(e: &keyring::Error) {
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    ONCE.call_once(|| {
+        eprintln!(
+            "plans: no keychain available ({e}); keeping the workspace token in a 0600 file under the config directory"
+        );
+    });
+}
+
+fn token_file(app: &tauri::AppHandle) -> R<PathBuf> {
+    Ok(config_dir(app)?.join(TOKEN_FILE))
+}
+
+/// The file's text, or None when there is no file; the same shape the
+/// keychain answers with.
+fn token_file_get(p: &Path) -> R<Option<String>> {
+    match std::fs::read_to_string(p) {
+        Ok(t) => Ok(Some(t)),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(e.to_string()),
+    }
+}
+
+/// Write the token so that only this user can read it. The mode goes on
+/// before the token does: `OpenOptions::mode` applies at creation, so there
+/// is no moment where the file exists world-readable with a secret in it.
+/// A file left by an earlier write is truncated in place and keeps its mode.
+fn token_file_set(p: &Path, token: &str) -> R<()> {
+    use std::io::Write;
+    if let Some(dir) = p.parent() {
+        std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+    }
+    let mut opts = std::fs::OpenOptions::new();
+    opts.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        opts.mode(0o600);
+    }
+    let mut f = opts.open(p).map_err(|e| e.to_string())?;
+    #[cfg(unix)]
+    {
+        // The mode above only applies to a file being created; one that was
+        // already there keeps whatever it had, so say it again.
+        use std::os::unix::fs::PermissionsExt;
+        f.set_permissions(std::fs::Permissions::from_mode(0o600))
+            .map_err(|e| e.to_string())?;
+    }
+    f.write_all(token.as_bytes()).map_err(|e| e.to_string())
+}
+
+fn token_file_clear(p: &Path) -> R<()> {
+    match std::fs::remove_file(p) {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(e.to_string()),
+    }
+}
+
 #[tauri::command]
-fn workspace_token_get() -> R<Option<String>> {
+fn workspace_token_get(app: tauri::AppHandle) -> R<Option<String>> {
     match keychain_entry()?.get_password() {
         Ok(t) => Ok(Some(t)),
         Err(keyring::Error::NoEntry) => Ok(None),
+        Err(e) if token_file_allowed() && keychain_unavailable(&e) => {
+            note_token_fallback(&e);
+            token_file_get(&token_file(&app)?)
+        }
         Err(e) => Err(e.to_string()),
     }
 }
 
 #[tauri::command]
-fn workspace_token_set(token: String) -> R<()> {
-    keychain_entry()?
-        .set_password(&token)
-        .map_err(|e| e.to_string())
+fn workspace_token_set(app: tauri::AppHandle, token: String) -> R<()> {
+    match keychain_entry()?.set_password(&token) {
+        Ok(()) => Ok(()),
+        Err(e) if token_file_allowed() && keychain_unavailable(&e) => {
+            note_token_fallback(&e);
+            token_file_set(&token_file(&app)?, &token)
+        }
+        Err(e) => Err(e.to_string()),
+    }
 }
 
+/// Clears both places. Signing out must not leave a token behind in the file
+/// because the keychain happened to be running this time and not last time.
 #[tauri::command]
-fn workspace_token_clear() -> R<()> {
-    match keychain_entry()?.delete_credential() {
+fn workspace_token_clear(app: tauri::AppHandle) -> R<()> {
+    let keychain = match keychain_entry()?.delete_credential() {
         Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
+        Err(e) if token_file_allowed() && keychain_unavailable(&e) => {
+            note_token_fallback(&e);
+            Ok(())
+        }
         Err(e) => Err(e.to_string()),
+    };
+    if token_file_allowed() {
+        token_file_clear(&token_file(&app)?)?;
     }
+    keychain
+}
+
+/// The terminals a Linux desktop might have, most likely first, each with
+/// the argv that starts it in a directory.
+///
+/// A table rather than a loop because the flag differs per program: ghostty
+/// and gnome-terminal want `--working-directory=DIR` as one argument,
+/// alacritty and foot take it as two, kitty calls it `--directory`, and
+/// wezterm hides it behind a `start` subcommand. `$TERMINAL` is consulted
+/// first, since on a window-manager desktop like Omarchy it is the one thing
+/// that says which terminal the person actually uses; a value this table
+/// does not know is started with no flags and the directory inherited.
+/// `x-terminal-emulator` is Debian's alternatives entry and gnome-terminal is
+/// what GNOME has; they come last because a desktop that has them usually
+/// has one of the others too, and the others are the ones people chose.
+// Compiled on every host so the tests below run on a Mac; only Linux calls it.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+const LINUX_TERMINALS: [(&str, &[&str]); 7] = [
+    ("ghostty", &["--working-directory={dir}"]),
+    ("alacritty", &["--working-directory", "{dir}"]),
+    ("kitty", &["--directory", "{dir}"]),
+    ("foot", &["--working-directory", "{dir}"]),
+    ("wezterm", &["start", "--cwd", "{dir}"]),
+    ("x-terminal-emulator", &["--working-directory", "{dir}"]),
+    ("gnome-terminal", &["--working-directory={dir}"]),
+];
+
+/// The argv for a terminal, given its program name and the directory; the
+/// table's flags with `{dir}` filled in, or nothing for a terminal the table
+/// has not met. The name is matched on its last path segment, so
+/// `TERMINAL=/usr/bin/kitty` still gets kitty's flag.
+// Compiled on every host so the tests below run on a Mac; only Linux calls it.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+fn terminal_args(program: &str, dir: &str) -> Vec<String> {
+    let name = Path::new(program)
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    LINUX_TERMINALS
+        .iter()
+        .find(|(bin, _)| *bin == name)
+        .map(|(_, args)| args.iter().map(|a| a.replace("{dir}", dir)).collect())
+        .unwrap_or_default()
+}
+
+/// The programs `open_in_terminal` tries on Linux, in order: `$TERMINAL` when
+/// it is set to something, then the table.
+// Compiled on every host so the tests below run on a Mac; only Linux calls it.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+fn linux_terminal_candidates(terminal_var: Option<&str>) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    if let Some(t) = terminal_var.map(str::trim).filter(|t| !t.is_empty()) {
+        out.push(t.to_string());
+    }
+    for (bin, _) in LINUX_TERMINALS {
+        if !out.iter().any(|o| o == bin) {
+            out.push(bin.to_string());
+        }
+    }
+    out
 }
 
 /// Open a terminal window in the repository. macOS: whatever the default
@@ -1199,10 +1370,26 @@ fn open_in_terminal(repo: String) -> R<()> {
     }
     #[cfg(target_os = "linux")]
     {
-        // The freedesktop way; most distributions alias something here.
-        exec("x-terminal-emulator", &["--working-directory", &path])
-            .or_else(|_| exec("gnome-terminal", &[&format!("--working-directory={path}")]))
-            .map(|_| ())
+        // Spawned rather than run to completion: a terminal outlives this
+        // call, and waiting on it would hold the command until the person
+        // closed the window. The working directory is set on the process as
+        // well as passed as a flag, so a terminal the table does not know
+        // still opens in the right place. A program that is not installed
+        // fails at spawn, which is what moves the loop to the next one.
+        let terminal = std::env::var("TERMINAL").ok();
+        let mut last_err = String::new();
+        for program in linux_terminal_candidates(terminal.as_deref()) {
+            let mut cmd = Command::new(&program);
+            cmd.args(terminal_args(&program, &path));
+            cmd.current_dir(p.as_path());
+            match cmd.spawn() {
+                Ok(_) => return Ok(()),
+                Err(e) => last_err = format!("{program}: {e}"),
+            }
+        }
+        Err(format!(
+            "no terminal found: set TERMINAL, or install ghostty, alacritty, kitty, foot or wezterm ({last_err})"
+        ))
     }
     #[cfg(target_os = "windows")]
     {
@@ -1263,8 +1450,31 @@ fn cli_open_path(state: tauri::State<CliOpen>) -> Option<String> {
 /// The directories `install_cli` will write to, most preferred first.
 ///
 /// Homebrew's bin comes first: on every recent macOS it is the one PATH entry
-/// an admin user can write without sudo.
+/// an admin user can write without sudo. On Linux the answer is
+/// `~/.local/bin`, which the XDG base directory spec names for exactly this
+/// and which bash, zsh and fish on most distributions already put on PATH;
+/// `bin_dirs` picks per host.
 const BIN_DIRS: [&str; 2] = ["/opt/homebrew/bin", "/usr/local/bin"];
+
+fn bin_dirs() -> Vec<PathBuf> {
+    if cfg!(target_os = "linux") {
+        home_dir()
+            .map(|h| vec![h.join(".local").join("bin")])
+            .unwrap_or_default()
+    } else {
+        BIN_DIRS.iter().map(PathBuf::from).collect()
+    }
+}
+
+/// Whether `dir` is one of the entries of this process's PATH. Compared as
+/// paths rather than strings, so a trailing slash or a `~` the shell already
+/// expanded does not make a folder look absent.
+fn on_path(dir: &Path, path_var: Option<&std::ffi::OsStr>) -> bool {
+    let Some(path_var) = path_var else {
+        return false;
+    };
+    std::env::split_paths(path_var).any(|d| d == dir)
+}
 
 /// Where the `plans` script is installed, if it is, and whether it points at
 /// *this* build.
@@ -1284,12 +1494,14 @@ fn cli_status() -> Option<CliStatus> {
     if cfg!(windows) {
         return None;
     }
-    for dir in BIN_DIRS {
-        let dest = Path::new(dir).join("plans");
+    let path_var = std::env::var_os("PATH");
+    for dir in bin_dirs() {
+        let dest = dir.join("plans");
         if let Ok(text) = std::fs::read_to_string(&dest) {
             return Some(CliStatus {
                 path: dest.to_string_lossy().into_owned(),
                 current: text.contains(&format!("Looped Plans ({})", env!("CARGO_PKG_VERSION"))),
+                on_path: on_path(&dir, path_var.as_deref()),
             });
         }
     }
@@ -1312,13 +1524,18 @@ fn install_cli() -> R<String> {
         exe.display()
     );
     // Homebrew's bin first — on every recent macOS it is the one PATH entry
-    // an admin user can write without sudo.
+    // an admin user can write without sudo. On Linux the one candidate is
+    // `~/.local/bin`, made if it is not there yet: it is the user's own
+    // folder, and a fresh home has no reason to have it already.
     let mut last_err = String::new();
-    for dir in BIN_DIRS {
-        if !Path::new(dir).is_dir() {
+    for dir in bin_dirs() {
+        if cfg!(target_os = "linux") {
+            std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+        }
+        if !dir.is_dir() {
             continue;
         }
-        let dest = Path::new(dir).join("plans");
+        let dest = dir.join("plans");
         match std::fs::write(&dest, &script) {
             Ok(()) => {
                 #[cfg(unix)]
@@ -1712,7 +1929,46 @@ fn wear_the_development_face() {
     unsafe { NSApplication::sharedApplication(mtm).setApplicationIconImage(Some(&icon)) };
 }
 
+/// Whether to start WebKitGTK with its DMA-BUF renderer off.
+///
+/// Under Wayland with the NVIDIA driver the webview renders black or
+/// flickers; this is the known state of WebKitGTK, and the variable is the
+/// documented way around it. Forced by `PLANS_WEBKIT_SAFE=1` for the
+/// compositors and drivers this guess misses. Pure, so the decision can be
+/// tested on any host; `linux_webkit_env` reads the machine and applies it.
+// Compiled on every host so the tests below run on a Mac; only Linux calls it.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+fn webkit_safe_needed(forced: Option<&str>, wayland: bool, nvidia: bool) -> bool {
+    matches!(forced.map(str::trim), Some("1") | Some("true")) || (wayland && nvidia)
+}
+
+/// Set the WebKitGTK environment before the webview exists. WebKit reads
+/// these variables when the first web view is created, which is inside the
+/// Tauri builder, so this has to run first thing in `run`. A variable the
+/// person already set is left alone; they know their machine better.
+#[cfg(target_os = "linux")]
+fn linux_webkit_env() {
+    const VAR: &str = "WEBKIT_DISABLE_DMABUF_RENDERER";
+    if std::env::var_os(VAR).is_some() {
+        return;
+    }
+    let wayland = std::env::var_os("WAYLAND_DISPLAY").is_some()
+        || std::env::var("XDG_SESSION_TYPE").is_ok_and(|t| t == "wayland");
+    // The proprietary driver registers itself in both places; either is
+    // enough. Nouveau does not have the problem and does not appear here.
+    let nvidia = Path::new("/proc/driver/nvidia/version").exists()
+        || Path::new("/sys/module/nvidia").exists();
+    let forced = std::env::var("PLANS_WEBKIT_SAFE").ok();
+    if webkit_safe_needed(forced.as_deref(), wayland, nvidia) {
+        eprintln!("plans: Wayland with the NVIDIA driver (or PLANS_WEBKIT_SAFE); setting {VAR}=1");
+        std::env::set_var(VAR, "1");
+    }
+}
+
 pub fn run() {
+    #[cfg(target_os = "linux")]
+    linux_webkit_env();
+
     let builder = tauri::Builder::default();
 
     // Registered before every other plugin, as its docs require: a second
@@ -1883,6 +2139,135 @@ mod tests {
     #[test]
     fn the_empty_path_is_the_repository_itself() {
         assert_eq!(safe_join("/repo", "").unwrap(), PathBuf::from("/repo"));
+    }
+
+    // --- Linux: the token file, the terminal table, the PATH check ---------
+    //
+    // Host-independent by construction: the file helpers take a path, the
+    // terminal table takes a name, and `webkit_safe_needed` takes the facts
+    // rather than reading them. The Linux-only glue around them is a few
+    // lines of environment reading that only a Linux machine can exercise.
+
+    fn scratch_dir(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("plans-test-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        dir
+    }
+
+    #[test]
+    fn the_token_file_round_trips_and_clears() {
+        let dir = scratch_dir("token");
+        let p = dir.join("nested").join("token");
+        assert_eq!(
+            token_file_get(&p).unwrap(),
+            None,
+            "no file is not signed in"
+        );
+        token_file_set(&p, "abc").unwrap();
+        assert_eq!(token_file_get(&p).unwrap().as_deref(), Some("abc"));
+        // A second sign-in replaces the first, in full.
+        token_file_set(&p, "z").unwrap();
+        assert_eq!(token_file_get(&p).unwrap().as_deref(), Some("z"));
+        token_file_clear(&p).unwrap();
+        assert_eq!(token_file_get(&p).unwrap(), None);
+        // Clearing what is already gone is fine: signing out twice is not a fault.
+        token_file_clear(&p).unwrap();
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_token_file_is_readable_only_by_its_owner() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = scratch_dir("token-mode");
+        let p = dir.join("token");
+        // A world-readable file left over from something else must be
+        // tightened, since the mode at creation does not touch it.
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(&p, "old").unwrap();
+        std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o644)).unwrap();
+        token_file_set(&p, "secret").unwrap();
+        let mode = std::fs::metadata(&p).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600, "mode was {mode:o}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn only_a_missing_keychain_reaches_the_file() {
+        assert!(keychain_unavailable(&keyring::Error::NoStorageAccess(
+            "no D-Bus".into()
+        )));
+        assert!(keychain_unavailable(&keyring::Error::PlatformFailure(
+            "no Secret Service".into()
+        )));
+        // The keychain answering is never a reason to go around it.
+        assert!(!keychain_unavailable(&keyring::Error::NoEntry));
+        assert!(!keychain_unavailable(&keyring::Error::Invalid(
+            "attribute".into(),
+            "value".into()
+        )));
+    }
+
+    #[test]
+    fn each_terminal_gets_its_own_working_directory_flag() {
+        let d = "/home/me/repo";
+        assert_eq!(
+            terminal_args("ghostty", d),
+            vec!["--working-directory=/home/me/repo"]
+        );
+        assert_eq!(
+            terminal_args("alacritty", d),
+            vec!["--working-directory", d]
+        );
+        assert_eq!(terminal_args("kitty", d), vec!["--directory", d]);
+        assert_eq!(terminal_args("foot", d), vec!["--working-directory", d]);
+        assert_eq!(terminal_args("wezterm", d), vec!["start", "--cwd", d]);
+        assert_eq!(
+            terminal_args("gnome-terminal", d),
+            vec!["--working-directory=/home/me/repo"]
+        );
+        // $TERMINAL as a full path still finds its row.
+        assert_eq!(terminal_args("/usr/bin/kitty", d), vec!["--directory", d]);
+        // An unknown terminal gets no flags; the spawn's own cwd carries it.
+        assert!(terminal_args("st", d).is_empty());
+    }
+
+    #[test]
+    fn the_terminal_variable_goes_first_and_is_not_repeated() {
+        let c = linux_terminal_candidates(Some("kitty"));
+        assert_eq!(c[0], "kitty");
+        assert_eq!(c.iter().filter(|x| *x == "kitty").count(), 1);
+        assert_eq!(c.len(), LINUX_TERMINALS.len());
+
+        let c = linux_terminal_candidates(Some("  "));
+        assert_eq!(c[0], "ghostty", "blank TERMINAL is unset");
+
+        let c = linux_terminal_candidates(None);
+        assert_eq!(c.last().map(String::as_str), Some("gnome-terminal"));
+    }
+
+    #[test]
+    fn the_path_check_compares_as_paths() {
+        let var = std::env::join_paths(["/usr/bin", "/home/me/.local/bin"]).unwrap();
+        assert!(on_path(Path::new("/home/me/.local/bin"), Some(&var)));
+        assert!(!on_path(Path::new("/home/me/bin"), Some(&var)));
+        assert!(!on_path(Path::new("/usr/bin"), None));
+    }
+
+    #[test]
+    fn webkit_safe_mode_is_forced_or_inferred() {
+        assert!(webkit_safe_needed(Some("1"), false, false));
+        assert!(webkit_safe_needed(Some("true"), false, false));
+        assert!(webkit_safe_needed(None, true, true));
+        assert!(
+            !webkit_safe_needed(None, true, false),
+            "Wayland alone is fine"
+        );
+        assert!(
+            !webkit_safe_needed(None, false, true),
+            "X11 with NVIDIA is fine"
+        );
+        assert!(!webkit_safe_needed(Some("0"), true, false));
     }
 
     /*
