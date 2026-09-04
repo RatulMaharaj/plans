@@ -66,7 +66,9 @@ import {
   configured as workspacesConfigured,
   openRoom,
   presentIn,
+  scratch as wsScratch,
   type Present,
+  type ScratchHandle,
   token as workspaceToken,
   tree as wsTree,
   treeEntries,
@@ -629,6 +631,14 @@ export default function App() {
    * room is a live object, not a render input.
    */
   const rooms = useRef(new Map<string, Room>());
+  /**
+   * Each workspace's scratch folder, once it has been written: the working
+   * directory a chat in that workspace starts its agent in, and the key its
+   * conversations are stored under. See plans/agents-in-workspaces.md.
+   */
+  const [scratchDirs, setScratchDirs] = useState<Record<string, string>>({});
+  /** The follower keeping each folder current, by workspace. */
+  const scratches = useRef(new Map<string, ScratchHandle>());
   /** Each workspace's tree, as the sidebar draws it. */
   const [wsTrees, setWsTrees] = useState<Record<string, WorkspaceEntry[]>>({});
   wsTreesRef.current = wsTrees;
@@ -689,6 +699,19 @@ export default function App() {
    * `activeRepo` and taking the window down with them.
    */
   const activeRepoOrPath = activeRepo?.path ?? activeRepoPath ?? "";
+
+  /**
+   * Where the chat's agent runs, and what its conversations are keyed by.
+   *
+   * A repository is its own path. A workspace file has no path, so its chat
+   * runs in the workspace's scratch folder — a copy of the tree under the
+   * cache directory, kept current by `scratch()` and answered from the rooms
+   * when the agent reads or writes under it. Null until the folder has been
+   * written, and null for the release notes, which is why the chat is not
+   * offered there.
+   */
+  const activeWsId = wsIdOf(activePath);
+  const chatRepo = activeRepo ? activeRepo.path : activeWsId ? (scratchDirs[activeWsId] ?? null) : null;
 
   // Kept in step during render, like `openFileRef` below it.
   activeRef.current = { repo: activeRepoPath, path: activePath };
@@ -1346,10 +1369,10 @@ export default function App() {
    * hiding the panel for the first moments after launch would make it
    * flicker in.
    */
-  // A repository, not merely a buffer: an agent runs in a working directory,
-  // and a memory buffer — the release notes, a workspace file — has none.
+  // Somewhere to run: a repository, or a workspace whose scratch folder has
+  // been written. The release notes have neither.
   const muxOpen =
-    settings.showMux && chat !== false && !!activeRepo && !settingsOpen && !zen;
+    settings.showMux && chat !== false && !!chatRepo && !settingsOpen && !zen;
 
   /** Which of the two places the chat is in — the grid reads this, not the setting. */
   const chatSide = settings.chatPlace === "side";
@@ -1611,10 +1634,10 @@ export default function App() {
    * ones its picker does, and two copies of that list would be two chances to
    * disagree about which chat you are in.
    */
-  const [chats, setChats] = useState<ChatIndex>(() => loadChats(activeRepoPath ?? ""));
+  const [chats, setChats] = useState<ChatIndex>(() => loadChats(chatRepo ?? ""));
   useEffect(() => {
-    setChats(loadChats(activeRepoPath ?? ""));
-  }, [activeRepoPath]);
+    setChats(loadChats(chatRepo ?? ""));
+  }, [chatRepo]);
 
   /**
    * The current chat's advertised config options, mirrored from the same
@@ -1642,19 +1665,19 @@ export default function App() {
     return () => void un.then((f) => f());
   }, []);
   const routingChoices = useMemo(() => {
-    const opts = agentOptionsBy.get(`${activeRepoPath}\n${chats.current}`) ?? [];
+    const opts = agentOptionsBy.get(`${chatRepo}\n${chats.current}`) ?? [];
     return {
       model: opts.find((o) => o.category === "model")?.options.map((c) => c.value) ?? [],
       effort: opts.find((o) => o.category === "thought_level")?.options.map((c) => c.value) ?? [],
     };
-  }, [agentOptionsBy, activeRepoPath, chats]);
+  }, [agentOptionsBy, chatRepo, chats]);
 
   const putChats = useCallback(
     (next: ChatIndex) => {
-      if (activeRepoPath) saveChats(activeRepoPath, next);
+      if (chatRepo) saveChats(chatRepo, next);
       setChats(next);
     },
-    [activeRepoPath],
+    [chatRepo],
   );
 
   /**
@@ -1699,20 +1722,20 @@ export default function App() {
    */
   const allChats = useMemo(() => {
     const out = shownRepos.flatMap((r) => {
-      const i = r.path === activeRepoPath ? chats : peekChats(r.path);
+      const i = r.path === chatRepo ? chats : peekChats(r.path);
       return (i?.list ?? []).map((c) => ({
         repoPath: r.path,
         repoName: r.name,
         chat: c,
-        local: r.path === activeRepoPath,
+        local: r.path === chatRepo,
         current: c.id === i?.current,
       }));
     });
-    if (activeRepoPath && !repos.some((r) => r.path === activeRepoPath)) {
+    if (chatRepo && !repos.some((r) => r.path === chatRepo)) {
       out.push(
         ...chats.list.map((c) => ({
-          repoPath: activeRepoPath,
-          repoName: "",
+          repoPath: chatRepo,
+          repoName: activeWsId ? (workspaces.find((w) => w.id === activeWsId)?.name ?? "") : "",
           chat: c,
           local: true,
           current: c.id === chats.current,
@@ -1720,7 +1743,7 @@ export default function App() {
       );
     }
     return out;
-  }, [shownRepos, activeRepoPath, chats]);
+  }, [shownRepos, chatRepo, chats, activeWsId, workspaces]);
 
   /**
    * Open a conversation belonging to another repository.
@@ -1736,7 +1759,7 @@ export default function App() {
    */
   const openChatIn = useCallback(
     (repoPath: string, id: string) => {
-      if (repoPath === activeRepoPath) return openChat(id);
+      if (repoPath === chatRepo) return openChat(id);
       const i = peekChats(repoPath);
       // Its index vanished between the palette reading it and this click.
       // Better to do nothing than to switch and mint a new conversation.
@@ -1745,7 +1768,7 @@ export default function App() {
       setActiveRepoPath(repoPath);
       set({ showMux: true });
     },
-    [activeRepoPath, openChat, set],
+    [chatRepo, openChat, set],
   );
 
   /**
@@ -1757,8 +1780,8 @@ export default function App() {
    */
   const deleteChat = useCallback(
     async (id: string) => {
-      if (!activeRepoPath) return;
-      const held = chatSize(activeRepoPath, id);
+      if (!chatRepo) return;
+      const held = chatSize(chatRepo, id);
       const name = chats.list.find((c) => c.id === id)?.title ?? "this chat";
       if (held > 0 && !(await confirmed(`Delete “${name}”?`, { ok: "Delete" }))) return;
       /*
@@ -1769,10 +1792,10 @@ export default function App() {
        * agent nobody can reach, read or stop — which is the one thing this app
        * promises not to leave behind.
        */
-      void api.agentStop(activeRepoPath, id).catch(() => {});
-      putChats(chatWithout(activeRepoPath, chats, id));
+      void api.agentStop(chatRepo, id).catch(() => {});
+      putChats(chatWithout(chatRepo, chats, id));
     },
-    [activeRepoPath, chats, putChats],
+    [chatRepo, chats, putChats],
   );
 
   /**
@@ -1811,11 +1834,11 @@ export default function App() {
         // A name you chose outranks the one the transcript suggests.
         if (!at || at.named || at.title === title) return prev;
         const next = { ...prev, list: prev.list.map((c) => (c.id === id ? { ...c, title } : c)) };
-        if (activeRepoPath) saveChats(activeRepoPath, next);
+        if (chatRepo) saveChats(chatRepo, next);
         return next;
       });
     },
-    [activeRepoPath],
+    [chatRepo],
   );
 
   /**
@@ -3232,6 +3255,15 @@ export default function App() {
 
   /** Close a workspace's rooms — its tree, and every file of it that is open. */
   const closeWorkspace = useCallback((id: string) => {
+    scratches.current.get(id)?.stop();
+    scratches.current.delete(id);
+    setScratchDirs((prev) => {
+      if (!(id in prev)) return prev;
+      const next = { ...prev };
+      delete next[id];
+      return next;
+    });
+    void api.workspaceScratchForget(id).catch(() => {});
     for (const [key, room] of [...rooms.current]) {
       if (room.workspaceId !== id) continue;
       room.close();
@@ -3311,6 +3343,47 @@ export default function App() {
    * `named` is for the caller who knows the workspace's name before the list
    * this reads does — the one that just created it.
    */
+  /**
+   * A file's room, opened and kept: for the buffer on screen, for the scratch
+   * folder that has to hold every file's text, and for an agent's read or
+   * write of a file nobody has open. One room per document however many
+   * of those want it.
+   */
+  const roomFor = useCallback(
+    async (id: string, docId: string): Promise<Room | null> => {
+      const open = rooms.current.get(docId);
+      if (open) return open;
+      const me = presence();
+      if (!me) return null;
+      const session = await workspaceToken();
+      if (!session) return null;
+      const again = rooms.current.get(docId);
+      if (again) return again;
+      const room = openRoom(docId, id, session, me);
+      rooms.current.set(docId, room);
+      room.onStatus(() => setRoomTick((n) => n + 1));
+      /*
+       * The file's `status:` belongs in the tree as well as in the file.
+       *
+       * The tree is what draws fifty status dots without opening fifty
+       * rooms, so whoever has a file open keeps its entry honest. The path
+       * is looked up by document id rather than captured, because a rename
+       * moves the key and this must follow it.
+       */
+      const meta = room.doc.getMap<string>("meta");
+      meta.observe(() => {
+        const at = rooms.current.get(treeRoomId(id));
+        if (!at) return;
+        const here = treeEntries(at).find((e) => e.doc === docId);
+        if (!here) return;
+        const split = splitFrontmatter(meta.get("markdown") ?? "");
+        wsTree.setStatus(at, here.path, matterValue(split.matter ?? "", "status"));
+      });
+      return room;
+    },
+    [presence],
+  );
+
   const openWorkspaceFile = useCallback(
     async (id: string, path: string, named?: string) => {
       const me = presence();
@@ -3327,32 +3400,9 @@ export default function App() {
         return;
       }
       const docId = entry.doc;
-      let room = rooms.current.get(docId);
-      track("workspace_opened", { fresh: !room, workspaces: workspaces.length });
-      if (!room) {
-        const session = await workspaceToken();
-        if (!session) return;
-        room = openRoom(docId, id, session, me);
-        rooms.current.set(docId, room);
-        room.onStatus(() => setRoomTick((n) => n + 1));
-        /*
-         * The file's `status:` belongs in the tree as well as in the file.
-         *
-         * The tree is what draws fifty status dots without opening fifty
-         * rooms, so whoever has a file open keeps its entry honest. The path
-         * is looked up by document id rather than captured, because a rename
-         * moves the key and this must follow it.
-         */
-        const meta = room.doc.getMap<string>("meta");
-        meta.observe(() => {
-          const at = rooms.current.get(treeRoomId(id));
-          if (!at) return;
-          const here = treeEntries(at).find((e) => e.doc === docId);
-          if (!here) return;
-          const split = splitFrontmatter(meta.get("markdown") ?? "");
-          wsTree.setStatus(at, here.path, matterValue(split.matter ?? "", "status"));
-        });
-      }
+      track("workspace_opened", { fresh: !rooms.current.has(docId), workspaces: workspaces.length });
+      const room = await roomFor(id, docId);
+      if (!room) return;
       // A workspace's first file is the workspace: `plan.md` in "Roadmap"
       // opens headed "Roadmap", which is what the room was called when a
       // workspace was one document. Anything else is titled after itself.
@@ -3362,7 +3412,7 @@ export default function App() {
           : titleOf(path.split("/").pop() ?? path);
       await openMemory(wsBufferPath(id, path), `# ${heading}\n`);
     },
-    [presence, openTree, openMemory, notify, workspaces],
+    [presence, openTree, roomFor, openMemory, notify, workspaces],
   );
 
   /**
@@ -5363,6 +5413,194 @@ export default function App() {
     // `roomTick` is the signal that a room's line changed; the map is a ref.
   }, [activePath, wsTrees]);
 
+  const activeWsRoomRef = useRef<Room | undefined>(undefined);
+  activeWsRoomRef.current = activeWsRoom;
+
+  /**
+   * Which workspaces need a scratch folder right now: the one on screen,
+   * when there is a chat to offer, and any with an agent still running —
+   * an agent started here and left to work while you read something else
+   * keeps reading a folder that follows its room.
+   */
+  const scratchWanted = useMemo(() => {
+    const ids = new Set<string>();
+    if (chat !== false && activeWsId && account) ids.add(activeWsId);
+    const dirs = Object.keys(running).map((k) => k.slice(0, k.lastIndexOf("::")));
+    for (const [id, dir] of Object.entries(scratchDirs)) if (dirs.includes(dir)) ids.add(id);
+    return ids;
+  }, [chat, activeWsId, account, running, scratchDirs]);
+
+  /**
+   * Keep each wanted workspace's scratch folder current, and let the others
+   * go. The folder is written from every file's room — opened here for the
+   * files nobody has on screen — and rewritten whole on the same beat the
+   * editor publishes `meta.markdown`. The Rust side answers with the folder,
+   * which is what the chat starts the agent in.
+   */
+  useEffect(() => {
+    for (const id of scratchWanted) {
+      if (scratches.current.has(id)) continue;
+      // Reserved before the tree arrives, so a re-run does not start two.
+      const slot: ScratchHandle = { flush: async () => {}, stop: () => {} };
+      scratches.current.set(id, slot);
+      void openTree(id).then((tree) => {
+        if (!tree || scratches.current.get(id) !== slot) return;
+        const handle = wsScratch(
+          tree,
+          (docId) => roomFor(id, docId),
+          async (files) => {
+            const dir = await api.workspaceScratch(id, files);
+            setScratchDirs((prev) => (prev[id] === dir ? prev : { ...prev, [id]: dir }));
+          },
+        );
+        slot.flush = handle.flush;
+        slot.stop = handle.stop;
+      });
+    }
+    for (const [id, handle] of [...scratches.current]) {
+      if (scratchWanted.has(id)) continue;
+      handle.stop();
+      scratches.current.delete(id);
+      void api.workspaceScratchForget(id).catch(() => {});
+      setScratchDirs((prev) => {
+        if (!(id in prev)) return prev;
+        const next = { ...prev };
+        delete next[id];
+        return next;
+      });
+    }
+  }, [scratchWanted, openTree, roomFor]);
+
+  /**
+   * Editors with no surface, one per agent write in flight to a file nobody
+   * has open. Each is bound to the file's room, takes one replace once the
+   * document is connected, and is dropped. See `headless` in Editor.tsx.
+   */
+  const [ghosts, setGhosts] = useState<
+    {
+      key: string;
+      room: Room;
+      path: string;
+      initial: string;
+      replaceRef: React.MutableRefObject<((markdown: string) => string | null) | null>;
+      onReady: () => void;
+    }[]
+  >([]);
+
+  /** Turn markdown into an edit of a room through an editor nobody sees. */
+  const ghostReplace = useCallback(
+    (room: Room, path: string, markdown: string, fresh: boolean) =>
+      new Promise<string | null>((resolve) => {
+        const key = `${room.id}:${Date.now()}:${Math.random()}`;
+        const replaceRef = { current: null as ((markdown: string) => string | null) | null };
+        let settledOnce = false;
+        const finish = (echo: string | null) => {
+          if (settledOnce) return;
+          settledOnce = true;
+          setGhosts((g) => g.filter((x) => x.key !== key));
+          resolve(echo);
+        };
+        setGhosts((g) => [
+          ...g,
+          {
+            key,
+            room,
+            path,
+            // A file made by this write has nothing to bind to, so the text
+            // goes in as the template; the replace that follows is a no-op
+            // that answers with the serialised echo.
+            initial: fresh ? markdown : "",
+            replaceRef,
+            onReady: () => finish(replaceRef.current?.(markdown) ?? null),
+          },
+        ]);
+        // An editor that never connects — a room that never syncs — must
+        // not be a write that never answers.
+        window.setTimeout(() => finish(null), 8000);
+      }),
+    [],
+  );
+
+  /**
+   * The agent read or wrote a file under a workspace's scratch folder.
+   *
+   * A read answers with the room's `meta.markdown` — what the last editor
+   * published, which is the file as everyone else sees it. A write becomes
+   * an edit to the room: through the editor on screen when the file is the
+   * one open here, or through a headless one otherwise; a file the tree does
+   * not have is made first. The folder is flushed before the reply so the
+   * agent's next shell read is current.
+   */
+  const onAgentFs = useCallback(
+    async (p: { repo: string; chat: string; requestId: string; op: string; workspace: string; path: string; content: string | null }) => {
+      const reply = (content: string | null) =>
+        api.agentFsReply(p.repo, p.chat, p.requestId, content).catch(() => {});
+      const tree = await openTree(p.workspace);
+      if (!tree) return reply(null);
+      await settled(tree);
+      const map = treeMap(tree);
+      const entry = map.get(p.path);
+      if (p.op === "read") {
+        if (!entry || entry.kind !== "file" || !entry.doc) return reply(null);
+        const room = await roomFor(p.workspace, entry.doc);
+        if (!room) return reply(null);
+        await settled(room);
+        return reply(room.doc.getMap<string>("meta").get("markdown") ?? "");
+      }
+      if (p.op !== "write") return reply(null);
+      const markdown = p.content ?? "";
+      let docId = entry?.kind === "file" ? (entry.doc ?? null) : null;
+      let fresh = false;
+      if (!docId) {
+        // A folder by that name, or a path that climbs: refused.
+        if (entry || p.path.split("/").some((part) => !part || part === "." || part === "..")) return reply(null);
+        try {
+          const parts = p.path.split("/");
+          for (let i = 1; i < parts.length; i++) {
+            const dir = parts.slice(0, i).join("/");
+            if (!map.has(dir)) wsTree.addFolder(tree, dir);
+          }
+          docId = wsTree.addFile(tree, p.path);
+          fresh = true;
+        } catch {
+          return reply(null);
+        }
+      }
+      const room = await roomFor(p.workspace, docId);
+      if (!room) return reply(null);
+      await settled(room);
+      const open = activeWsRoomRef.current?.id === docId ? mainWriteReplace.current : null;
+      const echo = open ? open(markdown) : await ghostReplace(room, p.path, markdown, fresh);
+      if (echo === null) return reply(null);
+      // Published now rather than on the editor's debounce: the reply says
+      // the write landed, and the folder is written from this.
+      const meta = room.doc.getMap<string>("meta");
+      if (meta.get("markdown") !== echo) meta.set("markdown", echo);
+      await scratches.current.get(p.workspace)?.flush();
+      return reply("");
+    },
+    [openTree, roomFor, ghostReplace],
+  );
+  const onAgentFsRef = useRef(onAgentFs);
+  onAgentFsRef.current = onAgentFs;
+
+  useEffect(() => {
+    // One at a time, in order: two writes to one file must land as sent.
+    let queue: Promise<unknown> = Promise.resolve();
+    const un = listen<{
+      repo: string;
+      chat: string;
+      requestId: string;
+      op: string;
+      workspace: string;
+      path: string;
+      content: string | null;
+    }>("agent-fs", (e) => {
+      queue = queue.then(() => onAgentFsRef.current(e.payload)).catch(() => {});
+    });
+    return () => void un.then((f) => f());
+  }, []);
+
   const allFiles = useMemo(
     () =>
       shownRepos.flatMap((r) =>
@@ -5548,10 +5786,10 @@ export default function App() {
             {changeCount > 0 && <span className="count">{changeCount}</span>}
           </button>
         )}
-        {/* Not for a memory buffer: there is no working directory to start
-            an agent in, and offering a chat that cannot start is worse than
-            none. A workspace's agents wait on plans/workspace-mirror.md. */}
-        {chat !== false && activeRepo && (
+        {/* Only with somewhere to run: a repository, or a workspace whose
+            scratch folder is written. The release notes have neither, and
+            offering a chat that cannot start is worse than none. */}
+        {chat !== false && chatRepo && (
           <button
             className={`rail-btn ${muxOpen ? "on" : ""}`}
             onClick={() => showPanel("showMux")}
@@ -6261,11 +6499,31 @@ export default function App() {
           />
         )}
 
+        {ghosts.map((g) => (
+          <Editor
+            key={g.key}
+            headless
+            room={g.room}
+            docKey={`ghost::${g.key}`}
+            repo=""
+            relPath={g.path}
+            initialValue={g.initial}
+            spellcheck={false}
+            imageFolder={settings.imageFolder}
+            author={author}
+            onChange={() => {}}
+            replaceRef={g.replaceRef}
+            onReady={g.onReady}
+          />
+        ))}
+
         {muxOpen && (
           <ChatPanel
             running={running}
-            repo={activeRepoPath!}
-            relPath={activePath}
+            repo={chatRepo!}
+            /* In a workspace the agent's paths are the folder's, so the file
+               is named as the folder knows it. */
+            relPath={activeWsId ? wsFileOf(activePath) : activePath}
             seed={chatSeed}
             onSeedUsed={() => setChatSeed(null)}
             cmd={settings.chatCommand}
@@ -6304,16 +6562,16 @@ export default function App() {
           {/* The armed chord prefix — visible, or it reads as dropped keys. */}
           {chordHint && <span className="chord-hint">{renderKeys(chordHint)} …</span>}
           <span className="bar-spacer" />
-          {activeRepoPath && usage[`${activeRepoPath}::${chats.current}`] && (
+          {chatRepo && usage[`${chatRepo}::${chats.current}`] && (
             <span title="The agent's context window, and what this session has cost">
               <b>
                 {Math.round(
-                  (usage[`${activeRepoPath}::${chats.current}`].used / Math.max(1, usage[`${activeRepoPath}::${chats.current}`].size)) * 100,
+                  (usage[`${chatRepo}::${chats.current}`].used / Math.max(1, usage[`${chatRepo}::${chats.current}`].size)) * 100,
                 )}
                 %
               </b>{" "}
               context
-              {usage[`${activeRepoPath}::${chats.current}`].cost ? ` · $${usage[`${activeRepoPath}::${chats.current}`].cost!.toFixed(2)}` : ""}
+              {usage[`${chatRepo}::${chats.current}`].cost ? ` · $${usage[`${chatRepo}::${chats.current}`].cost!.toFixed(2)}` : ""}
             </span>
           )}
           {busy && <span className="saving">{busy}…</span>}
