@@ -258,6 +258,90 @@ test("a workspace is a folder in the tree, and both people see every change", as
   await expect(alice.locator(".page-path")).toHaveText("");
 });
 
+test("two accounts make a two-voice thread, signed by login, and it travels into a repository verbatim", async ({
+  browser,
+}) => {
+  const alice = await boot(browser, "alice");
+  await alice.locator(".ws-new").click();
+  await answer(alice, "Threads", "Create");
+  await expect(editor(alice).locator("h1")).toHaveText("Threads");
+  await alice.locator(".page-actions .rail-btn", { hasText: "Invite" }).click();
+  await answer(alice, "bob", "Invite");
+
+  const bob = await boot(browser, "bob");
+  await expect(heading(bob, "Threads")).toBeVisible();
+  await heading(bob, "Threads").click();
+  await row(bob, "plan").click();
+  await expect(editor(bob).locator("h1")).toHaveText("Threads");
+
+  // Alice comments on a line. The prompt says the account signs it, and the
+  // comment lands signed with her login rather than anything git says.
+  await editor(alice).locator("h1").click();
+  await alice.keyboard.press("End");
+  await alice.keyboard.press("Enter");
+  await alice.keyboard.type("Ship the room first.");
+  await alice.keyboard.press("Meta+Shift+m");
+  await expect(alice.locator(".matter-sheet .name-path")).toContainText("<!-- @alice: … -->");
+  await expect(alice.locator(".matter-sheet .name-path")).toContainText("your account");
+  const ask = alice.locator(".matter-sheet textarea");
+  await ask.fill("Is this the right order? Ask ");
+  // `@` completes to a member's handle.
+  await ask.press("@");
+  await ask.press("b");
+  await expect(alice.locator(".mentions-item")).toHaveText(["@bob"]);
+  await ask.press("Enter");
+  await expect(ask).toHaveValue("Is this the right order? Ask @bob ");
+  await alice.locator(".matter-sheet .act").click();
+  await expect(alice.locator(".md-comment")).toHaveCount(1);
+
+  // Bob sees the comment, and his reply is his own handle: a second voice.
+  await expect(bob.locator(".md-comment")).toHaveCount(1);
+  await bob.locator(".md-comment-mark").click();
+  const field = bob.locator(".md-comment-field");
+  await expect(field).toHaveAttribute("placeholder", "Reply as @bob");
+  await field.fill("Yes, the room first. ");
+  await field.press("@");
+  await field.press("a");
+  await expect(bob.locator(".mentions-item")).toHaveText(["@alice"]);
+  await field.press("Enter");
+  await expect(field).toHaveValue("Yes, the room first. @alice ");
+  await field.press("Enter");
+
+  // Alice's card: two turns, each a member with the face their cursor wears.
+  await expect(alice.locator(".md-comment-mark")).toHaveText("comment +2");
+  await alice.locator(".md-comment-mark").click();
+  await expect(alice.locator(".md-comment-handle")).toHaveText(["@alice", "@bob"]);
+  await expect(alice.locator(".md-comment-who .avatar")).toHaveText(["A", "B"]);
+  await expect(alice.locator(".md-comment-who .avatar").nth(1)).toHaveAttribute("title", "bob");
+  await alice.keyboard.press("Escape");
+
+  // On the public page the handles keep their colours and lose the faces:
+  // a reader is anonymous, and the member list never reaches the page.
+  await alice.getByTestId("share-plan").click();
+  await alice.getByTestId("publish").click();
+  const url = await alice.getByTestId("share-link").inputValue();
+  await alice.keyboard.press("Escape");
+  const reader = await readerFor(browser, idOf(url));
+  await expect(reader.locator(".md-comment-mark")).toHaveText("comment +2", { timeout: 20_000 });
+  await reader.locator(".md-comment-mark").click();
+  await expect(reader.locator(".md-comment-handle")).toHaveText(["@alice", "@bob"]);
+  await expect(reader.locator(".md-comment-handle").first()).toHaveCSS("color", /rgb\(/);
+  await expect(reader.locator(".md-comment-who .avatar")).toHaveCount(0);
+
+  // Copied into a repository, the thread is the same lines of the same file.
+  await alice.locator(".page-actions .rail-btn", { hasText: "Copy to repository" }).click();
+  await alice.locator(".matter-sheet .act", { hasText: "Copy" }).click();
+  await expect(alice.locator(".page-path")).not.toContainText("Threads ·");
+  const copied = await alice.evaluate(() => {
+    const repo = (window as any).__fake.repos[0];
+    return Object.values(repo.files as Record<string, string>).find((f) => f.includes("@bob:")) ?? "";
+  });
+  expect(copied).toContain("<!--\n@alice: Is this the right order? Ask @bob\n@bob: Yes, the room first. @alice\n-->");
+
+  expect((alice as any).__faults).toEqual([]);
+  expect((bob as any).__faults).toEqual([]);
+});
+
 test("the read endpoint lists the tree and answers a path, for a member or the workspace's token", async ({
   browser,
 }) => {

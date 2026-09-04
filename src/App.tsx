@@ -75,6 +75,7 @@ import {
   workspace,
   WorkspaceError,
   type Account,
+  type Profile,
   type Room,
   type Workspace,
   type WorkspaceEntry,
@@ -487,6 +488,8 @@ export default function App() {
     note?: string;
     confirm: string;
     multiline?: boolean;
+    /** Handles `@` completes to, for a comment in a workspace. */
+    mentions?: string[];
     /** Prefilled, for a rename or anything else that edits what exists. */
     initial?: string;
     /** When emptying the box is itself an answer — clearing an alias, say. */
@@ -718,8 +721,30 @@ export default function App() {
     };
   }, [activeRepoPath, status?.entries, epoch]);
 
-  /** Whoever git says is here, as the `@name` a comment carries. */
-  const author = activeRepoPath ? (identityByRepo[activeRepoPath] ?? "") : "";
+  /**
+   * The `@name` a comment carries. In a workspace it is the signed-in
+   * account's login: the identity the server enforces membership with, the
+   * key the presence colour hangs off, and the one handle that names exactly
+   * one member. In a repository it is whoever git says is here, which is
+   * what `git blame` will agree with.
+   */
+  const activeWorkspace = useMemo(() => {
+    const id = wsIdOf(activePath);
+    return id ? (workspaces.find((w) => w.id === id) ?? null) : null;
+  }, [activePath, workspaces]);
+  const author = wsIdOf(activePath)
+    ? (account?.login ?? "")
+    : activeRepoPath
+      ? (identityByRepo[activeRepoPath] ?? "")
+      : "";
+  /** A workspace's members by lowercased login, for the comment card's faces. */
+  const activeProfiles = useMemo(() => {
+    if (!activeWorkspace) return undefined;
+    const out: Record<string, Profile> = {};
+    for (const p of activeWorkspace.profiles ?? []) out[p.login.toLowerCase()] = p;
+    for (const login of activeWorkspace.members) out[login.toLowerCase()] ??= { login, name: null, avatar: null };
+    return out;
+  }, [activeWorkspace]);
 
   /**
    * Point at some prose, comment on it. The comment goes in at the cursor —
@@ -727,21 +752,25 @@ export default function App() {
    */
   const newComment = useCallback(() => {
     const me = author;
+    const inWorkspace = !!wsIdOf(activePath);
     setAsking({
       title: "New comment",
       placeholder: "What needs saying?",
       note: me
-        ? `Lands at the cursor, as <!-- @${me}: … -->. ⌘⇧M from anywhere in the page.`
+        ? `Lands at the cursor, as <!-- @${me}: … -->, signed with ${
+            inWorkspace ? "your account" : "git's name here"
+          }. ⌘⇧M from anywhere in the page.`
         : "Lands at the cursor as an HTML comment. git config user.name would sign it.",
       confirm: "Comment",
       multiline: true,
+      mentions: inWorkspace ? Object.keys(activeProfiles ?? {}) : undefined,
       run: (value) => {
         const text = value.trim();
         if (!text) return;
         htmlBridge.comment?.(me ? `<!-- @${me}: ${text} -->` : `<!-- ${text} -->`);
       },
     });
-  }, [author]);
+  }, [author, activePath, activeProfiles]);
 
   const notify = useCallback((text: string, kind: "info" | "error" = "info") => {
     setToast({ text, kind });
@@ -6108,6 +6137,7 @@ export default function App() {
                       spellcheck={settings.spellcheck}
                       imageFolder={settings.imageFolder}
                       author={author}
+                      profiles={activeProfiles}
                       onChange={onChange}
                       onOpenLink={(href) =>
                         activeRepoPath &&
@@ -6195,7 +6225,8 @@ export default function App() {
                       repo={split.repo}
                       relPath={split.path}
                       settings={settings}
-                      author={author}
+                      // The split holds a repository file, and signs as git.
+                      author={identityByRepo[split.repo] ?? ""}
                       view={
                         // The split obeys the same rule as the main pane:
                         // Write only ever holds markdown.
@@ -6385,6 +6416,7 @@ export default function App() {
           multiline={asking.multiline}
           initial={asking.initial}
           allowEmpty={asking.allowEmpty}
+          mentions={asking.mentions}
           onCancel={() => setAsking(null)}
           onSubmit={(v) => {
             const run = asking.run;

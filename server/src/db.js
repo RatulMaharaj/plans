@@ -90,12 +90,13 @@ export async function openDb(url = process.env.DATABASE_URL ?? "") {
   const one = async (sql, params) => (await c.query(sql, params))[0] ?? null;
   const now = () => Date.now();
 
-  const shape = (w, members) => ({
+  const shape = (w, members, profiles) => ({
     id: w.id,
     name: w.name,
     createdBy: w.created_by,
     createdAt: Number(w.created_at),
     members,
+    profiles,
   });
   /** A page as everything above it speaks of one: a source, and a document. */
   const shapePage = (p) => ({
@@ -113,6 +114,22 @@ export async function openDb(url = process.env.DATABASE_URL ?? "") {
     (await c.query("SELECT login FROM members WHERE workspace_id = $1 ORDER BY login", [id])).map(
       (m) => m.login,
     );
+  /**
+   * The members as people: login, name and face. A comment thread names its
+   * voices by login, and the app draws each one with the same face and
+   * colour its cursor wears, which presence cannot supply for someone who
+   * has left. An invited login who has never signed in has no row in
+   * `users` yet, and comes back with a null name and face.
+   */
+  const profilesOf = async (id) =>
+    (
+      await c.query(
+        `SELECT m.login, u.name, u.avatar FROM members m
+         LEFT JOIN users u ON u.login = m.login
+         WHERE m.workspace_id = $1 ORDER BY m.login`,
+        [id],
+      )
+    ).map((r) => ({ login: r.login, name: r.name ?? null, avatar: r.avatar ?? null }));
 
   return {
     close: () => c.close(),
@@ -156,7 +173,7 @@ export async function openDb(url = process.env.DATABASE_URL ?? "") {
     },
     async workspace(id) {
       const w = await one("SELECT * FROM workspaces WHERE id = $1", [id]);
-      return w ? shape(w, await membersOf(id)) : null;
+      return w ? shape(w, await membersOf(id), await profilesOf(id)) : null;
     },
     async workspacesFor(login) {
       const rows = await c.query(
@@ -164,7 +181,7 @@ export async function openDb(url = process.env.DATABASE_URL ?? "") {
          WHERE m.login = $1 ORDER BY w.created_at DESC`,
         [login],
       );
-      return Promise.all(rows.map(async (w) => shape(w, await membersOf(w.id))));
+      return Promise.all(rows.map(async (w) => shape(w, await membersOf(w.id), await profilesOf(w.id))));
     },
     addMember: (id, login) =>
       c.query("INSERT INTO members (workspace_id, login) VALUES ($1, $2) ON CONFLICT DO NOTHING", [id, login]),

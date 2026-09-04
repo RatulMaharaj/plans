@@ -19,6 +19,8 @@ import type { EditorView } from "@milkdown/kit/prose/view";
 import type { Node as PMNode } from "@milkdown/kit/prose/model";
 import { htmlSchema } from "@milkdown/preset-commonmark";
 import { api } from "./api";
+import { colorFor, type Profile } from "./workspace";
+import { attachMentions } from "./mentions";
 
 const COMMENT = /^\s*<!--([\s\S]*?)-->\s*$/;
 
@@ -103,7 +105,17 @@ function commentCard(
     turn.className = "md-comment-turn";
     const meta = document.createElement("span");
     meta.className = "md-comment-who";
-    meta.textContent = t.who ? `@${t.who}` : "comment";
+    const who = t.who ? profileOf(t.who) : null;
+    if (who) {
+      // A member: the same face and colour their cursor wears.
+      meta.append(faceDom(who), handleDom(t.who!, colorFor(who.login)));
+    } else if (t.who && htmlContext.tint) {
+      // A handle with nobody to look it up against: the colour alone, which
+      // is a hash of the handle and says nothing about who holds it.
+      meta.appendChild(handleDom(t.who, colorFor(t.who)));
+    } else {
+      meta.textContent = t.who ? `@${t.who}` : "comment";
+    }
     const text = document.createElement("span");
     text.className = "md-comment-text";
     text.textContent = t.text;
@@ -118,6 +130,7 @@ function commentCard(
   field.type = "text";
   field.placeholder = htmlContext.author ? `Reply as @${htmlContext.author}` : "Reply";
   field.className = "md-comment-field";
+  const mentions = attachMentions(field, () => Object.keys(htmlContext.profiles ?? {}));
   const send = document.createElement("button");
   send.type = "button";
   send.className = "md-comment-send";
@@ -174,10 +187,53 @@ function commentCard(
   return {
     dom,
     destroy: () => {
+      mentions();
       document.removeEventListener("mousedown", away, true);
       document.removeEventListener("keydown", onKey, true);
     },
   };
+}
+
+/** The member a turn's `@handle` names, if the context knows the members. */
+function profileOf(handle: string): Profile | null {
+  return htmlContext.profiles?.[handle.toLowerCase()] ?? null;
+}
+
+/** `@handle`, in the colour the person's cursor wears. */
+function handleDom(handle: string, color: string): HTMLElement {
+  const el = document.createElement("span");
+  el.className = "md-comment-handle";
+  el.style.color = color;
+  el.textContent = `@${handle}`;
+  return el;
+}
+
+/**
+ * A face, as `Avatar` draws one, without React: the picture the server has,
+ * or the first letter of the name on the person's colour.
+ */
+function faceDom(who: Profile): HTMLElement {
+  const name = who.name ?? who.login;
+  const size = 16;
+  if (who.avatar) {
+    const img = document.createElement("img");
+    img.className = "avatar";
+    img.src = who.avatar;
+    img.alt = "";
+    img.title = name;
+    img.referrerPolicy = "no-referrer";
+    img.style.width = img.style.height = `${size}px`;
+    return img;
+  }
+  const el = document.createElement("span");
+  el.className = "avatar";
+  el.title = name;
+  el.setAttribute("aria-hidden", "true");
+  el.style.width = el.style.height = `${size}px`;
+  el.style.fontSize = `${Math.round(size * 0.55)}px`;
+  el.style.background = colorFor(who.login);
+  el.textContent = (name.trim()[0] ?? "?").toUpperCase();
+  return el;
 }
 
 /**
@@ -271,8 +327,20 @@ function resolveAssets(root: HTMLElement, repo: string, relPath: string) {
 /**
  * The view needs to know which file it is in to resolve relative paths, and
  * that isn't in the node — so it is set here whenever a document is opened.
+ *
+ * `profiles` is the members of a workspace, by lowercased login, and is what
+ * lets a comment's `@handle` be drawn with a face; a repository never sets
+ * it, and its comments render as they always have. `tint` colours handles
+ * without a member list — the share page, whose readers are anonymous and
+ * which never carries the members — from the same hash the cursors use.
  */
-export const htmlContext = { repo: "", relPath: "", author: "" };
+export const htmlContext: {
+  repo: string;
+  relPath: string;
+  author: string;
+  profiles: Record<string, Profile> | null;
+  tint: boolean;
+} = { repo: "", relPath: "", author: "", profiles: null, tint: false };
 
 /**
  * The bridge between rendered HTML and the app.

@@ -1,5 +1,5 @@
 ---
-status: ready
+status: done
 ---
 # Improve the comment system in workspaces
 
@@ -111,46 +111,38 @@ edits, `git diff`. Not v1, and arguably not ever.
 
 ## Open questions
 
-- **Should repository comments learn the account too?** Someone signed in to
-  workspaces who comments in a repository buffer still signs with git's
-  name. Leaving it is defensible — a repo file's collaborators are git
-  collaborators, and the git name is what `git blame` will agree with — but
-  the same person signing two different handles in two buffers is a wart.
-  Leaning: leave it, and let the note text name the identity so the
-  difference is at least visible.
-- **What does a mention do?** The thread rule treats `@handle:` at
-  line-start as a turn (`html-view.ts:31-34`), but `@handle` in a comment's
-  prose is a mention with no consequence — there is no notification surface
-  anywhere in the app. Autocompleting members after `@` in the comment field
-  would be cheap and honest (it names people correctly, promises nothing).
-  Actual notification is a server feature with an email or badge story, and
-  belongs to its own plan.
-- **Old unsigned comments.** Workspaces already contain comments written
-  before this change, unsigned or signed with git slugs. They render fine —
-  `who: null` turns say "comment" (`html-view.ts:106`) — but should the
-  members lookup try to claim `@ratul-maharaj`-style slugs by matching
-  display names? Leaning no: a fuzzy identity match that is wrong once is
-  worse than a plain handle that is merely plain.
-- **Does the share page get faces?** It renders with the same pipeline, but
-  its readers are anonymous and the page deliberately never carries the
-  member list — the sharable-links plan made that a privacy property. Faces
-  on a public page would leak exactly what was withheld. Probably: handles
-  and colours only, no avatars, on `/share`.
+- ~~**Should repository comments learn the account too?**~~ Decided: no.
+  A repository buffer signs with git's name, the split pane too, and the
+  new-comment note says which identity is about to sign so the difference
+  is visible where it matters.
+- ~~**What does a mention do?**~~ Decided: it completes. `@` in the comment
+  and reply fields offers the workspace's members (`src/mentions.ts`), and
+  picking one writes the handle the server knows. Nothing is notified;
+  that is a server feature for its own plan.
+- ~~**Old unsigned comments.**~~ Decided: no matching. A handle that is
+  not a member's login renders as plain text, the way it always has.
+- ~~**Does the share page get faces?**~~ Decided: colours yes, faces no.
+  The page passes `tintHandles` to the editor, which colours every handle
+  from the same hash the cursors use and never looks a member up, because
+  it has no member list to look one up in.
 
 ## Next
 
-- [ ] Derive `author` from `account.login` when the active buffer is a
+- [x] Derive `author` from `account.login` when the active buffer is a
       workspace document (`App.tsx:722`, using `wsIdOf` as at
       `App.tsx:6125`); keep the git path for repositories
-- [ ] Fix the `newComment` note to name the signing identity per context
+- [x] Fix the `newComment` note to name the signing identity per context
       (`App.tsx:733-735`)
-- [ ] Serve member profiles — login, name, avatar — beside or instead of the
-      bare `members` logins (`workspace.ts:50`, `workspace.ts:196`)
-- [ ] An optional `profiles` map on `htmlContext` (`html-view.ts:275`);
+- [x] Serve member profiles — login, name, avatar — beside or instead of the
+      bare `members` logins (`workspace.ts:50`, `workspace.ts:196`): the
+      workspace payload carries `profiles` beside `members`
+- [x] An optional `profiles` map on `htmlContext` (`html-view.ts:275`);
       `commentCard` renders face and presence colour for a turn whose `who`
       is a member (`html-view.ts:105-106`), and stays text-only otherwise
-- [ ] Autocomplete member handles after `@` in the comment and reply fields
-- [ ] Decide the share-page rendering (colours yes, avatars no?) and make
+- [x] Autocomplete member handles after `@` in the comment and reply fields
+- [x] Decide the share-page rendering (colours yes, avatars no?) and make
       `/share` match the decision
-- [ ] A test: two accounts in one workspace produce a two-voice thread with
+- [x] A test: two accounts in one workspace produce a two-voice thread with
       both handles, and the copied-to-repository file carries it verbatim
+      (`e2e/workspace.spec.ts`, and `server/test/server.test.js` for the
+      profiles)

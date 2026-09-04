@@ -548,6 +548,37 @@
 .md-comment-turn { display: block; }
 .md-comment-turn + .md-comment-turn { margin-top: 8px; }
 
+/* A member's turn: the face and colour their cursor wears, beside the handle. */
+.md-comment-who { display: flex; align-items: center; gap: 6px; }
+.md-comment-who .avatar { box-shadow: none; }
+.md-comment-handle { text-transform: none; letter-spacing: 0.04em; font-size: 10px; }
+
+/* `@` completes to a member's handle, in the comment and reply fields. */
+.mentions {
+  position: absolute;
+  z-index: 40;
+  min-width: 160px;
+  display: flex;
+  flex-direction: column;
+  padding: 4px 0;
+  background: var(--raised);
+  border: 1px solid var(--rule-strong);
+  border-radius: 4px;
+  box-shadow: var(--shadow);
+}
+.mentions-item {
+  border: 0;
+  padding: 5px 12px;
+  text-align: left;
+  cursor: pointer;
+  background: none;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--ink-2);
+  white-space: nowrap;
+}
+.mentions-item:hover, .mentions-item.on { background: var(--shade); color: var(--ink); }
+
 /* The reply lands in the file, not in an inbox. */
 .md-comment-reply {
   display: flex;
