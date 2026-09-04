@@ -1,5 +1,60 @@
 # looped-plans
 
+## 0.10.0
+
+### Minor Changes
+
+- c24c3fd: Share any plan as a public page. "Share…" is now in every file's page head,
+  not just a workspace's: it publishes the plan to `plans.looped.sh/{id}` and
+  puts the address on the clipboard. A file in a repository republishes on
+  every save while sharing is on, so the page follows its author; a workspace
+  document's page reads the room, so it follows the argument. A shared plan
+  shows "Shared" in the page head, and the way to stop is behind it — stopping
+  kills that address for good. The id is the whole of the secret: no session,
+  no fragment, no token, and the page is not indexed.
+
+  The page is the app's own renderer, built as a second Vite entry
+  (`pnpm build:share`) and served by the workspace server, so mermaid, tables,
+  code, the frontmatter chip and the theme are the same ones the editor draws —
+  there is no second renderer to drift. Links minted before this land on their
+  document's page instead of the old viewer, which is gone. Everything the app
+  asks the server for moved under `/api` to leave the root to the reader; the
+  old addresses still answer, so a build already on your machine keeps working.
+
+- 0d3f4eb: A workspace is a folder of files, not one document. It joins the file tree as
+  a heading of its own, with its folders and files under it, and takes the same
+  gestures a repository does: new file, new folder, rename, move, delete —
+  each one a transaction on a shared tree, so everyone in the workspace sees it
+  land at once and two people acting together merge rather than fight. A rename
+  carries the document with it, so whoever is mid-sentence in a file stays
+  mid-sentence in it. What is disk-only goes dark for a workspace: no git marks,
+  no Reveal in Finder, no terminal, no path to copy.
+
+  The read endpoint and share links reach files rather than workspaces:
+  `GET /w/{id}/` lists the folder, `GET /w/{id}/{path}` answers with one file,
+  and a share link names the file it opens — the viewer draws mermaid fences as
+  diagrams now, too. `plan.md` keeps answering everywhere it used to, and a
+  workspace made before this keeps its document under that name.
+
+  The review gate is retired. `status:` in the file's own frontmatter and
+  `approved` as a human's word say what the gate said, and they travel with the
+  file into the repository instead of staying behind on a server; the page head
+  shows the file's status badge, as it does for any other file. Copying a plan
+  out to a repository revokes the workspace's share links, since the document
+  they point at is a file with a repository's own rules now.
+
+### Patch Changes
+
+- 932b6c7: Faces: your picture beside your name when signed in, and everyone else's
+  beside the workspace files they have open and at the top of the one you are
+  in, drawn from the same presence that draws their cursors. A workspace file
+  gains a read-only Source view. The public page gets the app's three papers
+  as a switch, kept in the reader's browser.
+- 4d4368d: A workspace can be left, or deleted by whoever made it, from its heading's
+  menu in the tree. Deleting closes it for everyone in it and kills its pages.
+  Your profile now sits at the foot of the sidebar, with sign-out beside it,
+  rather than in the rail.
+
 ## 0.9.0
 
 ### Minor Changes
