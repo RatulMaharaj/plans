@@ -1346,8 +1346,10 @@ export default function App() {
    * hiding the panel for the first moments after launch would make it
    * flicker in.
    */
+  // A repository, not merely a buffer: an agent runs in a working directory,
+  // and a memory buffer — the release notes, a workspace file — has none.
   const muxOpen =
-    settings.showMux && chat !== false && !!activeRepoPath && !settingsOpen && !zen;
+    settings.showMux && chat !== false && !!activeRepo && !settingsOpen && !zen;
 
   /** Which of the two places the chat is in — the grid reads this, not the setting. */
   const chatSide = settings.chatPlace === "side";
@@ -5546,7 +5548,10 @@ export default function App() {
             {changeCount > 0 && <span className="count">{changeCount}</span>}
           </button>
         )}
-        {chat !== false && (
+        {/* Not for a memory buffer: there is no working directory to start
+            an agent in, and offering a chat that cannot start is worse than
+            none. A workspace's agents wait on plans/workspace-mirror.md. */}
+        {chat !== false && activeRepo && (
           <button
             className={`rail-btn ${muxOpen ? "on" : ""}`}
             onClick={() => showPanel("showMux")}

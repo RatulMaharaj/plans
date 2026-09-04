@@ -83,6 +83,8 @@ export function SourceView({ value, onChange, settings, docKey, active, readOnly
   const onChangeRef = useRef(onChange);
   onChangeRef.current = onChange;
   const pending = useRef<number | null>(null);
+  /** True while a value from outside is being written into the editor. */
+  const pushing = useRef(false);
   /** The last text this view sent out, so its own echo can be recognised. */
   const sent = useRef<string | null>(null);
 
@@ -218,10 +220,11 @@ export function SourceView({ value, onChange, settings, docKey, active, readOnly
         // A live find keeps its count honest while the text moves — an
         // agent's write through the watcher, or typing here.
         if (liveSearch.current) reportFind(u.view, liveSearch.current);
-        // Read-only text only ever changes because a new value was pushed
-        // in; there is nothing to send back, and a pending window here would
-        // drop the next value that arrived inside it.
-        if (readOnly) return;
+        // A value pushed in from outside is not typing: there is nothing to
+        // send back, and a pending window opened for it would swallow the
+        // next value that arrived inside it — and, for a shared document,
+        // send the room its own text as an edit.
+        if (readOnly || pushing.current) return;
         if (pending.current) clearTimeout(pending.current);
         pending.current = window.setTimeout(() => {
           pending.current = null;
@@ -286,11 +289,16 @@ export function SourceView({ value, onChange, settings, docKey, active, readOnly
     const top = v.scrollDOM.scrollTop;
     const at = Math.min(sel.anchor, value.length);
     const head = Math.min(sel.head, value.length);
-    v.dispatch({
-      changes: { from: 0, to: v.state.doc.length, insert: value },
-      selection: { anchor: at, head },
-      scrollIntoView: false,
-    });
+    pushing.current = true;
+    try {
+      v.dispatch({
+        changes: { from: 0, to: v.state.doc.length, insert: value },
+        selection: { anchor: at, head },
+        scrollIntoView: false,
+      });
+    } finally {
+      pushing.current = false;
+    }
     v.scrollDOM.scrollTop = top;
   }, [value, active]);
 
