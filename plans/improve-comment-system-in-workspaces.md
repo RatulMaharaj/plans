@@ -1,5 +1,5 @@
 ---
-status: draft
+status: ready
 ---
 # Improve the comment system in workspaces
 

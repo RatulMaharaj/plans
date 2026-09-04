@@ -1,5 +1,5 @@
 ---
-status: draft
+status: ready
 ---
 # The app is the agent's filesystem in a workspace
 

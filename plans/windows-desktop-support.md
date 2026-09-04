@@ -1,5 +1,5 @@
 ---
-status: draft
+status: ready
 ---
 # Windows desktop support
 
@@ -183,6 +183,7 @@ actually offered. Small, but it is the first thing a Windows user meets.
   exists, the audience mostly is — but the decision shapes whether the build
   job grows a matrix later. The macOS answer was a universal binary; Windows
   has no equivalent single-download trick.
+  - For now just x64
 - **How does the ACP spawn behave with a `.cmd` shim?** `AcpAgent::new(cfg)`
   gets an absolute program (`session.rs:70`); whether the underlying spawn
   tolerates a `.cmd` (which needs `cmd /C`) or requires the `.exe` shim
@@ -197,28 +198,31 @@ actually offered. Small, but it is the first thing a Windows user meets.
   `e2e/fake-backend.ts`, so nothing Windows-shaped is covered by CI. Is a
   manual smoke checklist enough for v1 (probably), and what is on it —
   agents, git polling, the updater, drag-drop?
+  - I think that’s okay for now
 - **WSL repositories.** A Windows user's repos often live in
   `\\wsl$\Ubuntu\home\...`. UNC paths through `safe_join`, git, and the
   file watcher are a distinct project; deciding *not* to support them in v1
   should be a sentence in the release notes, not a surprise.
+  - Yeah no support in v1 is fine I think?
 
 ## Next
 
 - [ ] Portable `resolve`: `std::env::split_paths`, PATHEXT candidates,
-      `login_path` → `None` on Windows (`discover.rs:26-59`)
+  `login_path` → `None` on Windows (`discover.rs:26-59`)
 - [ ] `CREATE_NO_WINDOW` on `exec` (`lib.rs:36`), `agent_install`
-      (`discover.rs:310`), and the agent spawn if reachable
+  (`discover.rs:310`), and the agent spawn if reachable
 - [ ] Quote the path in the Windows terminal branch (`lib.rs:1183`); try
-      `wt` first
+  `wt` first
 - [ ] Hide the `plans` CLI install on Windows instead of failing it
-      (`lib.rs:1234`, `lib.rs:1252`)
+  (`lib.rs:1234`, `lib.rs:1252`)
 - [ ] Audit the meta+ctrl binding (`App.tsx:4902`) and the font fallback
-      stack on Windows
+  stack on Windows
 - [ ] `build-windows` job in `release.yml`: NSIS target, updater signing via
-      the existing key, artifacts uploaded beside the macOS ones
+  the existing key, artifacts uploaded beside the macOS ones
 - [ ] `verify-windows`: `.exe` + `.sig` present, `latest.json` gained a
-      `windows-x86_64` entry; keep the macOS verify untouched
+  `windows-x86_64` entry; keep the macOS verify untouched
 - [ ] One end-to-end pass on a real Windows machine: install, open a repo,
-      run an agent turn, take an update
+  run an agent turn, take an update
 - [ ] `RELEASES.md` Windows section; site download button and its analytics
-      event stop saying macOS
+  event stop saying macOS
+
