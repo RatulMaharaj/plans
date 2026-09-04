@@ -190,15 +190,21 @@ test("a workspace is a folder in the tree, and both people see every change", as
   // Faces: alice sees bob beside the file he is in and at the top of it; a
   // dev login has no picture, so his is the letter on his colour.
   await expect(row(alice, "risks").locator(".presence .avatar")).toHaveAttribute("title", "bob");
-  await expect(alice.locator(".page-actions .presence .avatar")).toHaveAttribute("title", "bob");
-  await expect(alice.locator(".page-actions .presence .avatar")).toHaveText("B");
-  await expect(bob.locator(".page-actions .presence .avatar")).toHaveAttribute("title", "alice");
+  await expect(alice.locator(".page-head > .presence .avatar")).toHaveAttribute("title", "bob");
+  await expect(alice.locator(".page-head > .presence .avatar")).toHaveText("B");
+  await expect(bob.locator(".page-head > .presence .avatar")).toHaveAttribute("title", "alice");
 
-  // The raw file is there to read, and only to read: the room owns it.
+  // The raw file is there, and an edit to it goes through the shared
+  // document like any other: bob sees it in his page.
   await alice.locator(".view-switch button", { hasText: "Source" }).click();
-  await expect(alice.locator(".surface:not(.aside) .cm-content")).toContainText("The server falls over.");
-  await expect(alice.locator(".surface:not(.aside) .cm-content")).toHaveAttribute("contenteditable", "false");
+  const src = alice.locator(".surface:not(.aside) .cm-content");
+  await expect(src).toContainText("The server falls over.");
+  await src.click();
+  await alice.keyboard.press("Meta+End");
+  await alice.keyboard.type("\nFrom the source.");
+  await expect(editor(bob)).toContainText("From the source.", { timeout: 10_000 });
   await alice.locator(".view-switch button", { hasText: "Write" }).click();
+  await expect(editor(alice)).toContainText("From the source.");
 
   // A rename lands on both sides mid-edit, and the document travels with it:
   // alice is still typing into the file bob renamed.
@@ -283,6 +289,17 @@ test("the read endpoint lists the tree and answers a path, for a member or the w
   await expect
     .poll(async () => (await fetch(`${base}/w/${id}/second.md`, { headers: key })).text())
     .toContain("# Second");
+
+  // A repository's file dropped on the workspace becomes a shared copy: in
+  // the tree, open on the page, and answered by the read endpoint at once.
+  const folder = alice.getByRole("button", { name: "plans/" });
+  if (await folder.count()) await folder.click();
+  await alice.locator(".row.file", { hasText: "existing" }).first().dragTo(heading(alice, "Reading"));
+  await expect(alice.locator(".page-path")).toHaveText("Reading · existing.md");
+  await expect(editor(alice).locator("h1")).toHaveText("Existing");
+  await expect
+    .poll(async () => (await fetch(`${base}/w/${id}/existing.md`, { headers: key })).text())
+    .toContain("# Existing");
 
   // A file the tree does not name, and a stranger, are both nothing.
   expect((await fetch(`${base}/w/${id}/nope.md`, { headers: key })).status).toBe(404);

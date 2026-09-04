@@ -153,6 +153,10 @@ function shapeOf(name, type) {
   if (type.flags & F.StringLike) return { type: "string" };
   if (type.flags & F.NumberLike) return { type: "number" };
   if (type.flags & F.BooleanLike) return { type: "boolean" };
+  if (checker.isArrayType(type)) {
+    const [item] = checker.getTypeArguments(type);
+    return { type: "array", items: shapeOf(`${name}[]`, item) };
+  }
   const index = checker.getIndexInfoOfType(type, ts.IndexKind.String);
   if (index) {
     return {

@@ -65,6 +65,15 @@ export type Settings = {
   statuses: string;
   /** Where a pasted image is written, relative to the repository root. */
   imageFolder: string;
+  /**
+   * The repositories in the sidebar, as absolute paths, in order.
+   *
+   * In the file rather than only in the window's own storage so that every
+   * build of the app on this machine — the installed one, one run from
+   * source — shows the same list. Adding, forgetting and reordering write
+   * it; editing it here is the same as doing those in the app.
+   */
+  repos: string[];
 
   // Source
   /** Line numbers down the side of the raw markdown. */
@@ -194,6 +203,7 @@ export type Settings = {
 };
 
 export const DEFAULTS: Settings = {
+  repos: [],
   theme: DEFAULT_THEME,
   fontId: "work-sans",
   monoId: "space-mono",

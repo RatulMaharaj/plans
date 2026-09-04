@@ -51,6 +51,12 @@ type Props = {
   /** The whole document as markdown, on demand — the copy-to-repository path. */
   markdownRef?: React.MutableRefObject<(() => string | null) | null>;
   /**
+   * Replace the whole document from markdown, as an edit — the Source view's
+   * way into a shared document. Answers with the markdown as the editor
+   * serialises it back, so the caller can tell its own echo apart.
+   */
+  replaceRef?: React.MutableRefObject<((markdown: string) => string | null) | null>;
+  /**
    * A document whose truth is on the wire.
    *
    * With a room, the editor binds Milkdown's collab plugin to the room's Yjs
@@ -145,6 +151,7 @@ export function Editor({
   onFindCount,
   selectionRef,
   markdownRef,
+  replaceRef,
   room,
   readOnly = false,
 }: Props) {
@@ -544,6 +551,20 @@ export function Editor({
         send();
       }
     };
+    if (replaceRef) {
+      replaceRef.current = (markdown) => {
+        if (!created.current) return null;
+        // An edit, not a swap: the room sees it as typing would be seen.
+        touched = true;
+        try {
+          crepe.editor.action(replaceAll(markdown));
+          return crepe.getMarkdown();
+        } catch (e) {
+          trace("replace failed", { error: String(e) });
+          return null;
+        }
+      };
+    }
 
     const onInput = () => {
       touched = true;
@@ -584,7 +605,12 @@ export function Editor({
               crepe.editor.action((ctx) => {
                 const service = ctx.get(collabServiceCtx);
                 service.bindDoc(room.doc).setAwareness(room.awareness);
-                service.applyTemplate(initialValue).connect();
+                // A document that has text but no editor yet — a file dropped
+                // into the workspace from a repository — carries it in the
+                // room's meta; that, over the caller's template, is what an
+                // empty shared document is filled with.
+                const carried = room.doc.getMap<string>("meta").get("markdown");
+                service.applyTemplate(carried?.trim() ? carried : initialValue).connect();
               });
               // What the read endpoint answers with is written by send(), and
               // send() waits for typing. A template is not typing — so once the
@@ -653,6 +679,7 @@ export function Editor({
       created.current = false;
       unsync?.();
       if (markdownRef && instance.current === crepe) markdownRef.current = null;
+      if (replaceRef && instance.current === crepe) replaceRef.current = null;
       for (const ev of ["beforeinput", "paste", "cut", "drop", "keydown"] as const) {
         root.removeEventListener(ev, onInput, true);
       }

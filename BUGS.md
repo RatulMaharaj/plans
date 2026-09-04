@@ -11,7 +11,10 @@ Remember to add changesets for any patched bugs - fixed bugs belong in the chang
 
 ## Open
 
-- Being in a git diff view shouldn’t add a third button to the header (write, source, diff).
+- Agents cannot reach a workspace yet: an agent runs against a checkout, and
+  a workspace has none. `plans/workspace-mirror.md` (a draft) is the answer —
+  a workspace mirrored to a git branch — and until then "Copy to repository"
+  is the way to hand one to an agent.
 
 ## Watch for
 
@@ -31,6 +34,28 @@ Not bugs yet — places the same class of mistake would land next.
   green test proves the harness agrees with the code, not that the app works.
 
 ## Fixed
+
+### The repositories you opened in one build were missing from another
+
+The sidebar's list lived in `localStorage`, which the webview keys by
+origin — `tauri://localhost` for the installed app, `http://localhost:1420`
+for one run from source — so each build kept its own list and neither saw
+the other's. The list is in `settings.json` now, where every build reads
+it, with the window's storage as the first-launch seed. The pattern: state
+that must outlive one window belongs in the file the app already syncs,
+not in the storage the window happens to have.
+
+### Source edits in a workspace file went nowhere, and then went in twice
+
+The Source view was read-only for a shared document, on the grounds that two
+editors on one Yjs document through a markdown boundary is hard. It is: the
+way in is to hand the text to the write editor mounted beside it, which
+turns it into a document edit the room sees as typing. What made it hard
+was the echo — the room's re-serialised markdown coming back into the
+Source view and rewriting it under the caret. The editor answers the
+replace with its own serialisation, and that exact string is the one echo
+the view ignores. Found by watching the read endpoint and the view side by
+side: the endpoint had the text, the view did not.
 
 ### A queued message went to whichever chat was on screen
 

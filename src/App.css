@@ -3199,3 +3199,6 @@ body.tree-drag .tabs.drop-hot {
   letter-spacing: 0.03em;
   color: var(--ink-2);
 }
+
+/* Faces beside the open file's name. */
+.page-head > .presence { margin-left: 10px; }

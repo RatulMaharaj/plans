@@ -520,7 +520,7 @@ export function installFakeBackend(
         auth: "Run `claude` in a terminal once and sign in.",
         argv: state.agentInstalled
           ? ["claude-agent-acp"]
-          : ["npx", "-y", "@agentclientprotocol/claude-agent-acp@0.70.0"],
+          : ["npx", "-y", "@agentclientprotocol/claude-agent-acp@0.73.0"],
         installed: state.agentInstalled,
         installable: !state.agentInstalled,
         conventions: [".claude/skills/plans/SKILL.md"],

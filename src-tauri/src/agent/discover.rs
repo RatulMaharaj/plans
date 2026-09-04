@@ -114,11 +114,11 @@ pub const KNOWN: &[Known] = &[
         id: "claude",
         label: "Claude Code",
         program: "npx",
-        args: &["-y", "@agentclientprotocol/claude-agent-acp@0.70.0"],
+        args: &["-y", "@agentclientprotocol/claude-agent-acp@0.73.0"],
         install: "Needs Node. Install it to start instantly instead of fetching each time.",
         auth: "Run `claude` in a terminal once and sign in.",
         bin: Some("claude-agent-acp"),
-        package: Some("@agentclientprotocol/claude-agent-acp@0.70.0"),
+        package: Some("@agentclientprotocol/claude-agent-acp@0.73.0"),
         conventions: &[".claude/skills/plans/SKILL.md"],
     },
     Known {

@@ -343,6 +343,9 @@ export default function App() {
   }, []);
 
   const [repos, setRepos] = useState<RepoInfo[]>([]);
+  /** True once settings.json has been read, so its repository list can rule. */
+  const settingsFromDisk = useRef(false);
+  const [settingsTick, setSettingsTick] = useState(0);
   /**
    * What the sidebar calls each repository, when the folder's own name is not
    * the right one — a worktree's directory, or the third repo named `mono`.
@@ -810,6 +813,8 @@ export default function App() {
           settingsStamp.current = file.modified;
           settingsText.current = serializeSettings(onDisk, extras);
           setSettings(onDisk);
+          settingsFromDisk.current = true;
+          setSettingsTick((n) => n + 1);
         }
       } catch (e) {
         // A file that will not read or parse is not a reason to start with
@@ -1034,6 +1039,7 @@ export default function App() {
     Promise.all(paths.map((p) => api.openRepo(p).catch(() => null))).then((rs) => {
       const ok = rs.filter(Boolean) as RepoInfo[];
       setRepos(ok);
+      reposBooted.current = true;
       // One clean sample per launch of how many repositories come back.
       track("repos_restored", { repos: ok.length });
       const last = stored<string | null>(KEY.last, null);
@@ -1106,8 +1112,44 @@ export default function App() {
   }, [openRepoPath]);
 
   useEffect(() => {
-    localStorage.setItem(KEY.repos, JSON.stringify(repos.map((r) => r.path)));
-  }, [repos]);
+    const paths = repos.map((r) => r.path);
+    localStorage.setItem(KEY.repos, JSON.stringify(paths));
+    // The file is the list every build of the app reads; the window's own
+    // storage is only the first-launch seed and a fallback.
+    if (!reposBooted.current) return;
+    if (paths.join("\n") !== settingsRef.current.repos.join("\n")) set({ repos: paths });
+  }, [repos, set]);
+
+  /**
+   * The file's list is the truth, once it has been read.
+   *
+   * A repository named there and not open is opened; one open here and not
+   * named there was forgotten in another build, and goes. An empty list is
+   * the file from before this key existed, and is filled from what is open
+   * rather than emptying the sidebar.
+   */
+  const reposBooted = useRef(false);
+  useEffect(() => {
+    if (!settingsFromDisk.current) return;
+    const want = settings.repos;
+    if (!want.length) return;
+    const have = new Set(repos.map((r) => r.path));
+    const missing = want.filter((p) => !have.has(p));
+    const extra = repos.filter((r) => !want.includes(r.path)).map((r) => r.path);
+    if (!missing.length && !extra.length) return;
+    void (async () => {
+      const opened = (await Promise.all(missing.map((p) => api.openRepo(p).catch(() => null)))).filter(
+        Boolean,
+      ) as RepoInfo[];
+      setRepos((prev) => {
+        const kept = prev.filter((r) => !extra.includes(r.path));
+        const byPath = new Map([...kept, ...opened].map((r) => [r.path, r]));
+        // In the file's order, with anything the file does not know last.
+        return [...want.map((p) => byPath.get(p)).filter(Boolean), ...kept.filter((r) => !want.includes(r.path))] as RepoInfo[];
+      });
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [settings.repos.join("\n"), settingsTick]);
 
   useEffect(() => {
     localStorage.setItem(KEY.repoNames, JSON.stringify(repoNames));
@@ -2271,6 +2313,14 @@ export default function App() {
 
   const onSourceChange = useCallback(
     (text: string) => {
+      // A workspace file: the text goes into the shared document through the
+      // write editor, which is mounted beside this view, and from there to
+      // everyone. The serialised echo that comes back is remembered so the
+      // Source view is not rewritten under the caret by its own keystrokes.
+      if (wsIdOf(activePath)) {
+        wsSourceEcho.current = mainWriteReplace.current?.(text) ?? null;
+        return;
+      }
       if (!activeRepoPath || activeRepoPath === MEMORY || !activePath) return;
       // The same rule as opening: frontmatter is a markdown convention, so a
       // YAML file that happens to start with `---` keeps its header in the body.
@@ -4409,9 +4459,52 @@ export default function App() {
    * typed into, and the copy happens on disk: without this, what arrives in the
    * other repository is a few seconds old and nothing says so.
    */
+  /**
+   * A repository file dropped into a workspace: a shared copy of it.
+   *
+   * The file's text rides into the new document's room as `meta.markdown` —
+   * what the read endpoint answers with from the first moment — and the
+   * first editor to open it fills the shared document from that rather than
+   * from the new-file template.
+   */
+  const importToWorkspace = useCallback(
+    async (fromRepo: string, from: string, id: string, dir: string) => {
+      const me = presence();
+      if (!me) return;
+      const name = from.split("/").pop() ?? from;
+      const to = dir ? `${dir}/${name}` : name;
+      try {
+        const { content } = await api.readPlan(fromRepo, from);
+        const tree = await wsRoomFor(id);
+        if (!tree) return;
+        const docId = wsTree.addFile(tree, to);
+        const session = await workspaceToken();
+        if (!session) return;
+        let room = rooms.current.get(docId);
+        if (!room) {
+          room = openRoom(docId, id, session, me);
+          rooms.current.set(docId, room);
+          room.onStatus(() => setRoomTick((n) => n + 1));
+        }
+        room.doc.getMap<string>("meta").set("markdown", content);
+        track("workspace_file_imported");
+        notify(`Copied ${name} into the workspace`);
+        await openWorkspaceFile(id, to);
+      } catch (e) {
+        notify(e instanceof Error ? e.message : String(e), "error");
+      }
+    },
+    [presence, wsRoomFor, openWorkspaceFile, notify],
+  );
+
   const copyTo = useCallback(
     async (fromRepo: string, from: string, toRepo: string, dir: string) => {
       await flush();
+      const ws = wsIdOf(toRepo);
+      if (ws) {
+        await importToWorkspace(fromRepo, from, ws, dir);
+        return;
+      }
       const name = from.split("/").pop() ?? from;
       const to = dir ? `${dir}/${name}` : name;
       fileAction(toRepo, "Copied", async () => {
@@ -4423,7 +4516,7 @@ export default function App() {
         await openFile(toRepo, to);
       });
     },
-    [flush, fileAction, refreshFiles, openFile],
+    [flush, fileAction, refreshFiles, openFile, importToWorkspace],
   );
 
   /**
@@ -4656,6 +4749,10 @@ export default function App() {
   const mainWriteSelection = useRef<(() => string) | null>(null);
   /** The main write surface's whole document, for copying a workspace out. */
   const mainWriteMarkdown = useRef<(() => string | null) | null>(null);
+  /** And the way to replace it: the Source view's edits to a shared document. */
+  const mainWriteReplace = useRef<((markdown: string) => string | null) | null>(null);
+  /** What Source last sent, as the editor serialised it, so the room's echo is not a change. */
+  const wsSourceEcho = useRef<string | null>(null);
   const mainSourceFind = useRef<FindHandle | null>(null);
   const splitFind = useRef<FindHandle | null>(null);
   /** The engine last driven, so switching surfaces clears the old paint. */
@@ -5239,7 +5336,11 @@ export default function App() {
       return;
     }
     const meta = room.doc.getMap<string>("meta");
-    const read = () => setWsSource(meta.get("markdown") ?? "");
+    const read = () => {
+      const md = meta.get("markdown") ?? "";
+      if (md === wsSourceEcho.current) return;
+      setWsSource(md);
+    };
     read();
     meta.observe(read);
     return () => meta.unobserve(read);
@@ -5428,26 +5529,23 @@ export default function App() {
               Source
             </button>
             {/* Diff is not a mode you switch into: it belongs to changed
-                files, reached from the git panel — and shown here only while
-                the buffer is actually in it, so there is a way to read the
-                state and a way back out. */}
-            {(paneFocus === "split" && split ? (splitOverride ?? view) : view) === "diff" && (
-              <button className="on" title="Live diff against the last commit">
-                Diff
-              </button>
-            )}
+                files, reached from the git panel. In it, neither button is
+                lit, and pressing either is the way back out. */}
           </span>
         )}
 
-        <button
-          className={`rail-btn ${gitOpen ? "on" : ""}`}
-          onClick={() => showPanel("showGit")}
-          title="Git panel (⌘G)"
-          aria-pressed={gitOpen}
-        >
-          Git
-          {changeCount > 0 && <span className="count">{changeCount}</span>}
-        </button>
+        {/* Not in a workspace: nothing there is a repository's to commit. */}
+        {!wsIdOf(activePath) && (
+          <button
+            className={`rail-btn ${gitOpen ? "on" : ""}`}
+            onClick={() => showPanel("showGit")}
+            title="Git panel (⌘G)"
+            aria-pressed={gitOpen}
+          >
+            Git
+            {changeCount > 0 && <span className="count">{changeCount}</span>}
+          </button>
+        )}
         {chat !== false && (
           <button
             className={`rail-btn ${muxOpen ? "on" : ""}`}
@@ -5745,6 +5843,14 @@ export default function App() {
                     ? `${workspaces.find((w) => w.id === wsIdOf(activePath))?.name ?? "workspace"} · ${wsFileOf(activePath)}`
                     : (activePath ?? "")}
                 </span>
+                {/* Everyone else with this file open, beside its name: the
+                    one fact about a shared file worth a glance before typing. */}
+                {wsIdOf(activePath) && (
+                  <Faces
+                    who={wsPresence[wsShelfPath(wsIdOf(activePath)!)]?.[wsFileOf(activePath)] ?? []}
+                    size={20}
+                  />
+                )}
                 {activePath && (
                   <span className="page-actions">
                     {/* Sharing, on any file: a plan is a plan whether it lives
@@ -5783,10 +5889,6 @@ export default function App() {
                         const status = (wsTrees[id] ?? []).find((e) => e.path === file)?.status;
                         return (
                           <>
-                            {/* Everyone else with this file open, faces
-                                first: it is the one fact about a shared
-                                file worth glancing at before typing. */}
-                            <Faces who={wsPresence[wsShelfPath(id)]?.[file] ?? []} />
                             {room && room.status !== "open" && (
                               <span className="ws-status" title="Reconnecting to the workspace server">
                                 {room.status === "connecting" ? "connecting…" : "offline"}
@@ -5993,6 +6095,7 @@ export default function App() {
                       key={activeWsRoom?.id ?? "file"}
                       room={activeWsRoom}
                       markdownRef={mainWriteMarkdown}
+                      replaceRef={mainWriteReplace}
                       docKey={docKey}
                       repo={activeRepo?.path ?? ""}
                       relPath={activePath}
@@ -6015,7 +6118,6 @@ export default function App() {
                   <div className={`surface ${view === "source" ? "" : "aside"}`}>
                     <SourceView
                       value={wsIdOf(activePath) ? wsSource : source}
-                      readOnly={!!wsIdOf(activePath)}
                       onChange={onSourceChange}
                       settings={settings}
                       docKey={docKey}
