@@ -694,7 +694,7 @@ export function SettingsPage({
               </span>
               {cli?.current ? (
                 <span className="act done" title={cli.path}>
-                  Installed
+                  {cli.onPath ? "Installed" : `Installed — ${cli.path} is not on your PATH`}
                 </span>
               ) : (
                 <button className="act" onClick={onInstallCli} title={cli?.path}>

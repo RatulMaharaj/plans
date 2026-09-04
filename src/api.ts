@@ -99,8 +99,13 @@ export type ConfigOption = {
 /** A slash command the agent offers. */
 export type AgentCommand = { name: string; description?: string; input?: { hint?: string } };
 
-/** The installed `plans` script: where it is, and whether it is this build's. */
-export type CliStatus = { path: string; current: boolean };
+/**
+ * The installed `plans` script: where it is, whether it is this build's, and
+ * whether the folder it sits in is on PATH. `onPath` is what Linux asks
+ * after writing to `~/.local/bin`, a folder most shells put on PATH and some
+ * do not; on macOS the Homebrew directories answer true.
+ */
+export type CliStatus = { path: string; current: boolean; onPath: boolean };
 
 /**
  * One turn's handle. Its narration arrives as `agent-message`,

@@ -93,8 +93,8 @@ export const DEFAULT_KEYS: KeymapEntry[] = [
 ];
 
 // A Mac writes its modifiers as glyphs and runs them together; everywhere
-// else they are words joined with "+", which is how Windows itself writes
-// them in every menu.
+// else they are words joined with "+", which is how Windows writes them in
+// every menu and how GTK and KDE write them on Linux.
 const GLYPH: Record<string, string> = IS_MAC
   ? {
       mod: "⌘",
@@ -126,9 +126,10 @@ const GLYPH: Record<string, string> = IS_MAC
 /**
  * The modifier that rides on top of `mod` for the two "always" chords, ⌘⌃P
  * and ⌘⌃B. On a Mac that is ⌃, the one modifier the page's own bindings never
- * take. Windows has no such key: `mod` already *is* Ctrl there, and the
- * Windows key is the system's own, so the spare modifier is Alt. `extraHeld`
- * is the matcher's side of the same decision.
+ * take. Windows and Linux have no such key: `mod` already *is* Ctrl there,
+ * and the Windows or Super key belongs to the system (on Linux, to the
+ * compositor — Hyprland binds most of Super), so the spare modifier is Alt.
+ * `extraHeld` is the matcher's side of the same decision.
  */
 export const EXTRA = IS_MAC ? "ctrl" : "alt";
 
@@ -137,7 +138,7 @@ export function extraHeld(e: KeyboardEvent): boolean {
 }
 
 /**
- * The whole chord: the command key itself — ⌘, or Ctrl on Windows — and the
+ * The whole chord: the command key itself — ⌘, or Ctrl elsewhere — and the
  * extra one together. Stricter than `mod` plus `extraHeld`, because on a Mac
  * `mod` also answers to a bare Ctrl, and ⌃P alone must not open the profiler.
  */
