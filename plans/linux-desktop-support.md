@@ -1,7 +1,17 @@
 ---
-status: ready
+status: done
 ---
 # Linux desktop support, Arch and Omarchy first
+
+> Built and checked on a Mac: the Rust compiles and its tests pass, the
+> types check, the key and settings specs pass, and the workflow parses with
+> `build-linux` chained after Windows. What no CI covers is the AppImage
+> running on a Linux desktop, so one pass on a real machine is still owed
+> before the first Linux release is published: the WebKitGTK guess under
+> Hyprland with an NVIDIA card, the token file on a desktop without
+> gnome-keyring, the terminal table against a real `$TERMINAL`, an update
+> taken in place, and `makepkg` from the AUR template. The checklist is in
+> `RELEASES.md`, under *Linux*.
 
 > I also want to add support for Arch/Omarchy linux please
 
@@ -66,25 +76,25 @@ there works on the friendlier distributions too.
 
 ## Implementation guide
 
-- [ ] `src-tauri/src/lib.rs` - the WebKitGTK environment set at startup on
+- [x] `src-tauri/src/lib.rs` - the WebKitGTK environment set at startup on
       Linux under Wayland + NVIDIA, or `PLANS_WEBKIT_SAFE=1`; the terminal
       table; `install_cli`/`cli_status` for `~/.local/bin`
-- [ ] `src-tauri/src/lib.rs` - the keychain commands fall back to a 0600
+- [x] `src-tauri/src/lib.rs` - the keychain commands fall back to a 0600
       file under the config directory when Secret Service is unavailable
-- [ ] `src/platform.ts`, `src/keys.ts`, `src/fonts.ts` - `IS_LINUX`, Alt as
+- [x] `src/platform.ts`, `src/keys.ts`, `src/fonts.ts` - `IS_LINUX`, Alt as
       the spare modifier, the monospace stack
-- [ ] `.github/workflows/release.yml` - `build-linux` on `ubuntu-22.04`
+- [x] `.github/workflows/release.yml` - `build-linux` on `ubuntu-22.04`
       with the WebKitGTK/AppIndicator dev packages Tauri needs, `--bundles
       appimage,deb`, updater signing with the existing key, artifacts beside
       the others; `verify-linux` checks the `.AppImage`, its `.sig`, the
       `.deb`, and that `latest.json` gained `linux-x86_64`
-- [ ] `packaging/aur/PKGBUILD` - a `-bin` template pointed at the release
+- [x] `packaging/aur/PKGBUILD` - a `-bin` template pointed at the release
       AppImage, with a desktop entry and icon
-- [ ] `RELEASES.md` - a Linux section: the AppImage, the WebKitGTK
+- [x] `RELEASES.md` - a Linux section: the AppImage, the WebKitGTK
       variables, the AUR template, the smoke checklist
-- [ ] `site/index.html` - the download button offers Linux by platform,
+- [x] `site/index.html` - the download button offers Linux by platform,
       and the event reports it
-- [ ] `src-tauri/tauri.conf.json` - a `linux` bundle section if the
+- [x] `src-tauri/tauri.conf.json` - a `linux` bundle section if the
       AppImage needs one (icon, category)
 
 ## Out of scope
@@ -95,9 +105,11 @@ Wayland-native window decorations, which WebKitGTK draws itself.
 
 ## Open questions
 
-- Should the AppImage bundle its own WebKitGTK? Tauri's does not, and an
-  Arch system's WebKitGTK is newer than Ubuntu 22.04's, which is fine; the
-  other way round is the risk, and building on 22.04 is the usual answer.
-- The keychain fallback file: is a 0600 file in the config directory
+- ~~Should the AppImage bundle its own WebKitGTK?~~ Decided: no. The job
+  builds on `ubuntu-22.04`, the oldest image with the 4.1 API, so the
+  AppImage runs on anything newer, and an Arch desktop is always newer.
+- ~~The keychain fallback file: is a 0600 file in the config directory
   acceptable on a shared machine, or should the app refuse to sign in
-  without a Secret Service and say why? Leaning: the file, said plainly.
+  without a Secret Service and say why?~~ Decided: the file, said plainly.
+  Linux only, only when `keyring` reports there is no service at all, said
+  once on stderr, and cleared on sign-out along with the keychain.
