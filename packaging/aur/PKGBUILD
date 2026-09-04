@@ -1,0 +1,63 @@
+# Maintainer: (unclaimed - see RELEASES.md, "Linux")
+#
+# A template for the AUR package `looped-plans-bin`. It fetches the AppImage
+# from a GitHub release, drops it under /opt, and installs a desktop entry
+# and an icon so the launcher finds it. The AppImage keeps its own updater,
+# so a copy installed this way will offer to update itself; whether that is
+# wanted from a pacman-managed file is a question for whoever maintains the
+# package, and the usual answer is to run `plans` with the updater left on
+# and let pacman catch up at the next bump.
+#
+# Publishing this needs an AUR account and a maintainer; the repository
+# holds the template so a release can fill it in. Update pkgver and the
+# sha256sums (`updpkgsums` does both) and push to the AUR's git remote.
+
+pkgname=looped-plans-bin
+_appname=looped-plans
+pkgver=0.10.0
+pkgrel=1
+pkgdesc="A desktop app for reading and editing the plans in your local git repositories"
+arch=('x86_64')
+url="https://plans.ratulmaharaj.com"
+# The repository has no LICENSE file yet; name the licence here when it does.
+license=('custom')
+depends=('fuse2' 'webkit2gtk-4.1' 'gtk3' 'libayatana-appindicator')
+optdepends=(
+  'ghostty: a terminal for "Open in terminal"'
+  'alacritty: a terminal for "Open in terminal"'
+  'gnome-keyring: keep the workspace sign-in in the keychain rather than a file'
+)
+provides=('looped-plans')
+conflicts=('looped-plans')
+options=(!strip)
+_release="https://github.com/loopedautomation/plans/releases/download/v${pkgver}"
+_raw="https://raw.githubusercontent.com/loopedautomation/plans/v${pkgver}"
+source=(
+  "${_appname}-${pkgver}.AppImage::${_release}/Looped.Plans_${pkgver}_amd64.AppImage"
+  "${_appname}-${pkgver}.png::${_raw}/src-tauri/icons/128x128.png"
+)
+noextract=("${_appname}-${pkgver}.AppImage")
+sha256sums=('SKIP' 'SKIP')
+
+package() {
+  install -Dm755 "${srcdir}/${_appname}-${pkgver}.AppImage" \
+    "${pkgdir}/opt/${_appname}/${_appname}.AppImage"
+  install -d "${pkgdir}/usr/bin"
+  ln -s "/opt/${_appname}/${_appname}.AppImage" "${pkgdir}/usr/bin/plans"
+
+  install -Dm644 "${srcdir}/${_appname}-${pkgver}.png" \
+    "${pkgdir}/usr/share/icons/hicolor/128x128/apps/${_appname}.png"
+  install -d "${pkgdir}/usr/share/applications"
+  cat > "${pkgdir}/usr/share/applications/${_appname}.desktop" <<DESKTOP
+[Desktop Entry]
+Type=Application
+Name=Looped Plans
+Comment=${pkgdesc}
+Exec=/opt/${_appname}/${_appname}.AppImage %F
+Icon=${_appname}
+Terminal=false
+Categories=Development;TextEditor;
+MimeType=text/markdown;inode/directory;
+StartupWMClass=Looped Plans
+DESKTOP
+}

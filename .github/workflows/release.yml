@@ -3,8 +3,8 @@ name: Release
 # Builds Looped Plans for macOS, signs it with the Developer ID certificate,
 # notarizes it with Apple, staples the ticket, and attaches the .dmg and
 # .app.tar.gz to a draft GitHub Release. A second job builds the Windows
-# installer (x64, NSIS) and attaches it to the same draft, so one latest.json
-# carries both platforms.
+# installer (x64, NSIS) and a third the Linux AppImage and .deb (x64), each
+# attached to the same draft, so one latest.json carries all three platforms.
 #
 # Triggers:
 #   - version tag (e.g. v0.1.0) -> full release build, draft release
@@ -278,6 +278,114 @@ jobs:
             src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/*.exe
             src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/*.exe.sig
 
+  # Linux, x64 only, as an AppImage plus a .deb. The AppImage is the artifact
+  # that matters: it is the one bundle Tauri's updater can replace in place,
+  # so it is what the feed's linux-x86_64 entry points at. The .deb is there
+  # for the people who want one and carries no updater promise.
+  #
+  # Chained after the Windows job for the same reason that one waits for
+  # macOS: three uploads into one latest.json have to happen one at a time,
+  # or the last writer wins and a platform goes missing from the feed.
+  #
+  # ubuntu-22.04 rather than latest on purpose. An AppImage links against
+  # the WebKitGTK it was built beside and runs on anything newer; a build on
+  # a newer image would refuse to start on an older desktop. 22.04 is the
+  # oldest image with the 4.1 API that Tauri 2 needs. See RELEASES.md,
+  # "Linux".
+  build-linux:
+    name: Build Linux
+    needs: build-windows
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      # What Tauri 2 links on Linux: WebKitGTK 4.1 for the webview, the
+      # Ayatana AppIndicator for the tray API the framework compiles in even
+      # when unused, librsvg for the icons, and patchelf for the AppImage's
+      # linuxdeploy step. libxdo is for the global-shortcut plugin family
+      # and costs nothing to have.
+      - name: Install the WebKitGTK and bundling dependencies
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            libxdo-dev \
+            libssl-dev \
+            patchelf \
+            build-essential \
+            curl \
+            wget \
+            file
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-gnu
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Collect release notes
+        id: notes
+        run: |
+          set -euo pipefail
+          {
+            echo "body<<PLANS_NOTES_EOF"
+            node scripts/sync-version.mjs --notes
+            echo ""
+            echo "PLANS_NOTES_EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Build
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VITE_WORKSPACE_URL: ${{ vars.WORKSPACE_URL }}
+          # The same minisign key as the other two platforms signs the
+          # AppImage for the updater; there is no distribution signature on
+          # Linux to speak of.
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          # linuxdeploy runs as an AppImage itself, and a runner has no FUSE
+          # to mount it; this tells it to unpack instead.
+          APPIMAGE_EXTRACT_AND_RUN: 1
+        with:
+          args: --target x86_64-unknown-linux-gnu --bundles appimage,deb
+          tagName: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || '' }}
+          releaseName: ${{ startsWith(github.ref, 'refs/tags/v') && format('Looped Plans {0}', github.ref_name) || '' }}
+          releaseBody: ${{ steps.notes.outputs.body }}
+          releaseDraft: true
+          prerelease: false
+
+      - name: Upload bundles
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: plans-linux
+          if-no-files-found: error
+          retention-days: 14
+          path: |
+            src-tauri/target/x86_64-unknown-linux-gnu/release/bundle/appimage/*.AppImage
+            src-tauri/target/x86_64-unknown-linux-gnu/release/bundle/appimage/*.AppImage.sig
+            src-tauri/target/x86_64-unknown-linux-gnu/release/bundle/deb/*.deb
+
   # Signing is easy to get subtly wrong — a build can be "signed" with the
   # wrong identity, or notarized without the ticket being stapled — and the
   # symptom only shows up on a user's machine as "app is damaged". Verify the
@@ -406,5 +514,46 @@ jobs:
           jq . feed/latest.json
           if [ "$(jq -r '.platforms["windows-x86_64"].url // empty' feed/latest.json)" = "" ]; then
             echo "::error title=No Windows update entry::latest.json on ${{ github.ref_name }} has no windows-x86_64 platform — installed Windows copies will never see this release."
+            exit 1
+          fi
+
+  # The Linux promise, checked: the AppImage and its updater signature, the
+  # .deb, and a linux-x86_64 entry in the feed. Nothing runs the binary; that
+  # is the smoke checklist in RELEASES.md and a real desktop.
+  verify-linux:
+    name: Verify Linux artifacts
+    needs: build-linux
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: plans-linux
+          path: dist
+
+      - name: Check the AppImage, its updater signature and the .deb exist
+        run: |
+          set -euo pipefail
+          missing=false
+          for want in "*.AppImage" "*.AppImage.sig" "*.deb"; do
+            if [ -z "$(find dist -name "$want" -type f)" ]; then
+              echo "::error title=No Linux artifact::$want is missing — check the appimage/deb bundles and TAURI_SIGNING_PRIVATE_KEY."
+              missing=true
+            fi
+          done
+          [ "$missing" = false ]
+
+      - name: Check latest.json carries linux-x86_64
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          gh release download "${{ github.ref_name }}" --pattern latest.json --dir feed
+          jq . feed/latest.json
+          if [ "$(jq -r '.platforms["linux-x86_64"].url // empty' feed/latest.json)" = "" ]; then
+            echo "::error title=No Linux update entry::latest.json on ${{ github.ref_name }} has no linux-x86_64 platform — installed AppImages will never see this release."
             exit 1
           fi

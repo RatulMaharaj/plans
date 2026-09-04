@@ -55,6 +55,15 @@
     ],
     "macOS": {
       "minimumSystemVersion": "12.0"
+    },
+    "category": "DeveloperTool",
+    "linux": {
+      "appimage": {
+        "bundleMediaFramework": false
+      },
+      "deb": {
+        "section": "editors"
+      }
     }
   }
 }
