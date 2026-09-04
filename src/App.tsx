@@ -65,6 +65,8 @@ import {
   colorFor,
   configured as workspacesConfigured,
   openRoom,
+  presentIn,
+  type Present,
   token as workspaceToken,
   tree as wsTree,
   treeEntries,
@@ -78,6 +80,7 @@ import {
   type WorkspaceEntry,
 } from "./workspace";
 import { Workspaces } from "./Workspaces";
+import { Avatar, Faces } from "./Avatar";
 import { shareKey, sharedPages, saveSharedPages, type SharedPages } from "./shared";
 import { ShareSheet } from "./ShareSheet";
 import { SignInSheet } from "./SignInSheet";
@@ -627,7 +630,7 @@ export default function App() {
   const [wsTrees, setWsTrees] = useState<Record<string, WorkspaceEntry[]>>({});
   wsTreesRef.current = wsTrees;
   /** Bumped when a room's status changes, so the chrome re-reads it. */
-  const [, setRoomTick] = useState(0);
+  const [roomTick, setRoomTick] = useState(0);
   /** A workspace being named, invited to, or copied out. */
   const [wsNaming, setWsNaming] = useState(false);
   const [wsInviting, setWsInviting] = useState<string | null>(null);
@@ -3138,7 +3141,7 @@ export default function App() {
   const presence = useCallback(
     () =>
       account
-        ? { name: account.name ?? account.login, color: colorFor(account.login) }
+        ? { name: account.name ?? account.login, color: colorFor(account.login), avatar: account.avatar }
         : null,
     [account],
   );
@@ -3168,6 +3171,8 @@ export default function App() {
       treeMap(room).observe(draw);
       room.onSynced(draw);
       room.onStatus(() => setRoomTick((n) => n + 1));
+      // Who is where, drawn from the same awareness the cursors use.
+      room.awareness.on("change", () => setRoomTick((n) => n + 1));
       return room;
     },
     [presence],
@@ -5124,6 +5129,62 @@ export default function App() {
     [expanded, tabs, openTree, closeWorkspace, toggleNode],
   );
 
+  /**
+   * Tell each workspace's tree room which of its files this window has open,
+   * so the others can draw a face beside it. Every tree room is told, so
+   * leaving one workspace for another clears the face in the first.
+   */
+  useEffect(() => {
+    const id = wsIdOf(activePath);
+    const file = id ? wsFileOf(activePath) : null;
+    for (const room of rooms.current.values()) {
+      if (room.id !== treeRoomId(room.workspaceId)) continue;
+      room.awareness.setLocalStateField("at", room.workspaceId === id ? file : null);
+    }
+    // `roomTick` covers a tree room opened after the file was.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activePath, roomTick]);
+
+  /** Who is in which file, per workspace shelf, from the tree rooms. */
+  const wsPresence = useMemo(() => {
+    const out: Record<string, Record<string, Present[]>> = {};
+    for (const room of rooms.current.values()) {
+      if (room.id !== treeRoomId(room.workspaceId)) continue;
+      const shelf = wsShelfPath(room.workspaceId);
+      for (const who of presentIn(room)) {
+        if (!who.at) continue;
+        (out[shelf] ??= {})[who.at] ??= [];
+        out[shelf][who.at].push(who);
+      }
+    }
+    return out;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [roomTick]);
+
+  /**
+   * A workspace file's markdown, as the room holds it, for the Source view.
+   *
+   * Read-only there: the room owns the text, and two editors on one shared
+   * document through a markdown boundary is the problem the folders plan
+   * left for later. Seeing the raw file is the part that costs nothing.
+   */
+  const [wsSource, setWsSource] = useState("");
+  useEffect(() => {
+    const id = wsIdOf(activePath);
+    const docId = id ? (wsTrees[id] ?? []).find((e) => e.path === wsFileOf(activePath))?.doc : null;
+    const room = docId ? rooms.current.get(docId) : undefined;
+    if (!room) {
+      setWsSource("");
+      return;
+    }
+    const meta = room.doc.getMap<string>("meta");
+    const read = () => setWsSource(meta.get("markdown") ?? "");
+    read();
+    meta.observe(read);
+    return () => meta.unobserve(read);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activePath, wsTrees, roomTick]);
+
   /** The room behind the open buffer, when the open buffer is a workspace's. */
   const activeWsRoom = useMemo(() => {
     const id = wsIdOf(activePath);
@@ -5224,9 +5285,12 @@ export default function App() {
             className="rail-btn account"
             onClick={() => void signOut()}
             title={`Signed in to workspaces as ${account.login} — click to sign out`}
-            data-testid="account"
           >
-            {account.name ?? account.login}
+            <Avatar
+              who={{ name: account.name ?? account.login, color: colorFor(account.login), avatar: account.avatar }}
+              size={16}
+            />
+            <span data-testid="account">{account.name ?? account.login}</span>
           </button>
         ) : (
           <button
@@ -5303,7 +5367,7 @@ export default function App() {
          */}
         {/* A memory buffer has no file to show the source of and no commit to
             diff against, so it is Write or nothing. */}
-        {activePath && !settingsOpen && activeRepoPath !== MEMORY && (
+        {activePath && !settingsOpen && (activeRepoPath !== MEMORY || wsIdOf(activePath)) && (
           /* One switch, one state, both panes — and ⌥-click pins only the
              focused pane, so one file can sit rich on one side and raw on
              the other. The highlight follows the focused pane. */
@@ -5443,6 +5507,7 @@ export default function App() {
               onMove={shelfMove}
               onCopy={(from, path, toRepo, dir) => void copyTo(from, path, toRepo, dir)}
               emptyDirs={shelfDirs}
+              presence={wsPresence}
               onRename={shelfRename}
               onMoveTo={(repo, path) => setMoving({ repo, path })}
               onSetOpen={setOpen}
@@ -5647,6 +5712,10 @@ export default function App() {
                         const status = (wsTrees[id] ?? []).find((e) => e.path === file)?.status;
                         return (
                           <>
+                            {/* Everyone else with this file open, faces
+                                first: it is the one fact about a shared
+                                file worth glancing at before typing. */}
+                            <Faces who={wsPresence[wsShelfPath(id)]?.[file] ?? []} />
                             {room && room.status !== "open" && (
                               <span className="ws-status" title="Reconnecting to the workspace server">
                                 {room.status === "connecting" ? "connecting…" : "offline"}
@@ -5874,7 +5943,8 @@ export default function App() {
                   )}
                   <div className={`surface ${view === "source" ? "" : "aside"}`}>
                     <SourceView
-                      value={source}
+                      value={wsIdOf(activePath) ? wsSource : source}
+                      readOnly={!!wsIdOf(activePath)}
                       onChange={onSourceChange}
                       settings={settings}
                       docKey={docKey}

@@ -35,6 +35,8 @@ type Props = {
   docKey: string;
   /** False while the page is showing: stay mounted, but do no work. */
   active: boolean;
+  /** Show, never edit: a shared document's source, which the room owns. */
+  readOnly?: boolean;
   /** ⌘F's engine for this surface, registered while the view is mounted. */
   findRef?: React.MutableRefObject<FindHandle | null>;
   onFindCount?: (current: number, total: number) => void;
@@ -75,7 +77,7 @@ const surface = EditorView.theme({
   ".cm-lineNumbers .cm-gutterElement": { minWidth: "3ch", textAlign: "right" },
 });
 
-export function SourceView({ value, onChange, settings, docKey, active, findRef, onFindCount }: Props) {
+export function SourceView({ value, onChange, settings, docKey, active, readOnly, findRef, onFindCount }: Props) {
   const host = useRef<HTMLDivElement | null>(null);
   const view = useRef<EditorView | null>(null);
   const onChangeRef = useRef(onChange);
@@ -216,6 +218,10 @@ export function SourceView({ value, onChange, settings, docKey, active, findRef,
         // A live find keeps its count honest while the text moves — an
         // agent's write through the watcher, or typing here.
         if (liveSearch.current) reportFind(u.view, liveSearch.current);
+        // Read-only text only ever changes because a new value was pushed
+        // in; there is nothing to send back, and a pending window here would
+        // drop the next value that arrived inside it.
+        if (readOnly) return;
         if (pending.current) clearTimeout(pending.current);
         pending.current = window.setTimeout(() => {
           pending.current = null;
@@ -227,6 +233,7 @@ export function SourceView({ value, onChange, settings, docKey, active, findRef,
         }, 180);
       }),
     ];
+    if (readOnly) extensions.push(EditorState.readOnly.of(true), EditorView.editable.of(false));
     if (settings.sourceLineNumbers) extensions.push(lineNumbers(), highlightActiveLineGutter());
     if (settings.sourceWrap) extensions.push(EditorView.lineWrapping);
 
@@ -242,7 +249,7 @@ export function SourceView({ value, onChange, settings, docKey, active, findRef,
     };
     // `value` is deliberately excluded: it is pushed in below, not remounted.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [docKey, settings.sourceLineNumbers, settings.sourceWrap]);
+  }, [docKey, settings.sourceLineNumbers, settings.sourceWrap, readOnly]);
 
   /**
    * Text from outside — a reload, a conflict taken, an edit made in the page.

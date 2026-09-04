@@ -15,6 +15,7 @@ import type { HandoffKind } from "./agent";
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { trace } from "./perf";
 import { statusTone } from "./matter";
+import { Faces, type Face } from "./Avatar";
 import { confirmed } from "./confirm";
 import type { PlanFile, RepoInfo } from "./api";
 
@@ -258,6 +259,8 @@ type Props = {
   onCopy: (fromRepo: string, relPath: string, toRepo: string, dir: string) => void;
   /** Folders that exist on disk but hold no markdown yet, per repository. */
   emptyDirs: Record<string, string[]>;
+  /** Who is in which file, by shelf and path — faces beside workspace files. */
+  presence?: Record<string, Record<string, Face[]>>;
   /** Open or close a whole subtree at once. */
   onSetOpen: (keys: string[], open: boolean) => void;
 };
@@ -705,6 +708,8 @@ export const FileTree = memo(function FileTree(p: Props) {
         <span className="row-name" title={mark === "clean" ? undefined : MARK_WORD[mark]}>
           {displayName(node.name, p.showExtensions)}
         </span>
+        {/* Who has it open right now, for a workspace file. */}
+        <Faces who={p.presence?.[repo.path]?.[node.path] ?? []} size={14} />
         {/* The status: from the file's frontmatter, as a quiet tinted dot. */}
         {node.file.status && (
           <span

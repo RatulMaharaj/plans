@@ -3159,3 +3159,23 @@ body.tree-drag .tabs.drop-hot {
   user-select: none;
 }
 .ProseMirror-yjs-selection { opacity: 0.35; }
+
+/* --- faces: who is here ------------------------------------------------ */
+.avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  border-radius: 999px;
+  object-fit: cover;
+  font-family: var(--mono);
+  font-weight: 700;
+  color: #fff;
+  line-height: 1;
+  user-select: none;
+  box-shadow: 0 0 0 1.5px var(--paper);
+}
+.presence { display: inline-flex; align-items: center; }
+.presence .avatar + .avatar { margin-left: -4px; }
+.rail-btn.account { display: inline-flex; align-items: center; gap: 6px; }
+.row .presence { margin-left: 6px; }

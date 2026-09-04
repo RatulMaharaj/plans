@@ -187,6 +187,19 @@ test("a workspace is a folder in the tree, and both people see every change", as
   await bob.keyboard.type("The server falls over.");
   await expect(editor(alice)).toContainText("The server falls over.");
 
+  // Faces: alice sees bob beside the file he is in and at the top of it; a
+  // dev login has no picture, so his is the letter on his colour.
+  await expect(row(alice, "risks").locator(".presence .avatar")).toHaveAttribute("title", "bob");
+  await expect(alice.locator(".page-actions .presence .avatar")).toHaveAttribute("title", "bob");
+  await expect(alice.locator(".page-actions .presence .avatar")).toHaveText("B");
+  await expect(bob.locator(".page-actions .presence .avatar")).toHaveAttribute("title", "alice");
+
+  // The raw file is there to read, and only to read: the room owns it.
+  await alice.locator(".view-switch button", { hasText: "Source" }).click();
+  await expect(alice.locator(".surface:not(.aside) .cm-content")).toContainText("The server falls over.");
+  await expect(alice.locator(".surface:not(.aside) .cm-content")).toHaveAttribute("contenteditable", "false");
+  await alice.locator(".view-switch button", { hasText: "Write" }).click();
+
   // A rename lands on both sides mid-edit, and the document travels with it:
   // alice is still typing into the file bob renamed.
   await menu(bob, row(bob, "risks"), "Rename…");
@@ -307,6 +320,13 @@ test("a plan in a repository is shared as a page, follows its saves, and stops",
 
   // The page is the app's own renderer: the same heading, the same prose.
   const reader = await readerFor(browser, idOf(url));
+  await expect(reader.locator(".milkdown h1")).toHaveText("Existing");
+
+  // A reader picks their paper, and the choice is kept in their browser.
+  await reader.getByTestId("theme-night").click();
+  await expect(reader.locator("html")).toHaveAttribute("data-theme", "night");
+  await reader.reload();
+  await expect(reader.locator("html")).toHaveAttribute("data-theme", "night");
   await expect(reader.locator(".milkdown h1")).toHaveText("Existing");
   await expect(reader.locator(".milkdown")).toContainText("Anyone with the address can read this.");
 

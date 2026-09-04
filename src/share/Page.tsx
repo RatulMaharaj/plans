@@ -10,6 +10,7 @@
  */
 import { useEffect, useState } from "react";
 import { Editor } from "../Editor";
+import { applyTheme, THEMES, type ThemeId } from "../theme";
 import { splitFrontmatter, matterValue, statusTone } from "../matter";
 import { fetchPage, pageId, type Page as Plan } from "./pages";
 import "./page.css";
@@ -113,6 +114,7 @@ export function Page() {
       <div className="page-head">
         <span className="page-path">{plan.name}</span>
         <span className="page-actions">
+          <ThemeSwitch />
           {status && (
             <span className={`status-badge tone-${statusTone(status)}`} title="status: from this plan's frontmatter">
               {status}
@@ -161,4 +163,48 @@ export function ago(at: number, now = Date.now()): string {
   if (days <= 0) return "today";
   if (days === 1) return "yesterday";
   return `${days} days ago`;
+}
+
+const THEME_KEY = "plans.share.theme";
+
+/** What the reader's browser prefers, unless they have chosen here before. */
+function startingTheme(): ThemeId {
+  try {
+    const kept = localStorage.getItem(THEME_KEY);
+    if (kept && THEMES.some((t) => t.id === kept)) return kept as ThemeId;
+  } catch {
+    // no storage: the preference below
+  }
+  return window.matchMedia?.("(prefers-color-scheme: dark)").matches ? "night" : "day";
+}
+
+/**
+ * The app's three papers, for a reader with no settings page. The choice is
+ * kept in this browser only; a public page has nobody to save it for.
+ */
+function ThemeSwitch() {
+  const [theme, setTheme] = useState<ThemeId>(startingTheme);
+  useEffect(() => {
+    applyTheme(theme);
+    try {
+      localStorage.setItem(THEME_KEY, theme);
+    } catch {
+      // fine: it lasts the visit
+    }
+  }, [theme]);
+  return (
+    <span className="segmented small theme-switch" role="group" aria-label="Paper">
+      {THEMES.map((t) => (
+        <button
+          key={t.id}
+          className={theme === t.id ? "on" : ""}
+          onClick={() => setTheme(t.id)}
+          title={t.label}
+          data-testid={`theme-${t.id}`}
+        >
+          {t.label}
+        </button>
+      ))}
+    </span>
+  );
 }

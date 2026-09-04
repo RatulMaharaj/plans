@@ -234,7 +234,27 @@ export const workspace = {
 const MSG_SYNC = 0;
 const MSG_AWARENESS = 1;
 
-export type Presence = { name: string; color: string };
+export type Presence = { name: string; color: string; avatar?: string | null };
+
+/** Someone in a room, and — on a workspace's tree room — which file they are in. */
+export type Present = Presence & { at: string | null };
+
+/**
+ * Everyone else in a room. Presence rides Yjs awareness: each client sets a
+ * `user` (name, colour, face) and, on the tree room, `at` (the file it has
+ * open), and the server relays the lot. Our own state is left out — a face
+ * beside a file is news about other people.
+ */
+export function presentIn(room: Room): Present[] {
+  const out: Present[] = [];
+  for (const [client, state] of room.awareness.getStates()) {
+    if (client === room.doc.clientID) continue;
+    const user = state?.user as Presence | undefined;
+    if (!user?.name) continue;
+    out.push({ ...user, at: typeof state?.at === "string" ? state.at : null });
+  }
+  return out;
+}
 
 /** One open room: one document, and who else is in it. */
 export type Room = {
