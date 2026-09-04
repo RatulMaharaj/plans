@@ -444,23 +444,44 @@ export function newDocId(): string {
  * with it, so anyone with the file open carries on editing the same document
  * under its new name.
  */
+/**
+ * A destination that is already taken. Every operation below refuses one
+ * rather than writing over it: a map `set` on an existing key is a silent
+ * delete of whatever was there, and a tree is the one place that must never
+ * lose a file by accident. The message reads as the toast it becomes.
+ */
+export class TreeError extends Error {}
+
 export const tree = {
   /** The new file's document id, so the caller can open its room. */
   addFile(room: Room, path: string): string {
+    const map = treeMap(room);
+    if (map.has(path)) throw new TreeError(`${path} is already here`);
     const doc = newDocId();
-    treeMap(room).set(path, { kind: "file", doc });
+    map.set(path, { kind: "file", doc });
     return doc;
   },
   addFolder(room: Room, path: string) {
-    treeMap(room).set(path, { kind: "folder" });
+    const map = treeMap(room);
+    if (map.has(path)) throw new TreeError(`${path} is already here`);
+    map.set(path, { kind: "folder" });
   },
-  /** Everything at or under `from`, moved to `to`. Folders bring their files. */
+  /**
+   * Everything at or under `from`, moved to `to`. Folders bring their files.
+   * Refused when anything would land on an entry that exists, or when a
+   * folder would be moved into itself.
+   */
   move(room: Room, from: string, to: string) {
     if (from === to) return;
+    if (to.startsWith(`${from}/`)) throw new TreeError(`${from} cannot be moved inside itself`);
     const map = treeMap(room);
+    const moving = [...map].filter(([path]) => path === from || path.startsWith(`${from}/`));
+    for (const [path] of moving) {
+      const dest = `${to}${path.slice(from.length)}`;
+      if (map.has(dest)) throw new TreeError(`${dest} is already here`);
+    }
     room.doc.transact(() => {
-      for (const [path, value] of [...map]) {
-        if (path !== from && !path.startsWith(`${from}/`)) continue;
+      for (const [path, value] of moving) {
         map.delete(path);
         map.set(`${to}${path.slice(from.length)}`, value);
       }

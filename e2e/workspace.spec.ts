@@ -193,6 +193,17 @@ test("a workspace is a folder in the tree, and both people see every change", as
   await answer(bob, "dangers.md", "Rename");
   await expect(row(alice, "dangers")).toBeVisible();
   await expect(alice.locator(".page-path")).toHaveText("Roadmap · notes/dangers.md");
+  // A rename onto a name that exists is refused, and both files stay.
+  await heading(bob, "Roadmap").click({ button: "right" });
+  await bob.locator(".ctx .ctx-item", { hasText: "New file here" }).click();
+  await answer(bob, "scratch.md", "Create");
+  await expect(bob.locator(".page-path")).toHaveText("Roadmap · scratch.md");
+  await menu(bob, row(bob, "scratch"), "Rename…");
+  await answer(bob, "plan.md", "Rename");
+  await expect(bob.locator(".toast")).toContainText("already here");
+  await expect(row(bob, "plan")).toBeVisible();
+  await expect(row(bob, "scratch")).toBeVisible();
+  await row(bob, "dangers").click();
   await editor(alice).locator("p", { hasText: "falls over" }).click();
   await alice.keyboard.press("End");
   await alice.keyboard.type(" Twice.");

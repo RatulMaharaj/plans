@@ -3434,7 +3434,12 @@ export default function App() {
           void (async () => {
             const room = await wsRoomFor(id);
             if (!room) return;
-            wsTree.addFolder(room, path);
+            try {
+              wsTree.addFolder(room, path);
+            } catch (e) {
+              notify(e instanceof Error ? e.message : String(e), "error");
+              return;
+            }
             setExpanded((prev) => {
               const shelf = wsShelfPath(id);
               const next = new Set(prev).add(`${shelf}::`);
@@ -3528,13 +3533,18 @@ export default function App() {
           void (async () => {
             const room = await wsRoomFor(id);
             if (!room) return;
-            wsTree.move(room, path, to);
+            try {
+              wsTree.move(room, path, to);
+            } catch (e) {
+              notify(e instanceof Error ? e.message : String(e), "error");
+              return;
+            }
             wsFollow(id, path, to);
           })();
         },
       });
     },
-    [wsRoomFor, wsFollow],
+    [wsRoomFor, wsFollow, notify],
   );
 
   /** Move a file or a folder into another folder of the same workspace. */
@@ -3546,7 +3556,12 @@ export default function App() {
       void (async () => {
         const room = await wsRoomFor(id);
         if (!room) return;
-        wsTree.move(room, from, to);
+        try {
+          wsTree.move(room, from, to);
+        } catch (e) {
+          notify(e instanceof Error ? e.message : String(e), "error");
+          return;
+        }
         wsFollow(id, from, to);
       })();
     },
