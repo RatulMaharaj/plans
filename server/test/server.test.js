@@ -625,3 +625,31 @@ test("edits made just before the last client leaves survive an immediate reconne
   await until(() => c.doc.getText("t").toString() === "first second");
   c.close();
 });
+
+test("a member leaves; only the maker deletes, and the room empties when they do", async () => {
+  const alice = await signIn("alice");
+  const bob = await signIn("bob");
+  const { id } = (await call("/workspaces", { method: "POST", token: alice, body: { name: "Gone" } })).value;
+  await call(`/workspaces/${id}/members`, { method: "POST", token: alice, body: { login: "bob" } });
+
+  // The maker cannot leave, and a member cannot delete.
+  assert.equal((await call(`/workspaces/${id}/members/me`, { method: "DELETE", token: alice })).status, 400);
+  assert.equal((await call(`/workspaces/${id}`, { method: "DELETE", token: bob })).status, 403);
+
+  // Bob leaves, and the workspace is no longer his to see.
+  assert.equal((await call(`/workspaces/${id}/members/me`, { method: "DELETE", token: bob })).status, 200);
+  assert.equal((await call(`/workspaces/${id}`, { token: bob })).status, 404);
+  assert.deepEqual((await call(`/workspaces/${id}`, { token: alice })).value.members, ["alice"]);
+
+  // Alice deletes it while she has a document open: the socket is closed
+  // with the code that means gone, and nothing of it answers afterwards.
+  const doc = await fileIn(id, alice);
+  const a = connect(doc, alice, id);
+  await Promise.all([a.open, a.synced]);
+  const closed = new Promise((r) => a.ws.once("close", (code) => r(code)));
+  assert.equal((await call(`/workspaces/${id}`, { method: "DELETE", token: alice })).status, 200);
+  assert.equal(await closed, 4001);
+  assert.equal((await call(`/workspaces/${id}`, { token: alice })).status, 404);
+  assert.equal((await call("/workspaces", { token: alice })).value.some((w) => w.id === id), false);
+  assert.equal(s.rooms.rooms.has(id), false);
+});

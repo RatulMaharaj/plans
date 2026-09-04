@@ -259,6 +259,24 @@ export class Rooms {
     this.rooms.delete(room.id);
   }
 
+  /**
+   * A workspace that no longer exists: every socket into its rooms is closed
+   * with a code the client reads as "gone, do not come back", and the
+   * documents are let go without a save — there is no row to save into.
+   */
+  evict(workspaceId) {
+    for (const [id, room] of [...this.rooms]) {
+      if (room.workspaceId !== workspaceId) continue;
+      if (room.saveTimer) clearTimeout(room.saveTimer);
+      room.saveTimer = null;
+      for (const c of room.conns) c.close(4001, "workspace gone");
+      room.conns.clear();
+      room.awareness.destroy();
+      room.doc.destroy();
+      this.rooms.delete(id);
+    }
+  }
+
   /** Write everything out; called on shutdown. */
   async flush() {
     for (const room of this.rooms.values()) {

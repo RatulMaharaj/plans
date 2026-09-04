@@ -3187,6 +3187,67 @@ export default function App() {
     }
   }, []);
 
+  /** Drop a workspace from this window: its rooms, its tabs, its heading. */
+  const forgetWorkspace = useCallback(
+    (id: string) => {
+      closeWorkspace(id);
+      setWorkspaces((prev) => prev.filter((w) => w.id !== id));
+      setWsTrees((prev) => {
+        const next = { ...prev };
+        delete next[id];
+        return next;
+      });
+      setTabs((prev) => prev.filter((t) => wsIdOf(t.path) !== id));
+      if (wsIdOf(activePath) === id) {
+        setActivePath(null);
+        setContent("");
+        setMatter(null);
+      }
+    },
+    [closeWorkspace, activePath],
+  );
+
+  /** Walk out of someone else's workspace. The files stay with the others. */
+  const leaveWorkspace = useCallback(
+    async (id: string) => {
+      const ws = workspaces.find((w) => w.id === id);
+      if (!ws) return;
+      if (!(await confirmed(`Leave "${ws.name}"? You can be invited back.`, { ok: "Leave", kind: "info" }))) return;
+      try {
+        await workspace.leave(id);
+        forgetWorkspace(id);
+        notify(`Left ${ws.name}`);
+      } catch (e) {
+        notify(e instanceof Error ? e.message : String(e), "error");
+      }
+    },
+    [workspaces, forgetWorkspace, notify],
+  );
+
+  /** Delete a workspace you made, for everyone in it. */
+  const deleteWorkspace = useCallback(
+    async (id: string) => {
+      const ws = workspaces.find((w) => w.id === id);
+      if (!ws) return;
+      const others = ws.members.length - 1;
+      if (
+        !(await confirmed(
+          `Delete "${ws.name}" and everything in it?${others > 0 ? ` ${others} other ${others === 1 ? "person loses" : "people lose"} it too.` : ""} Copy out anything you want to keep first.`,
+          { ok: "Delete" },
+        ))
+      )
+        return;
+      try {
+        await workspace.remove(id);
+        forgetWorkspace(id);
+        notify(`Deleted ${ws.name}`);
+      } catch (e) {
+        notify(e instanceof Error ? e.message : String(e), "error");
+      }
+    },
+    [workspaces, forgetWorkspace, notify],
+  );
+
   /**
    * Open one file of a workspace as a buffer.
    *
@@ -5278,30 +5339,6 @@ export default function App() {
         >
           Files
         </button>
-        {/* Who you are to the workspace server; signed out reads as an
-            invitation. Sign-out is behind a confirm, since it closes rooms. */}
-        {account ? (
-          <button
-            className="rail-btn account"
-            onClick={() => void signOut()}
-            title={`Signed in to workspaces as ${account.login} — click to sign out`}
-          >
-            <Avatar
-              who={{ name: account.name ?? account.login, color: colorFor(account.login), avatar: account.avatar }}
-              size={16}
-            />
-            <span data-testid="account">{account.name ?? account.login}</span>
-          </button>
-        ) : (
-          <button
-            className="rail-btn"
-            onClick={() => setSigningIn(true)}
-            title="Sign in, for workspaces"
-            data-testid="sign-in"
-          >
-            Sign in
-          </button>
-        )}
         <span className="rail-sep" data-tauri-drag-region />
         <span className="wordmark" data-tauri-drag-region>
           Looped Plans
@@ -5508,6 +5545,9 @@ export default function App() {
               onCopy={(from, path, toRepo, dir) => void copyTo(from, path, toRepo, dir)}
               emptyDirs={shelfDirs}
               presence={wsPresence}
+              ownedWorkspaces={new Set(workspaces.filter((w) => w.createdBy === account?.login).map((w) => wsShelfPath(w.id)))}
+              onLeaveWorkspace={(repo) => void leaveWorkspace(wsIdOf(repo)!)}
+              onDeleteWorkspace={(repo) => void deleteWorkspace(wsIdOf(repo)!)}
               onRename={shelfRename}
               onMoveTo={(repo, path) => setMoving({ repo, path })}
               onSetOpen={setOpen}
@@ -5521,6 +5561,37 @@ export default function App() {
               onNew={() => setWsNaming(true)}
               onSignIn={() => setSigningIn(true)}
             />
+          )}
+
+          {/* Who you are to the workspace server, at the foot of the
+              sidebar where a profile lives; signed out reads as an
+              invitation. Sign-out is behind a confirm, since it closes rooms. */}
+          {workspacesConfigured() && (
+            <div className="files-foot">
+              {account ? (
+                <>
+                  <Avatar
+                    who={{ name: account.name ?? account.login, color: colorFor(account.login), avatar: account.avatar }}
+                    size={22}
+                  />
+                  <span className="foot-name" data-testid="account" title={account.login}>
+                    {account.name ?? account.login}
+                  </span>
+                  <button className="rail-btn" onClick={() => void signOut()} title="Sign out of workspaces">
+                    Sign out
+                  </button>
+                </>
+              ) : (
+                <button
+                  className="rail-btn"
+                  onClick={() => setSigningIn(true)}
+                  title="Sign in, for workspaces"
+                  data-testid="sign-in"
+                >
+                  Sign in
+                </button>
+              )}
+            </div>
           )}
 
           {/* Double-click restores the default width. */}

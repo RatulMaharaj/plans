@@ -194,6 +194,10 @@ export const workspace = {
   get: (id: string) => call<Workspace>(`/workspaces/${id}`),
   create: (name: string) => call<Workspace>("/workspaces", { body: { name } }),
   invite: (id: string, login: string) => call<Workspace>(`/workspaces/${id}/members`, { body: { login } }),
+  /** Walk out of a workspace someone else made. */
+  leave: (id: string) => call<{ ok: true }>(`/workspaces/${id}/members/me`, { method: "DELETE" }),
+  /** Delete a workspace you made: its files, its members, its pages. */
+  remove: (id: string) => call<{ ok: true }>(`/workspaces/${id}`, { method: "DELETE" }),
   /**
    * The tree, for a cold open: what the sidebar draws before a socket into
    * the room is up. Once one is, the tree room's own map is the truth and
@@ -391,8 +395,10 @@ export function openRoom(id: string, workspaceId: string, session: string, me: P
       }
     };
 
-    sock.onclose = () => {
+    sock.onclose = (ev: CloseEvent) => {
       if (ws === sock) ws = null;
+      // 4001 is the server saying the workspace is gone: nothing to come back to.
+      if (ev.code === 4001) closed = true;
       setStatus("closed");
       if (closed) return;
       // Others' cursors are stale the moment the line drops.

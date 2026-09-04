@@ -168,6 +168,24 @@ export async function openDb(url = process.env.DATABASE_URL ?? "") {
     },
     addMember: (id, login) =>
       c.query("INSERT INTO members (workspace_id, login) VALUES ($1, $2) ON CONFLICT DO NOTHING", [id, login]),
+    /** Walk out. The creator cannot: a workspace with nobody to delete it
+     *  would be a room that exists forever. */
+    removeMember: (id, login) =>
+      c.query("DELETE FROM members WHERE workspace_id = $1 AND login = $2", [id, login]),
+    /**
+     * Everything the workspace was: its documents, its members, its read and
+     * share tokens, and its pages — the pages revoked rather than deleted,
+     * so an address that was out there stays an honest 404.
+     */
+    async deleteWorkspace(id) {
+      const t = now();
+      await c.query("UPDATE pages SET revoked_at = $1 WHERE workspace_id = $2 AND revoked_at IS NULL", [t, id]);
+      await c.query("DELETE FROM share_tokens WHERE workspace_id = $1", [id]);
+      await c.query("DELETE FROM read_tokens WHERE workspace_id = $1", [id]);
+      await c.query("DELETE FROM docs WHERE workspace_id = $1", [id]);
+      await c.query("DELETE FROM members WHERE workspace_id = $1", [id]);
+      await c.query("DELETE FROM workspaces WHERE id = $1", [id]);
+    },
     isMember: async (id, login) =>
       !!(await one("SELECT 1 AS ok FROM members WHERE workspace_id = $1 AND login = $2", [id, login])),
 

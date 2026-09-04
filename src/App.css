@@ -3179,3 +3179,23 @@ body.tree-drag .tabs.drop-hot {
 .presence .avatar + .avatar { margin-left: -4px; }
 .rail-btn.account { display: inline-flex; align-items: center; gap: 6px; }
 .row .presence { margin-left: 6px; }
+
+/* The sidebar's foot: who you are, where a profile lives. */
+.files-foot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px 10px 14px;
+  border-top: 1px solid var(--rule);
+}
+.files-foot .foot-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.03em;
+  color: var(--ink-2);
+}

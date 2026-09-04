@@ -261,6 +261,10 @@ type Props = {
   emptyDirs: Record<string, string[]>;
   /** Who is in which file, by shelf and path — faces beside workspace files. */
   presence?: Record<string, Record<string, Face[]>>;
+  /** The workspace shelves this person made: those they may delete, not leave. */
+  ownedWorkspaces?: Set<string>;
+  onLeaveWorkspace?: (repoPath: string) => void;
+  onDeleteWorkspace?: (repoPath: string) => void;
   /** Open or close a whole subtree at once. */
   onSetOpen: (keys: string[], open: boolean) => void;
 };
@@ -1014,6 +1018,26 @@ export const FileTree = memo(function FileTree(p: Props) {
                     Move down
                   </button>
                 )}
+              {isWs(menu.repo) && (
+                <>
+                  <span className="ctx-rule" />
+                  {p.ownedWorkspaces?.has(menu.repo) ? (
+                    <button
+                      className="ctx-item warn"
+                      onClick={() => act(() => p.onDeleteWorkspace?.(menu.repo))}
+                    >
+                      Delete this workspace…
+                    </button>
+                  ) : (
+                    <button
+                      className="ctx-item warn"
+                      onClick={() => act(() => p.onLeaveWorkspace?.(menu.repo))}
+                    >
+                      Leave this workspace
+                    </button>
+                  )}
+                </>
+              )}
               {!isWs(menu.repo) && (
                 <>
                   <span className="ctx-rule" />

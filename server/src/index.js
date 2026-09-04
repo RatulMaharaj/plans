@@ -201,6 +201,20 @@ export function startServer({
     if ((seg = m(/^\/workspaces\/([\w-]+)$/)) && req.method === "GET") {
       return json(res, 200, (await mine(req, seg[1])).w);
     }
+    if ((seg = m(/^\/workspaces\/([\w-]+)$/)) && req.method === "DELETE") {
+      // Only whoever made it. A member who wants out leaves, below.
+      const { login, w } = await mine(req, seg[1]);
+      if (w.createdBy !== login) throw httpError(403, "only whoever made this workspace can delete it");
+      rooms.evict(w.id);
+      await db.deleteWorkspace(w.id);
+      return json(res, 200, { ok: true });
+    }
+    if ((seg = m(/^\/workspaces\/([\w-]+)\/members\/me$/)) && req.method === "DELETE") {
+      const { login, w } = await mine(req, seg[1]);
+      if (w.createdBy === login) throw httpError(400, "you made this workspace; delete it instead");
+      await db.removeMember(w.id, login);
+      return json(res, 200, { ok: true });
+    }
     if ((seg = m(/^\/workspaces\/([\w-]+)\/members$/)) && req.method === "POST") {
       const { w } = await mine(req, seg[1]);
       const { login } = await body(req);

@@ -222,6 +222,7 @@ test("a workspace is a folder in the tree, and both people see every change", as
   await alice.keyboard.type(" Twice.");
   await expect(editor(bob)).toContainText("The server falls over. Twice.");
 
+
   // And the read endpoint knows the folder by its new name.
   await expect
     .poll(async () =>
@@ -235,6 +236,20 @@ test("a workspace is a folder in the tree, and both people see every change", as
 
   expect((alice as any).__faults).toEqual([]);
   expect((bob as any).__faults).toEqual([]);
+
+  // Bob leaves; the heading goes from his tree and nobody else's. Alice,
+  // who made it, deletes it, and it is gone from hers too.
+  bob.on("dialog", (d) => void d.accept());
+  alice.on("dialog", (d) => void d.accept());
+  await heading(bob, "Roadmap").click({ button: "right" });
+  await expect(bob.locator(".ctx .ctx-item", { hasText: "Leave this workspace" })).toBeVisible();
+  await bob.locator(".ctx .ctx-item", { hasText: "Leave this workspace" }).click();
+  await expect(heading(bob, "Roadmap")).toHaveCount(0);
+  await expect(heading(alice, "Roadmap")).toBeVisible();
+  await heading(alice, "Roadmap").click({ button: "right" });
+  await alice.locator(".ctx .ctx-item", { hasText: "Delete this workspace" }).click();
+  await expect(heading(alice, "Roadmap")).toHaveCount(0);
+  await expect(alice.locator(".page-path")).toHaveText("");
 });
 
 test("the read endpoint lists the tree and answers a path, for a member or the workspace's token", async ({
