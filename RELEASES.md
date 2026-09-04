@@ -1,10 +1,12 @@
 # Releasing Looped Plans
 
-Looped Plans ships as a signed and notarized macOS `.dmg`, built by
+Looped Plans ships as a signed and notarized macOS `.dmg` and a Windows
+installer, both built by
 [`.github/workflows/release.yml`](.github/workflows/release.yml). This document
-covers the per-release routine. The one-time setup — certificates, the App
-Store Connect key, the updater keypair — is done, and lives in this file's
-history if it ever needs doing again.
+covers the per-release routine; the Windows half has its own section below.
+The one-time setup for macOS (certificates, the App Store Connect key, the
+updater keypair) is done, and lives in this file's history if it ever needs
+doing again.
 
 Signing and notarization are not optional polish: an unsigned build downloaded
 from the internet is quarantined by Gatekeeper and shows up as *"Looped Plans is
@@ -121,6 +123,48 @@ signing change without spending a version number on it.
 
 ---
 
+## Windows
+
+The same tag builds a second installer, `Looped Plans_X.Y.Z_x64-setup.exe`,
+on a `windows-latest` runner. It is x64 only for now; Windows-on-ARM would
+be a second job and a second `latest.json` entry, and nobody has asked yet.
+
+What is the same as macOS: the `build-windows` job runs the same
+`tauri-action` step against the same tag, so the installer and its `.sig`
+land on the same draft release, and `latest.json` gains a `windows-x86_64`
+entry beside the darwin one. The updater signature comes from the same
+`TAURI_SIGNING_PRIVATE_KEY`; it is minisign, so there is no second key to
+keep. Installed Windows copies take updates through the same Publish gate.
+
+What is different: the installer is not code-signed. There is no Windows
+certificate, so the first launch of a downloaded installer shows SmartScreen's
+"Windows protected your PC" with the real button behind *More info*. That is
+the honest state until someone buys an OV certificate or sets up Azure
+Trusted Signing, and the `verify-windows` job checks only what is actually
+promised: the `.exe` and its `.sig` exist, and the feed carries the
+`windows-x86_64` entry. It says nothing about Authenticode because there is
+none to check.
+
+The Windows job runs after the macOS one rather than beside it. Both upload
+a `latest.json`, and the second upload merges into the first; two at the
+same moment would each read the feed before the other wrote it.
+
+Before publishing, run the smoke checklist on a Windows machine, since
+nothing in CI exercises the Windows binary beyond building it:
+
+- Install from the `.exe`; the app opens with a native title bar.
+- Add a repository, open a plan, edit it, watch the git status update
+  without a console window flashing.
+- Start an agent turn with Claude Code installed through npm.
+- Open in terminal opens Windows Terminal, or a console when `wt` is absent.
+- Install the previous release, then take the update to this one.
+
+Not in v1: repositories under `\\wsl$\...`. UNC paths through the file
+watcher, git and the path checks are their own project, and the release
+notes should say so rather than let it be a surprise.
+
+---
+
 ## What the workflow actually does
 
 | Step                                                | Why                                                                                                                                                            |
@@ -190,9 +234,12 @@ xcrun stapler validate "/Applications/Looped Plans.app"
 
 ## Not yet covered
 
-- **Windows and Linux.** `bundle.targets` is `"all"`, but the workflow is
-  macOS-only by design, not by omission. Both need their own runner and, for
-  Windows, a separate code-signing certificate.
+- **Windows code signing.** The installer ships unsigned; see *Windows*
+  above for what that means and the two ways out of it.
+- **Windows on ARM.** x64 only. A second target and a second feed entry when
+  someone needs it.
+- **Linux.** `bundle.targets` is `"all"`, but no job builds it. It needs its
+  own runner and a decision about AppImage against `.deb`.
 - **Staged rollout.** `latest.json` can carry a percentage, which is real
   insurance against shipping a bad build to everyone at once and meaningless
   with a handful of users. Revisit when there are enough installs for a

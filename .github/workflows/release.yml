@@ -2,7 +2,9 @@ name: Release
 
 # Builds Looped Plans for macOS, signs it with the Developer ID certificate,
 # notarizes it with Apple, staples the ticket, and attaches the .dmg and
-# .app.tar.gz to a draft GitHub Release.
+# .app.tar.gz to a draft GitHub Release. A second job builds the Windows
+# installer (x64, NSIS) and attaches it to the same draft, so one latest.json
+# carries both platforms.
 #
 # Triggers:
 #   - version tag (e.g. v0.1.0) -> full release build, draft release
@@ -187,6 +189,95 @@ jobs:
             src-tauri/target/universal-apple-darwin/release/bundle/macos/*.app.tar.gz
             src-tauri/target/universal-apple-darwin/release/bundle/macos/*.app.tar.gz.sig
 
+  # Windows, x64 only for now. Its own job rather than a matrix over the one
+  # above: the Apple signing steps, the linker workaround and the artifact
+  # paths are all macOS-specific, and a matrix would be a page of `if:`
+  # pretending two different jobs are one.
+  #
+  # It runs after the macOS job on purpose. Both jobs hand tauri-action the
+  # same tag, and the second one to upload merges its platform into the
+  # latest.json already on the draft — but two uploads at the same moment
+  # would each read the feed before the other wrote it, and one platform
+  # would go missing. Serial costs some minutes and removes the race.
+  #
+  # The installer is not Authenticode-signed: there is no certificate yet,
+  # and SmartScreen will say so on first launch. The updater signature is
+  # minisign, the same TAURI_SIGNING_PRIVATE_KEY as macOS, so installed
+  # copies still update. See RELEASES.md, "Windows".
+  build-windows:
+    name: Build Windows
+    needs: build
+    runs-on: windows-latest
+    timeout-minutes: 60
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+
+      - run: pnpm install --frozen-lockfile
+
+      # Same notes as the macOS job, from the same script; bash rather than
+      # PowerShell so the heredoc into GITHUB_OUTPUT reads the same way.
+      - name: Collect release notes
+        id: notes
+        shell: bash
+        run: |
+          set -euo pipefail
+          {
+            echo "body<<PLANS_NOTES_EOF"
+            node scripts/sync-version.mjs --notes
+            echo ""
+            echo "PLANS_NOTES_EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Build
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VITE_WORKSPACE_URL: ${{ vars.WORKSPACE_URL }}
+          # Signs the installer for the updater. The key is the same one
+          # that signs the macOS archive: minisign, not Authenticode.
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          # NSIS pinned rather than whatever "all" means on a Windows runner
+          # this quarter: it bundles the WebView2 bootstrapper, updates in
+          # place, and is the installer the updater handles best.
+          args: --target x86_64-pc-windows-msvc --bundles nsis
+          tagName: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || '' }}
+          releaseName: ${{ startsWith(github.ref, 'refs/tags/v') && format('Looped Plans {0}', github.ref_name) || '' }}
+          releaseBody: ${{ steps.notes.outputs.body }}
+          releaseDraft: true
+          prerelease: false
+
+      - name: Upload installer
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: plans-windows
+          if-no-files-found: error
+          retention-days: 14
+          path: |
+            src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/*.exe
+            src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/*.exe.sig
+
   # Signing is easy to get subtly wrong — a build can be "signed" with the
   # wrong identity, or notarized without the ticket being stapled — and the
   # symptom only shows up on a user's machine as "app is damaged". Verify the
@@ -273,3 +364,47 @@ jobs:
           fi
 
           echo "Signature and notarization verified."
+
+  # What the Windows build promises, checked: an installer, its updater
+  # signature, and a windows-x86_64 entry in the feed. Nothing about
+  # Authenticode, because there is none to check. Everything here is
+  # file-shaped, so it needs no Windows runner; and the "is latest.json
+  # attached at all" check stays in `verify` above, once, because it is a
+  # fact about the release rather than about either platform.
+  verify-windows:
+    name: Verify Windows artifacts
+    needs: build-windows
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: plans-windows
+          path: dist
+
+      - name: Check the installer and its updater signature exist
+        run: |
+          set -euo pipefail
+          missing=false
+          for want in "*.exe" "*.exe.sig"; do
+            if [ -z "$(find dist -name "$want" -type f)" ]; then
+              echo "::error title=No Windows artifact::$want is missing — check the NSIS bundle and TAURI_SIGNING_PRIVATE_KEY."
+              missing=true
+            fi
+          done
+          [ "$missing" = false ]
+
+      - name: Check latest.json carries windows-x86_64
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          gh release download "${{ github.ref_name }}" --pattern latest.json --dir feed
+          jq . feed/latest.json
+          if [ "$(jq -r '.platforms["windows-x86_64"].url // empty' feed/latest.json)" = "" ]; then
+            echo "::error title=No Windows update entry::latest.json on ${{ github.ref_name }} has no windows-x86_64 platform — installed Windows copies will never see this release."
+            exit 1
+          fi

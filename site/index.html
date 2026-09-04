@@ -189,7 +189,7 @@
           A small desktop app for reading and editing the markdown in your local
           git repositories — without opening the whole repo in an editor.
         </p>
-        <a class="btn" id="download" href="https://github.com/loopedautomation/plans/releases/latest">Download for macOS</a>
+        <a class="btn" id="download" href="https://github.com/loopedautomation/plans/releases/latest">Download</a>
         <p class="under">
           Free and open source ·
           <a href="https://github.com/loopedautomation/plans">GitHub</a>
@@ -257,8 +257,19 @@
         person_profiles: "identified_only",
         respect_dnt: true,
       });
-      document.getElementById("download").addEventListener("click", () => {
-        posthog.capture("download_clicked", { platform: "macos" });
+      // The release carries a macOS and a Windows installer; the button
+      // names the one this visitor is likely to want, and the event says
+      // which was offered rather than assuming a Mac.
+      const platform = /Windows/i.test(navigator.userAgent)
+        ? "windows"
+        : /Mac/i.test(navigator.userAgent)
+          ? "macos"
+          : "other";
+      const download = document.getElementById("download");
+      if (platform === "windows") download.textContent = "Download for Windows";
+      if (platform === "macos") download.textContent = "Download for macOS";
+      download.addEventListener("click", () => {
+        posthog.capture("download_clicked", { platform });
       });
     </script>
 
