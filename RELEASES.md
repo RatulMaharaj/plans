@@ -1,9 +1,9 @@
 # Releasing Looped Plans
 
-Looped Plans ships as a signed and notarized macOS `.dmg` and a Windows
-installer, both built by
+Looped Plans ships as a signed and notarized macOS `.dmg`, a Windows
+installer and a Linux AppImage, all built by
 [`.github/workflows/release.yml`](.github/workflows/release.yml). This document
-covers the per-release routine; the Windows half has its own section below.
+covers the per-release routine; Windows and Linux each have a section below.
 The one-time setup for macOS (certificates, the App Store Connect key, the
 updater keypair) is done, and lives in this file's history if it ever needs
 doing again.
@@ -165,6 +165,110 @@ notes should say so rather than let it be a surprise.
 
 ---
 
+## Linux
+
+The same tag builds a third bundle on an `ubuntu-22.04` runner:
+`Looped.Plans_X.Y.Z_amd64.AppImage`, its updater `.sig`, and a `.deb` beside
+them. x86_64 only. The `build-linux` job runs after the Windows one for the
+reason that one runs after macOS: each upload merges its platform into the
+draft's `latest.json`, and the merges have to happen one at a time.
+
+The AppImage is the one that matters. Tauri's updater on Linux replaces an
+AppImage in place and nothing else, so it is what the feed's `linux-x86_64`
+entry points at, signed with the same `TAURI_SIGNING_PRIVATE_KEY` as the
+other two platforms. The `.deb` is for the people who want their package
+manager to know about the app; it takes no updates and does not appear in
+the feed. `verify-linux` checks the three files exist and that the feed
+gained its entry, and says nothing about running the binary, because
+nothing in CI does.
+
+We build on 22.04 on purpose. An AppImage links against the system's
+WebKitGTK rather than bundling it, and the build host's version is the
+oldest the result will run on. 22.04 is the oldest image with the 4.1 API
+Tauri 2 needs, so the AppImage runs on anything from there up, Arch
+included. An Arch desktop's WebKitGTK is newer than the runner's, which is
+the direction that works.
+
+### The desktop it was aimed at
+
+The target is Omarchy: Arch, Hyprland, Wayland, a terminal the person chose,
+no GNOME. A build that works there works on the friendlier distributions
+too. Three things in the app are there for that desktop specifically.
+
+**WebKitGTK under Wayland with the NVIDIA driver** renders black or flickers
+unless its DMA-BUF renderer is off. The app checks for both at startup
+(`WAYLAND_DISPLAY` or `XDG_SESSION_TYPE=wayland`, and the driver under
+`/proc/driver/nvidia` or `/sys/module/nvidia`) and sets
+`WEBKIT_DISABLE_DMABUF_RENDERER=1` before the webview is made, saying so on
+stderr. When the guess misses, the variables to try by hand, in this order:
+
+```sh
+PLANS_WEBKIT_SAFE=1 ./Looped.Plans_X.Y.Z_amd64.AppImage      # the same thing, forced
+WEBKIT_DISABLE_DMABUF_RENDERER=1 ./Looped.Plans_X.Y.Z_amd64.AppImage
+WEBKIT_DISABLE_COMPOSITING_MODE=1 ./Looped.Plans_X.Y.Z_amd64.AppImage
+```
+
+A variable already in the environment is respected and the app sets nothing
+of its own. This is the known state of WebKitGTK on that stack, and there is
+no plan to hide it.
+
+**The keychain may not be running.** The workspace sign-in lives in the
+Secret Service, and Omarchy does not start gnome-keyring or KWallet. When
+`keyring` reports there is no service to talk to, the token goes to a file
+under the app's config directory (`~/.config/com.ratulmaharaj.plans/token`)
+with mode 0600, and the app says so once on stderr. On a machine with a
+keyring daemon the keychain is used as before. Signing out clears both
+places. A shared machine where a 0600 file under your own home is not
+enough has bigger problems than this one; it is said plainly rather than
+worked around.
+
+**Terminals.** "Open in terminal" tries `$TERMINAL` first, then ghostty,
+alacritty, kitty, foot and wezterm, then Debian's `x-terminal-emulator` and
+gnome-terminal, each started in the repository with its own
+working-directory flag. A `$TERMINAL` the app has not met is started with
+the directory inherited, which every terminal honours.
+
+The `plans` command line installs to `~/.local/bin/plans`, and Settings says
+when that folder is not on your PATH.
+
+### Arch, and the AUR
+
+`packaging/aur/PKGBUILD` is a template for `looped-plans-bin`: it fetches the
+release's AppImage, puts it under `/opt/looped-plans`, links `plans` into
+`/usr/bin`, and installs a desktop entry and the icon. It is a template
+rather than a package because publishing to the AUR needs an account and a
+maintainer, and that is a decision rather than a build step. To use it,
+bump `pkgver`, run `updpkgsums`, and `makepkg -si`; to publish it, push it to
+the AUR's git remote under a name you are prepared to answer email about.
+
+### The smoke checklist
+
+Before publishing, on a real Linux desktop, since CI proves the AppImage
+builds and nothing more:
+
+- `chmod +x` the AppImage and launch it; the window opens and draws. On a
+  Wayland desktop with an NVIDIA card, stderr says the DMA-BUF renderer is
+  off and the window is not black.
+- Add a repository, open a plan, edit it, watch the git status update.
+- Start an agent turn with Claude Code installed through npm.
+- Sign in to a workspace on a desktop without gnome-keyring; stderr says the
+  token went to a file, and the file is mode 0600. Sign out; the file is
+  gone.
+- Open in terminal opens the terminal named in `$TERMINAL`, or the first
+  installed one from the list.
+- Install the `plans` command, open a terminal, run `plans .` in a
+  repository.
+- Install the previous release, then take the update to this one. The
+  AppImage replaces itself and relaunches.
+- `makepkg -si` from the PKGBUILD template on an Arch machine; the launcher
+  shows the app with its icon.
+
+Not in v1: Flatpak and Snap, which have their own updater stories; ARM
+Linux; a maintained AUR package; Wayland-native window decorations, which
+WebKitGTK draws itself.
+
+---
+
 ## What the workflow actually does
 
 | Step                                                | Why                                                                                                                                                            |
@@ -238,8 +342,8 @@ xcrun stapler validate "/Applications/Looped Plans.app"
   above for what that means and the two ways out of it.
 - **Windows on ARM.** x64 only. A second target and a second feed entry when
   someone needs it.
-- **Linux.** `bundle.targets` is `"all"`, but no job builds it. It needs its
-  own runner and a decision about AppImage against `.deb`.
+- **Linux packaging beyond the AppImage.** No Flatpak, no Snap, no ARM
+  build, and the AUR template is unpublished; see *Linux* above.
 - **Staged rollout.** `latest.json` can carry a percentage, which is real
   insurance against shipping a bad build to everyone at once and meaningless
   with a handful of users. Revisit when there are enough installs for a

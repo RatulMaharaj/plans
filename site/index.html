@@ -257,17 +257,22 @@
         person_profiles: "identified_only",
         respect_dnt: true,
       });
-      // The release carries a macOS and a Windows installer; the button
-      // names the one this visitor is likely to want, and the event says
-      // which was offered rather than assuming a Mac.
-      const platform = /Windows/i.test(navigator.userAgent)
+      // The release carries a macOS installer, a Windows one and a Linux
+      // AppImage; the button names the one this visitor is likely to want,
+      // and the event says which was offered rather than assuming a Mac.
+      // Android says "Linux" in its user agent too and gets nothing.
+      const ua = navigator.userAgent;
+      const platform = /Windows/i.test(ua)
         ? "windows"
-        : /Mac/i.test(navigator.userAgent)
+        : /Mac/i.test(ua)
           ? "macos"
-          : "other";
+          : /Linux|X11/i.test(ua) && !/Android/i.test(ua)
+            ? "linux"
+            : "other";
       const download = document.getElementById("download");
       if (platform === "windows") download.textContent = "Download for Windows";
       if (platform === "macos") download.textContent = "Download for macOS";
+      if (platform === "linux") download.textContent = "Download for Linux";
       download.addEventListener("click", () => {
         posthog.capture("download_clicked", { platform });
       });
