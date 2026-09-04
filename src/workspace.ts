@@ -42,12 +42,19 @@ export function configured(): boolean {
 
 export type Account = { login: string; name: string | null; avatar: string | null };
 
+/**
+ * A member as a person: what the server has for a login. An invite who has
+ * never signed in is a login with a null name and no face.
+ */
+export type Profile = { login: string; name: string | null; avatar: string | null };
+
 export type Workspace = {
   id: string;
   name: string;
   createdBy: string;
   createdAt: number;
   members: string[];
+  profiles: Profile[];
 };
 
 /**

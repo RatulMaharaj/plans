@@ -18,7 +18,7 @@ import { findPluginKey, findProsePlugin, scrollToCurrent } from "./find-prose";
 import type { FindHandle } from "./find";
 import { trace } from "./perf";
 import { collab, collabServiceCtx } from "@milkdown/plugin-collab";
-import type { Room } from "./workspace";
+import type { Profile, Room } from "./workspace";
 import "./editor-theme.css";
 
 type Props = {
@@ -33,6 +33,14 @@ type Props = {
   imageFolder: string;
   /** `@name` written into new comments and replies; "" when git has no name. */
   author: string;
+  /**
+   * The members a comment's `@handle` can name, by login: a workspace's
+   * people, drawn on each turn with the face and colour their cursor wears.
+   * Absent for a repository, whose comments stay plain text.
+   */
+  profiles?: Record<string, Profile>;
+  /** Colour handles without a member list — the share page's rendering. */
+  tintHandles?: boolean;
   onChange: (markdown: string) => void;
   /** ⌘-click on a link lands here; the caller decides file versus browser. */
   onOpenLink?: (href: string) => void;
@@ -145,6 +153,8 @@ export function Editor({
   spellcheck,
   imageFolder,
   author,
+  profiles,
+  tintHandles,
   onChange,
   onOpenLink,
   findRef,
@@ -267,6 +277,8 @@ export function Editor({
     htmlContext.repo = repo;
     htmlContext.relPath = relPath;
     htmlContext.author = author;
+    htmlContext.profiles = profiles ?? null;
+    htmlContext.tint = !!tintHandles;
     imageContext.repo = repo;
     imageContext.relPath = relPath;
     imageContext.folder = imageFolder;
@@ -782,6 +794,8 @@ export function Editor({
     htmlContext.repo = repo;
     htmlContext.relPath = relPath;
     htmlContext.author = author;
+    htmlContext.profiles = profiles ?? null;
+    htmlContext.tint = !!tintHandles;
     imageContext.repo = repo;
     imageContext.relPath = relPath;
     imageContext.folder = imageFolder;
@@ -798,6 +812,11 @@ export function Editor({
   useEffect(() => {
     htmlContext.author = author;
   }, [author]);
+  // The members likewise: an invite lands while the file is open.
+  useEffect(() => {
+    htmlContext.profiles = profiles ?? null;
+    htmlContext.tint = !!tintHandles;
+  }, [profiles, tintHandles]);
 
   // Toggling spellcheck shouldn't rebuild the document, so it's set on the
   // live contenteditable rather than passed at construction.

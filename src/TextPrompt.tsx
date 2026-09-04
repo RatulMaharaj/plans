@@ -5,6 +5,7 @@
  * — a branch name, a commit message — asks here instead.
  */
 import { useEffect, useRef, useState } from "react";
+import { attachMentions } from "./mentions";
 
 type Props = {
   title: string;
@@ -18,6 +19,8 @@ type Props = {
   initial?: string;
   /** Allow submitting nothing, to mean "remove it". */
   allowEmpty?: boolean;
+  /** Handles `@` completes to — a workspace's members, for a comment. */
+  mentions?: string[];
   onCancel: () => void;
   onSubmit: (value: string) => void;
 };
@@ -30,6 +33,7 @@ export function TextPrompt({
   multiline,
   initial,
   allowEmpty,
+  mentions,
   onCancel,
   onSubmit,
 }: Props) {
@@ -45,6 +49,12 @@ export function TextPrompt({
     if (dot > 0) el.setSelectionRange(0, dot);
     else el.select();
   }, []);
+
+  useEffect(() => {
+    const el = field.current;
+    if (!el || !mentions?.length) return;
+    return attachMentions(el, () => mentions);
+  }, [mentions]);
 
   const submit = () => {
     if (value.trim() || allowEmpty) onSubmit(value.trim());

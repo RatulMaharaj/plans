@@ -137,6 +137,10 @@ export function Page() {
         spellcheck={false}
         imageFolder=""
         author=""
+        // Handles keep their colours here, and faces stay off the page: a
+        // reader is anonymous, and this page never carries the member list.
+        // See plans/improve-comment-system-in-workspaces.md.
+        tintHandles
         readOnly
         onChange={() => {}}
         onOpenLink={openLink}
