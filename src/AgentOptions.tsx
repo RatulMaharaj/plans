@@ -81,10 +81,30 @@ export function AgentOptions({
             void api.agentSetConfig(repo, chat, o.id, v).catch(() => {});
           }}
           choices={(o.category === "thought_level" ? [...o.options].sort(byEffort) : o.options).map(
-            (c) => ({ value: c.value, label: c.name, note: c.description }),
+            (c) => (o.category === "model" ? modelChoice(c) : { value: c.value, label: c.name, note: c.description }),
           )}
         />
       ))}
     </div>
   );
+}
+
+/**
+ * A model choice, labelled with what it resolves to.
+ *
+ * The values an agent offers are aliases — `fable`, `opus`, `sonnet` — that
+ * mean "the latest of that line", and the adapter says which model that is
+ * today in the description: "Fable 5.1 · Most capable for …". Showing that
+ * first clause as the label means the picker reads "Fable 5.1" rather than
+ * "Fable", and the day an alias moves to a new model, it shows. The values
+ * themselves cannot be exact ids: the agent accepts only what it listed.
+ */
+function modelChoice(c: { value: string; name: string; description?: string }) {
+  const clause = c.description?.split(" · ")[0]?.trim();
+  const resolved = clause && clause.toLowerCase().startsWith(c.name.toLowerCase()) && clause.length > c.name.length;
+  return {
+    value: c.value,
+    label: resolved ? clause : c.name,
+    note: resolved ? c.description?.slice(clause.length).replace(/^\s*·\s*/, "") : c.description,
+  };
 }
