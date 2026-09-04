@@ -97,6 +97,15 @@ export function installFakeBackend(
      * test — nothing about the room is faked.
      */
     workspaceToken: null as string | null,
+    /**
+     * Each workspace's scratch folder as the Rust side would have written
+     * it: the whole tree, last handed over. The folder's path is made up —
+     * `/scratch/<id>` — since nothing here touches disk; what a test checks
+     * is that the tree follows the rooms and that the chat runs in it.
+     */
+    scratch: {} as Record<string, { path: string; kind: string; text?: string }[]>,
+    /** Answers to the agent's reads and writes of workspace files. */
+    fsReplies: [] as { requestId: string; content: string | null }[],
     /** URLs handed to the platform to open in a browser. */
     opened: [] as string[],
     /** Whether the machine has tmux at all. */
@@ -213,6 +222,18 @@ export function installFakeBackend(
     }),
     templates_open: () => {
       state.templatesOpened++;
+      return null;
+    },
+    workspace_scratch: ({ id, files }) => {
+      state.scratch[id] = files;
+      return `/scratch/${id}`;
+    },
+    workspace_scratch_forget: ({ id }) => {
+      delete state.scratch[id];
+      return null;
+    },
+    agent_fs_reply: ({ requestId, content }) => {
+      state.fsReplies.push({ requestId: String(requestId), content: (content ?? null) as string | null });
       return null;
     },
     workspace_token_get: () => state.workspaceToken,

@@ -1,5 +1,5 @@
 ---
-status: draft
+status: done
 ---
 # The app is the agent's filesystem in a workspace
 
@@ -46,22 +46,46 @@ for the parts of an agent that want a real path.
 
 ## Implementation guide
 
-- [ ] `src-tauri/src/agent/client.rs` - the read and write handlers check
+- [x] `src-tauri/src/agent/client.rs` - the read and write handlers check
       whether the path is under a registered scratch folder, and if so ask
       the frontend (an event with a reply) rather than the disk
-- [ ] `src-tauri/src/agent/mod.rs` - `agent_prompt` accepts a scratch
+- [x] `src-tauri/src/agent/mod.rs` - `agent_prompt` accepts a scratch
       folder to start in; a command materialises and refreshes the folder
       from text the frontend hands it
-- [ ] `src/workspace.ts` - a `scratch(id)` that writes the tree to the
+- [x] `src/workspace.ts` - a `scratch(id)` that writes the tree to the
       folder and keeps it current while a chat is open
-- [ ] `src/App.tsx` - the chat is offered in a workspace again, against the
+- [x] `src/App.tsx` - the chat is offered in a workspace again, against the
       scratch folder; writes arriving from the agent go to the open editor,
       or to a hidden one mounted for the purpose
-- [ ] `src/Editor.tsx` - a headless mode: bound to a room, no host in the
+- [x] `src/Editor.tsx` - a headless mode: bound to a room, no host in the
       layout, one `replace` and gone
-- [ ] `e2e/workspace.spec.ts` - an agent's write to a workspace file
+- [x] `e2e/workspace.spec.ts` - an agent's write to a workspace file
       appears in the other person's editor; a read answers with what they
       typed a moment ago
+
+### What landed, and where it differs from the guide
+
+- The app did not advertise the `fs` capability before this; the session
+  only offered form elicitation, so there were no read and write handlers to
+  teach. `session.rs` now advertises `fs.readTextFile` and
+  `fs.writeTextFile`, and `client.rs` gained both handlers: the disk for a
+  repository, the frontend (an `agent-fs` event answered by
+  `agent_fs_reply`) for a path under a registered scratch folder. Outstanding
+  reads and writes are refused when a session stops or a turn is cancelled,
+  the way permissions are.
+- `agent_prompt` did not change. Its `repo` was always the working
+  directory, so the chat in a workspace hands it the folder that
+  `workspace_scratch` answered with, and that folder is also the key the
+  workspace's conversations are stored under. The new commands are
+  `workspace_scratch(id, files)` and `workspace_scratch_forget(id)`, in
+  `src-tauri/src/agent/scratch.rs`.
+- The folder is written whole on every change, from every file's room. That
+  means the app opens a room for each file in the workspace while a chat is
+  wanted there, including files nobody has on screen; the cost is one
+  socket per file, which is fine at the sizes workspaces are today.
+- A write from the agent replaces the whole document (`replaceAll`), as the
+  Source view does. The open question about diffing against the room's text
+  to keep other people's cursors in place is still open.
 
 ## Out of scope
 

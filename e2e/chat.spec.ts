@@ -1433,6 +1433,9 @@ test("the model and effort pickers come from the agent", async ({ page }) => {
   await openPlan(page);
   await page.keyboard.press("Meta+j");
   await advertise(page);
+  // The event lands in state and the pickers are painted a frame later;
+  // reading the labels before that is a race the test used to lose.
+  await expect(page.locator(".agent-option .dd-trigger")).toHaveCount(3);
 
   // Reserved categories first, in a fixed order, then anything else — the
   // uncategorised "Agent" option must survive, not be curated away.

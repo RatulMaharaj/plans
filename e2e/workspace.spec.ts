@@ -453,3 +453,135 @@ test("signed out, the section invites you in and the sign-in sheet reports an un
   await expect(page.getByTestId("signin")).toBeVisible();
   await expect(page.locator(".signin-error")).toContainText("not configured");
 });
+
+/**
+ * The agent in a workspace.
+ *
+ * The Rust side is faked, so no agent runs; what is real is everything the
+ * app does around one. The scratch folder is what the app handed the fake
+ * (`__fake.scratch`), a read is an `agent-fs` event the app answers out of
+ * the room, and a write is one the app turns into an edit of the shared
+ * document — which the other person then sees. See plans/agents-in-workspaces.md.
+ */
+test("an agent in a workspace reads what was just typed and writes into everyone's editor", async ({
+  browser,
+}) => {
+  const alice = await boot(browser, "alice");
+  await alice.locator(".ws-new").click();
+  await answer(alice, "Agents", "Create");
+  await expect(editor(alice).locator("h1")).toHaveText("Agents");
+
+  const aliceToken = await session("alice");
+  const id = await only(aliceToken);
+  const dir = `/scratch/${id}`;
+
+  // The chat is offered, because the folder has been written from the tree.
+  await expect(alice.locator(".rail-btn", { hasText: "Chat" })).toBeVisible();
+  const scratch = (page: Page, path: string) =>
+    page.evaluate(
+      ([ws, p]) => (window as any).__fake.scratch[ws]?.find((f: { path: string }) => f.path === p)?.text ?? null,
+      [id, path] as const,
+    );
+  await expect.poll(() => scratch(alice, "plan.md")).toContain("# Agents");
+
+  // The folder follows the room: a moment after typing, the file has it.
+  await editor(alice).locator("h1").click();
+  await alice.keyboard.press("End");
+  await alice.keyboard.press("Enter");
+  await alice.keyboard.type("Read me back.");
+  await expect.poll(() => scratch(alice, "plan.md")).toContain("Read me back.");
+
+  // A read is answered from the room, with what was typed a moment ago.
+  await alice.locator(".rail-btn", { hasText: "Chat" }).click();
+  await expect(alice.locator(".mux")).toBeVisible();
+  const replies = (page: Page) =>
+    page.evaluate(() => (window as any).__fake.fsReplies as { requestId: string; content: string | null }[]);
+  await alice.evaluate(
+    ([repo, ws]) =>
+      (window as any).__fake.emit("agent-fs", {
+        repo,
+        requestId: "r1",
+        op: "read",
+        workspace: ws,
+        path: "plan.md",
+        content: null,
+      }),
+    [dir, id] as const,
+  );
+  await expect.poll(async () => (await replies(alice)).find((r) => r.requestId === "r1")?.content ?? null).toContain(
+    "Read me back.",
+  );
+  // A file the workspace does not have is a refusal, not a hang.
+  await alice.evaluate(
+    ([repo, ws]) =>
+      (window as any).__fake.emit("agent-fs", {
+        repo,
+        requestId: "r2",
+        op: "read",
+        workspace: ws,
+        path: "nope.md",
+        content: null,
+      }),
+    [dir, id] as const,
+  );
+  await expect.poll(async () => (await replies(alice)).some((r) => r.requestId === "r2" && r.content === null)).toBe(true);
+
+  // Bob is in the room too, with the same file open.
+  const bob = await boot(browser, "bob");
+  await alice.locator(".page-actions .rail-btn", { hasText: "Invite" }).click();
+  await answer(alice, "bob", "Invite");
+  await bob.reload();
+  await expect(bob.getByTestId("account")).toHaveText("bob");
+  await heading(bob, "Agents").click();
+  await row(bob, "plan").click();
+  await expect(editor(bob)).toContainText("Read me back.");
+
+  // A write to the open file goes through alice's editor, and bob sees it.
+  await alice.evaluate(
+    ([repo, ws]) =>
+      (window as any).__fake.emit("agent-fs", {
+        repo,
+        requestId: "w1",
+        op: "write",
+        workspace: ws,
+        path: "plan.md",
+        content: "---\nstatus: done\n---\n\n# Agents\n\nThe agent wrote this.\n",
+      }),
+    [dir, id] as const,
+  );
+  await expect.poll(async () => (await replies(alice)).find((r) => r.requestId === "w1")?.content).toBe("");
+  await expect(editor(alice)).toContainText("The agent wrote this.");
+  await expect(editor(bob)).toContainText("The agent wrote this.", { timeout: 10_000 });
+  await expect(editor(bob)).not.toContainText("Read me back.");
+  // Status is just a write: the tree's dot follows the frontmatter.
+  await expect(row(bob, "plan").locator(".status-dot")).toHaveClass(/tone-done/);
+  await expect.poll(() => scratch(alice, "plan.md")).toContain("The agent wrote this.");
+
+  // A write to a file nobody has open makes it, in a folder that did not
+  // exist, through an editor nobody sees — and bob can open the result.
+  await alice.evaluate(
+    ([repo, ws]) =>
+      (window as any).__fake.emit("agent-fs", {
+        repo,
+        requestId: "w2",
+        op: "write",
+        workspace: ws,
+        path: "notes/todo.md",
+        content: "# Todo\n\nShip it.\n",
+      }),
+    [dir, id] as const,
+  );
+  await expect.poll(async () => (await replies(alice)).find((r) => r.requestId === "w2")?.content).toBe("");
+  await expect(alice.locator(".row.dir", { hasText: "notes" })).toBeVisible();
+  await expect.poll(() => scratch(alice, "notes/todo.md")).toContain("Ship it.");
+  await expect(bob.locator(".row.dir", { hasText: "notes" })).toBeVisible();
+  await bob.locator(".row.dir", { hasText: "notes" }).click();
+  await row(bob, "todo").click();
+  await expect(editor(bob).locator("h1")).toHaveText("Todo");
+  await expect(editor(bob)).toContainText("Ship it.");
+  // The headless editor is gone once its one write has landed.
+  await expect(alice.locator(".editor-host.headless")).toHaveCount(0);
+
+  expect((alice as any).__faults).toEqual([]);
+  expect((bob as any).__faults).toEqual([]);
+});
