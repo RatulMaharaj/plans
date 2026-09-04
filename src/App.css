@@ -552,6 +552,18 @@ button, .rail, .bar, .tabs, .ctx {
 .page-head .rail-btn:hover { color: var(--git-mod); }
 
 .editor-host { flex: 1; overflow-y: auto; min-height: 0; }
+/* An editor bound to a room for an agent's write: real enough to lay out,
+   nowhere anyone can see or click. */
+.editor-host.headless {
+  position: fixed;
+  left: -100000px;
+  top: 0;
+  width: 800px;
+  height: 600px;
+  overflow: hidden;
+  visibility: hidden;
+  pointer-events: none;
+}
 /* An empty diff has nothing to scroll, so it fills and centres instead. */
 .editor-host:has(> .diff-empty) { display: grid; }
 

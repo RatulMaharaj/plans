@@ -77,6 +77,20 @@ type Props = {
    */
   room?: Room;
   /**
+   * An editor with no surface.
+   *
+   * An agent's write to a workspace file nobody has open still has to become
+   * an edit to that file's shared document, and turning markdown into a
+   * document edit is what this component does. Headless, it binds to the room
+   * off screen, tells the caller when the document is connected through
+   * `onReady`, takes one `replaceRef` call, and is unmounted. It leaves the
+   * module-level bridges (`htmlBridge`, the image and HTML contexts) alone,
+   * since those belong to the editor the person is looking at.
+   */
+  headless?: boolean;
+  /** The document is bound and connected: a `replaceRef` call will land. */
+  onReady?: () => void;
+  /**
    * A document nobody may type into: the public page (src/share).
    *
    * The same editor, the same markdown pipeline, the same mermaid and the
@@ -163,6 +177,8 @@ export function Editor({
   markdownRef,
   replaceRef,
   room,
+  headless = false,
+  onReady,
   readOnly = false,
 }: Props) {
   const hostRef = useRef<HTMLDivElement | null>(null);
@@ -194,6 +210,8 @@ export function Editor({
   onChangeRef.current = onChange;
   const onFindCountRef = useRef(onFindCount);
   onFindCountRef.current = onFindCount;
+  const onReadyRef = useRef(onReady);
+  onReadyRef.current = onReady;
 
   /**
    * ⌘F's engine: metas into the find plugin, through the editor that exists.
@@ -274,14 +292,19 @@ export function Editor({
   useEffect(() => {
     const root = hostRef.current;
     if (!root) return;
-    htmlContext.repo = repo;
-    htmlContext.relPath = relPath;
-    htmlContext.author = author;
-    htmlContext.profiles = profiles ?? null;
-    htmlContext.tint = !!tintHandles;
-    imageContext.repo = repo;
-    imageContext.relPath = relPath;
-    imageContext.folder = imageFolder;
+    if (!headless) {
+      htmlContext.repo = repo;
+      htmlContext.relPath = relPath;
+      htmlContext.author = author;
+      htmlContext.profiles = profiles ?? null;
+      htmlContext.tint = !!tintHandles;
+      imageContext.repo = repo;
+      imageContext.relPath = relPath;
+      imageContext.folder = imageFolder;
+    }
+    // A headless editor writes its hooks into a bridge nobody reads, so the
+    // visible editor's stay in place while it comes and goes.
+    const bridge: typeof htmlBridge = headless ? { ...htmlBridge, focusNext: false } : htmlBridge;
 
     const crepe = new Crepe({
       root,
@@ -401,7 +424,7 @@ export function Editor({
             .filter((line) => line.trim().length > 0)
             .map((line) => schema.nodes.html.create({ value: line }));
 
-    htmlBridge.apply = ({ from, to, value }) => {
+    bridge.apply = ({ from, to, value }) => {
       touched = true;
       crepe.editor.action((ctx) => {
         const view = ctx.get(editorViewCtx);
@@ -413,7 +436,7 @@ export function Editor({
       });
     };
 
-    htmlBridge.insert = (value) => {
+    bridge.insert = (value) => {
       touched = true;
       crepe.editor.action((ctx) => {
         const view = ctx.get(editorViewCtx);
@@ -429,7 +452,7 @@ export function Editor({
      * is kept, not replaced — the comment sits at its end, about the text it
      * follows. A selection at the document itself falls back to the end.
      */
-    htmlBridge.comment = (value) => {
+    bridge.comment = (value) => {
       touched = true;
       crepe.editor.action((ctx) => {
         const view = ctx.get(editorViewCtx);
@@ -460,7 +483,7 @@ export function Editor({
      * sit. Searching backwards from it finds the nearest place one can — for a
      * newly created file, the empty paragraph under the heading.
      */
-    htmlBridge.focusEnd = () => {
+    bridge.focusEnd = () => {
       try {
         crepe.editor.action((ctx) => {
           const view = ctx.get(editorViewCtx);
@@ -557,7 +580,7 @@ export function Editor({
     // A flush about to read the buffer asks for the keystrokes still inside
     // the debounce — otherwise everything typed in the last 180ms is missing
     // from what gets saved, and a caller quoting "the file" quotes the past.
-    htmlBridge.collect = () => {
+    bridge.collect = () => {
       if (timer) {
         clearTimeout(timer);
         send();
@@ -645,12 +668,15 @@ export function Editor({
               // where the shared document arrived a moment later.
               publish();
               window.setTimeout(publish, 300);
+              onReadyRef.current?.();
             } catch (e) {
               trace("collab connect failed", { error: String(e) });
             }
           };
           if (room.synced) connect();
           else unsync = room.onSynced(connect);
+        } else {
+          onReadyRef.current?.();
         }
         // A frame after creation, so the initial serialisation has been and gone.
         requestAnimationFrame(() => {
@@ -672,9 +698,9 @@ export function Editor({
            * Without this the request would sit set for the rest of the session
            * and steal the cursor from whatever was opened next.
            */
-          if (htmlBridge.focusNext) {
-            htmlBridge.focusNext = false;
-            htmlBridge.focusEnd?.();
+          if (bridge.focusNext) {
+            bridge.focusNext = false;
+            bridge.focusEnd?.();
           }
         });
       })
@@ -696,17 +722,17 @@ export function Editor({
         root.removeEventListener(ev, onInput, true);
       }
       if (instance.current === crepe) instance.current = null;
-      htmlBridge.apply = null;
-      htmlBridge.insert = null;
-      htmlBridge.comment = null;
-      htmlBridge.collect = null;
+      bridge.apply = null;
+      bridge.insert = null;
+      bridge.comment = null;
+      bridge.collect = null;
       /*
        * The reason the bridge is a bridge. A focus request outliving the editor
        * it was meant for would otherwise fire at a destroyed view; nulled here,
        * the pending call is simply a no-op. `focusNext` is left alone — it
        * belongs to App, and clearing it on a remount would drop a live request.
        */
-      htmlBridge.focusEnd = null;
+      bridge.focusEnd = null;
       /**
        * Do not touch the host here. destroy() resolves later, and React reuses
        * the same element for the next editor — clearing it then wipes the DOM
@@ -777,7 +803,7 @@ export function Editor({
          * focusing a document still being built. Optional, because the rebuild
          * branch above may have just torn the editor down.
          */
-        if (htmlBridge.focusNext) {
+        if (!headless && htmlBridge.focusNext) {
           htmlBridge.focusNext = false;
           htmlBridge.focusEnd?.();
         }
@@ -791,14 +817,16 @@ export function Editor({
       built.current = true;
       return;
     }
-    htmlContext.repo = repo;
-    htmlContext.relPath = relPath;
-    htmlContext.author = author;
-    htmlContext.profiles = profiles ?? null;
-    htmlContext.tint = !!tintHandles;
-    imageContext.repo = repo;
-    imageContext.relPath = relPath;
-    imageContext.folder = imageFolder;
+    if (!headless) {
+      htmlContext.repo = repo;
+      htmlContext.relPath = relPath;
+      htmlContext.author = author;
+      htmlContext.profiles = profiles ?? null;
+      htmlContext.tint = !!tintHandles;
+      imageContext.repo = repo;
+      imageContext.relPath = relPath;
+      imageContext.folder = imageFolder;
+    }
     // A shared document is never swapped: the room is the document, and a
     // new key here is only its path changing under a rename. Replacing the
     // text would write the template over everyone's work.
@@ -810,13 +838,14 @@ export function Editor({
   // The identity arrives from git after the editor is often already built, and
   // changing it should never rebuild a document.
   useEffect(() => {
-    htmlContext.author = author;
-  }, [author]);
+    if (!headless) htmlContext.author = author;
+  }, [author, headless]);
   // The members likewise: an invite lands while the file is open.
   useEffect(() => {
+    if (headless) return;
     htmlContext.profiles = profiles ?? null;
     htmlContext.tint = !!tintHandles;
-  }, [profiles, tintHandles]);
+  }, [profiles, tintHandles, headless]);
 
   // Toggling spellcheck shouldn't rebuild the document, so it's set on the
   // live contenteditable rather than passed at construction.
@@ -827,7 +856,8 @@ export function Editor({
 
   return (
     <div
-      className="editor-host"
+      className={headless ? "editor-host headless" : "editor-host"}
+      aria-hidden={headless || undefined}
       ref={hostRef}
       /*
        * Links do something. A plain click stays an editing click — the caret

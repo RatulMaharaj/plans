@@ -431,4 +431,26 @@ export const api = {
    * clearing it, or quitting — not moving between chats.
    */
   agentStop: (repo: string, chat: string) => invoke<null>("agent_stop", { repo, chat }),
+
+  /**
+   * Answer one of the agent's reads or writes of a workspace file, routed
+   * here because the path was under the workspace's scratch folder. `content`
+   * is the file's text for a read, "" for a write that landed, and `null` to
+   * refuse.
+   */
+  agentFsReply: (repo: string, chat: string, requestId: string, content: string | null) =>
+    invoke<null>("agent_fs_reply", { repo, chat, requestId, content }),
+
+  /**
+   * Write a workspace's tree into its scratch folder and answer with the
+   * folder, which is the working directory a chat in that workspace starts
+   * its agent in. Called again on every change, with the whole tree.
+   */
+  workspaceScratch: (id: string, files: ScratchFile[]) =>
+    invoke<string>("workspace_scratch", { id, files }),
+  /** Stop routing the folder's reads and writes to the room. */
+  workspaceScratchForget: (id: string) => invoke<null>("workspace_scratch_forget", { id }),
 };
+
+/** One line of a workspace's tree, as the scratch folder is written from it. */
+export type ScratchFile = { path: string; kind: "file" | "folder"; text?: string };

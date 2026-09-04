@@ -14,9 +14,10 @@
 use crate::agent::events;
 use agent_client_protocol::schema::v1::{
     CancelNotification, ClientCapabilities, ContentBlock, CreateElicitationRequest,
-    ElicitationCapabilities, ElicitationFormCapabilities, InitializeRequest, LoadSessionRequest,
-    NewSessionRequest, PromptRequest, SessionConfigOptionValue, SessionId, SessionNotification,
-    SetSessionConfigOptionRequest, TextContent,
+    ElicitationCapabilities, ElicitationFormCapabilities, FileSystemCapabilities,
+    InitializeRequest, LoadSessionRequest, NewSessionRequest, PromptRequest, ReadTextFileRequest,
+    SessionConfigOptionValue, SessionId, SessionNotification, SetSessionConfigOptionRequest,
+    TextContent, WriteTextFileRequest,
 };
 use agent_client_protocol::schema::ProtocolVersion;
 use agent_client_protocol::{AcpAgent, AcpAgentConfig, Agent, ConnectionTo};
@@ -58,6 +59,7 @@ pub async fn run(
     mut ops: UnboundedReceiver<Op>,
     perms: crate::agent::client::Pending,
     asks: crate::agent::client::Asks,
+    files: crate::agent::client::Files,
 ) {
     /*
      * The child needs the PATH a terminal would have, not the one we inherited.
@@ -92,14 +94,17 @@ pub async fn run(
     let (r2, a2, c2, t2) = (repo.clone(), app.clone(), chat.clone(), turn_now.clone());
     let (r3, a3, c3, p3) = (repo.clone(), app.clone(), chat.clone(), perms.clone());
     let (r4, a4, c4, k4) = (repo.clone(), app.clone(), chat.clone(), asks.clone());
+    let (r5, a5, c5, f5) = (repo.clone(), app.clone(), chat.clone(), files.clone());
+    let (r6, a6, c6, f6) = (repo.clone(), app.clone(), chat.clone(), files.clone());
     // The connection closure takes ownership; these are what is left to report
     // with once it has finished, whichever way it finished.
-    let (after_app, after_repo, after_chat, after_perms, after_asks) = (
+    let (after_app, after_repo, after_chat, after_perms, after_asks, after_files) = (
         app.clone(),
         repo.clone(),
         chat.clone(),
         perms.clone(),
         asks.clone(),
+        files.clone(),
     );
 
     let result =
@@ -143,12 +148,41 @@ pub async fn run(
                 },
                 agent_client_protocol::on_receive_request!(),
             )
+            // The agent's reads and writes, which come here because initialize
+            // says the client is a filesystem. For a repository the answer is
+            // the disk; for a workspace's scratch folder it is the room.
+            .on_receive_request(
+                move |req: ReadTextFileRequest, responder, _c| {
+                    let (app, repo, chat, files) = (a5.clone(), r5.clone(), c5.clone(), f5.clone());
+                    async move {
+                        crate::agent::client::read_file(app, repo, chat, files, req, responder).await
+                    }
+                },
+                agent_client_protocol::on_receive_request!(),
+            )
+            .on_receive_request(
+                move |req: WriteTextFileRequest, responder, _c| {
+                    let (app, repo, chat, files) = (a6.clone(), r6.clone(), c6.clone(), f6.clone());
+                    async move {
+                        crate::agent::client::write_file(app, repo, chat, files, req, responder)
+                            .await
+                    }
+                },
+                agent_client_protocol::on_receive_request!(),
+            )
             .connect_with(agent, |c: ConnectionTo<Agent>| async move {
-                c.send_request(InitializeRequest::new(ProtocolVersion::V1).client_capabilities(
-                    ClientCapabilities::new().elicitation(
-                        ElicitationCapabilities::new().form(ElicitationFormCapabilities::new()),
+                c.send_request(
+                    InitializeRequest::new(ProtocolVersion::V1).client_capabilities(
+                        ClientCapabilities::new()
+                            .elicitation(
+                                ElicitationCapabilities::new()
+                                    .form(ElicitationFormCapabilities::new()),
+                            )
+                            .fs(FileSystemCapabilities::new()
+                                .read_text_file(true)
+                                .write_text_file(true)),
                     ),
-                ))
+                )
                 .block_task()
                 .await?;
 
@@ -281,6 +315,7 @@ pub async fn run(
                                              */
                                             crate::agent::client::cancel_all(&perms, &repo, &chat);
                                             crate::agent::client::cancel_asks(&asks);
+                                            crate::agent::client::cancel_files(&files);
                                             let _ = c.send_notification(CancelNotification::new(sid.clone()));
                                             let _ = app.emit(
                                                 "agent-turn",
@@ -313,6 +348,7 @@ pub async fn run(
                             // waiting.
                             crate::agent::client::cancel_all(&perms, &repo, &chat);
                             crate::agent::client::cancel_asks(&asks);
+                            crate::agent::client::cancel_files(&files);
                             let _ = app.emit(
                             "agent-turn",
                             json!({ "repo": repo, "chat": chat, "turn": turn, "stop": "cancelled", "ok": false }),
@@ -351,6 +387,7 @@ pub async fn run(
 
     crate::agent::client::cancel_all(&after_perms, &after_repo, &after_chat);
     crate::agent::client::cancel_asks(&after_asks);
+    crate::agent::client::cancel_files(&after_files);
     match result {
         Err(e) => down(&after_app, &after_repo, &after_chat, gen, &format!("{e}")),
         Ok(()) => down(&after_app, &after_repo, &after_chat, gen, ""),

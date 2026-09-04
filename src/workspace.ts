@@ -542,3 +542,138 @@ export const tree = {
     map.set(path, { ...at, status });
   },
 };
+
+// --- the scratch folder ---------------------------------------------------
+
+/**
+ * One line of the tree as the scratch folder is written from it. A file's
+ * `text` is the room's `meta.markdown`, or "" for a file no editor has
+ * published yet.
+ */
+export type ScratchFile = { path: string; kind: "file" | "folder"; text?: string };
+
+/** A scratch folder being kept current, and the two things you can do to it. */
+export type ScratchHandle = {
+  /** Write what the rooms hold now, and wait for it to land. */
+  flush: () => Promise<void>;
+  /** Stop following the rooms. The rooms themselves are left to their owner. */
+  stop: () => void;
+};
+
+/**
+ * Keep a workspace's scratch folder current with its rooms.
+ *
+ * An agent starts in a folder that is a copy of the workspace, and a copy is
+ * only worth anything while it is fresh. This follows the tree room for
+ * files coming and going and every file's room for its text, and hands the
+ * whole tree to `put` on a short debounce after anything moves — the same
+ * beat on which an editor publishes `meta.markdown`, so the agent's next
+ * read sees what was typed a moment ago. The whole tree every time, because
+ * the folder is small and a full write is the one that cannot drift.
+ *
+ * Rooms are opened through `open` and belong to whoever answers it; a file
+ * nobody has on screen still has a room here, since the folder has to hold
+ * its text too. Puts are serialised so a later tree never lands before an
+ * earlier one.
+ */
+export function scratch(
+  tree: Room,
+  open: (docId: string) => Promise<Room | null>,
+  put: (files: ScratchFile[]) => Promise<unknown>,
+): ScratchHandle {
+  /** `room` is null while `open` is still answering. */
+  const watched = new Map<string, { room: Room | null; off: () => void }>();
+  let stopped = false;
+  let timer: number | null = null;
+  let chain: Promise<unknown> = Promise.resolve();
+
+  const files = (): ScratchFile[] =>
+    treeEntries(tree).map((e) =>
+      e.kind === "folder"
+        ? { path: e.path, kind: "folder" as const }
+        : {
+            path: e.path,
+            kind: "file" as const,
+            text: (e.doc && watched.get(e.doc)?.room?.doc.getMap<string>("meta").get("markdown")) || "",
+          },
+    );
+
+  const write = () => {
+    if (stopped) return chain;
+    const snapshot = files();
+    chain = chain.then(() => put(snapshot)).catch(() => {});
+    return chain;
+  };
+
+  const schedule = () => {
+    if (stopped) return;
+    if (timer) clearTimeout(timer);
+    timer = window.setTimeout(() => {
+      timer = null;
+      void write();
+    }, 200);
+  };
+
+  /** Every file in the tree has a room being watched; nothing else does. */
+  const follow = () => {
+    if (stopped) return;
+    const wanted = new Set<string>();
+    for (const e of treeEntries(tree)) {
+      if (e.kind !== "file" || !e.doc) continue;
+      wanted.add(e.doc);
+      if (watched.has(e.doc)) continue;
+      // Reserved before the room arrives, so two changes in a row do not
+      // open it twice.
+      const doc = e.doc;
+      const slot = { room: null as Room | null, off: () => {} };
+      watched.set(doc, slot);
+      void open(doc).then((room) => {
+        if (stopped || !room) {
+          if (watched.get(doc) === slot) watched.delete(doc);
+          return;
+        }
+        const meta = room.doc.getMap<string>("meta");
+        const changed = () => schedule();
+        meta.observe(changed);
+        const unsync = room.onSynced(changed);
+        slot.room = room;
+        slot.off = () => {
+          meta.unobserve(changed);
+          unsync();
+        };
+        schedule();
+      });
+    }
+    for (const [doc, w] of [...watched]) {
+      if (wanted.has(doc)) continue;
+      w.off();
+      watched.delete(doc);
+    }
+  };
+
+  const onTree = () => {
+    follow();
+    schedule();
+  };
+  treeMap(tree).observe(onTree);
+  const unsyncTree = tree.onSynced(onTree);
+  onTree();
+
+  return {
+    flush: async () => {
+      if (timer) {
+        clearTimeout(timer);
+        timer = null;
+      }
+      await write();
+    },
+    stop: () => {
+      stopped = true;
+      if (timer) clearTimeout(timer);
+      treeMap(tree).unobserve(onTree);
+      unsyncTree();
+      for (const w of watched.values()) w.off();
+      watched.clear();
+    },
+  };
+}
