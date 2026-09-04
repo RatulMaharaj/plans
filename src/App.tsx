@@ -43,7 +43,15 @@ import {
   SKILLS,
   type SkillState,
 } from "./skill";
-import { CHORD_MS, matchChordPrefix, matchKeys, mergeKeys, renderKeys } from "./keys";
+import {
+  CHORD_MS,
+  extraChord,
+  extraHeld,
+  matchChordPrefix,
+  matchKeys,
+  mergeKeys,
+  renderKeys,
+} from "./keys";
 import { KeyboardPage } from "./KeyboardPage";
 import { ShortcutSheet } from "./ShortcutSheet";
 import { SplitPane } from "./SplitPane";
@@ -4899,9 +4907,13 @@ export default function App() {
       if (palette && !(e.metaKey || e.ctrlKey)) return;
       const mod = e.metaKey || e.ctrlKey;
 
+      // The spare modifier on top of mod: ⌃ on a Mac, Alt elsewhere, where
+      // mod is already Ctrl and "Ctrl held as well" would be no test at all.
+      const extra = extraHeld(e);
+
       // ⌘⌃P is the profiler. Checked before the palette, which also answers to
       // "p" and would otherwise swallow it.
-      if (e.metaKey && e.ctrlKey && e.key.toLowerCase() === "p") {
+      if (extraChord(e) && e.key.toLowerCase() === "p") {
         e.preventDefault();
         setPerf((v) => !v);
         return;
@@ -4910,7 +4922,7 @@ export default function App() {
       // ⌘P plans, ⌘⇧P commands. The ">" is what actually picks the mode, so
       // these are two doors into the same box. ⌘K used to be a third; it is
       // now the chord prefix, matched from the registry below.
-      if (mod && !e.ctrlKey && e.key.toLowerCase() === "p") {
+      if (mod && !extra && e.key.toLowerCase() === "p") {
         e.preventDefault();
         setPalette({ commands: e.shiftKey });
         return;
@@ -5067,7 +5079,7 @@ export default function App() {
          * while you are writing, the sidebar gets it everywhere else. ⌘⌃B
          * always toggles, for when the caret is in the page and you want it.
          */
-        if (editing && !e.ctrlKey) return;
+        if (editing && !extra) return;
         e.preventDefault();
         set({ showIndex: !settings.showIndex });
       } else if (mod && (e.key === "Backspace" || e.key === "Delete")) {
