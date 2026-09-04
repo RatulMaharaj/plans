@@ -1688,6 +1688,7 @@ pub fn run() {
 
     builder
         .manage(agent::Agents::default())
+        .manage(agent::scratch::Scratch::default())
         .manage(CliOpen(std::sync::Mutex::new(
             std::env::current_dir()
                 .ok()
@@ -1755,6 +1756,9 @@ pub fn run() {
             agent::agent_permission,
             agent::agent_question,
             agent::agent_stop,
+            agent::agent_fs_reply,
+            agent::scratch::workspace_scratch,
+            agent::scratch::workspace_scratch_forget,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

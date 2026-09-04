@@ -14,6 +14,7 @@
 pub mod client;
 pub mod discover;
 pub mod events;
+pub mod scratch;
 pub mod session;
 
 use crate::R;
@@ -59,6 +60,7 @@ struct Live {
     ops: UnboundedSender<session::Op>,
     perms: client::Pending,
     asks: client::Asks,
+    files: client::Files,
     /// Which agent this session is. Changing the setting has to end it.
     agent: String,
     /// Which session this is, among all the ones this key has had.
@@ -129,6 +131,7 @@ fn ensure(
     let (tx, rx) = unbounded_channel();
     let perms = client::pending();
     let asks = client::asks();
+    let files = client::files();
     let gen = NEXT_GEN.fetch_add(1, Ordering::Relaxed);
     state.0.lock().unwrap().insert(
         key(repo, chat),
@@ -136,6 +139,7 @@ fn ensure(
             ops: tx,
             perms: perms.clone(),
             asks: asks.clone(),
+            files: files.clone(),
             agent: agent_id.to_string(),
             gen,
         },
@@ -154,6 +158,7 @@ fn ensure(
             rx,
             perms,
             asks,
+            files,
         )
         .await;
         /*
@@ -187,6 +192,12 @@ fn send(app: &AppHandle, repo: &str, chat: &str, op: session::Op) -> R<()> {
 }
 
 /// Say something. Starts the session if this is the first thing said.
+///
+/// `repo` is the working directory the session starts in. For a repository
+/// that is the repository; for a workspace it is the scratch folder
+/// `workspace_scratch` answered with, which is why nothing here needs to
+/// know the difference — the folder is registered, and the fs handlers in
+/// `client.rs` route what the agent reads and writes under it to the room.
 ///
 /// Every command here takes `chat` as one word on purpose. Tauri maps a
 /// camelCase key from JavaScript onto a snake_case parameter, so a `chat_id`
@@ -269,6 +280,25 @@ pub fn agent_question(
     Ok(())
 }
 
+/// Answer one of the agent's reads or writes of a workspace file. `content`
+/// is the file's text for a read, or anything but `None` for a write that
+/// landed; `None` refuses it.
+#[tauri::command]
+pub fn agent_fs_reply(
+    app: AppHandle,
+    repo: String,
+    chat: String,
+    request_id: String,
+    content: Option<String>,
+) -> R<()> {
+    let state: State<Agents> = app.state();
+    let live = state.0.lock().unwrap();
+    if let Some(l) = live.get(&key(&repo, &chat)) {
+        client::answer_file(&l.files, &request_id, content);
+    }
+    Ok(())
+}
+
 /// End one conversation's session, if there is one.
 fn stop(app: &AppHandle, repo: &str, chat: &str) {
     let state: State<Agents> = app.state();
@@ -280,6 +310,7 @@ fn stop(app: &AppHandle, repo: &str, chat: &str) {
     if let Some(l) = live {
         client::cancel_all(&l.perms, repo, chat);
         client::cancel_asks(&l.asks);
+        client::cancel_files(&l.files);
         let _ = l.ops.send(session::Op::Shutdown);
     }
     let _ = app.emit(
@@ -334,6 +365,7 @@ pub fn shutdown_all(app: &AppHandle) {
         for ((repo, chat), l) in live.iter() {
             client::cancel_all(&l.perms, repo, chat);
             client::cancel_asks(&l.asks);
+            client::cancel_files(&l.files);
             let _ = l.ops.send(session::Op::Shutdown);
         }
     }

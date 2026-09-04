@@ -8,9 +8,10 @@
 //! session is wedged behind a dialog nobody is looking at.
 
 use agent_client_protocol::schema::v1::{
-    CreateElicitationRequest, CreateElicitationResponse, ElicitationAction,
-    RequestPermissionOutcome, RequestPermissionRequest, RequestPermissionResponse,
-    SelectedPermissionOutcome,
+    CreateElicitationRequest, CreateElicitationResponse, ElicitationAction, ReadTextFileRequest,
+    ReadTextFileResponse, RequestPermissionOutcome, RequestPermissionRequest,
+    RequestPermissionResponse, SelectedPermissionOutcome, WriteTextFileRequest,
+    WriteTextFileResponse,
 };
 use agent_client_protocol::Responder;
 use serde_json::json;
@@ -211,6 +212,158 @@ pub async fn permission(
     }
 }
 
+/*
+ * The agent's reads and writes.
+ *
+ * The protocol lets a client be the agent's filesystem: with `fs` advertised
+ * at initialize, the agent's own Read and Write tools come here instead of
+ * touching disk. For a repository that is a formality — the answer is the
+ * file — but for a workspace it is the whole point. A workspace file's truth
+ * is a document on the wire, and the folder the agent was started in
+ * (`scratch.rs`) is a copy. So a path under a scratch folder is answered by
+ * the frontend, which holds the room: a read is the room's current text and a
+ * write is an edit to it. Every other path is the disk, as it would have been
+ * without us.
+ *
+ * Same lifecycle as a permission: the agent is blocked on the answer, so a
+ * stopped session or a cancelled turn has to answer what is outstanding.
+ */
+
+/// Reads and writes waiting on the frontend, by request id. The payload is
+/// the file's text for a read, or `Some("")` for a write that landed; `None`
+/// is a refusal.
+pub type Files = Arc<Mutex<HashMap<String, oneshot::Sender<Option<String>>>>>;
+
+pub fn files() -> Files {
+    Arc::new(Mutex::new(HashMap::new()))
+}
+
+/// The frontend's answer to a read or a write.
+pub fn answer_file(files: &Files, request_id: &str, content: Option<String>) {
+    if let Some(tx) = files.lock().unwrap().remove(request_id) {
+        let _ = tx.send(content);
+    }
+}
+
+/// Refuse every outstanding read and write at once.
+pub fn cancel_files(files: &Files) {
+    let waiting: Vec<_> = files.lock().unwrap().drain().collect();
+    for (_, tx) in waiting {
+        let _ = tx.send(None);
+    }
+}
+
+static NEXT_FILE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+
+/// Ask the frontend for a workspace file's text, or to write one.
+#[allow(clippy::too_many_arguments)]
+async fn from_room(
+    app: &AppHandle,
+    repo: &str,
+    chat: &str,
+    files: &Files,
+    op: &str,
+    workspace: &str,
+    path: &str,
+    content: Option<&str>,
+) -> Option<String> {
+    let request_id = format!(
+        "{}::{}::fs-{}",
+        repo,
+        chat,
+        NEXT_FILE.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    );
+    let (tx, rx) = oneshot::channel();
+    files.lock().unwrap().insert(request_id.clone(), tx);
+    let _ = app.emit(
+        "agent-fs",
+        json!({
+            "repo": repo,
+            "chat": chat,
+            "requestId": request_id,
+            "op": op,
+            "workspace": workspace,
+            "path": path,
+            "content": content,
+        }),
+    );
+    rx.await.ok().flatten()
+}
+
+/// `line` and `limit` as the request means them: 1-based, and a limit of
+/// lines from there. Applied to whatever the text came from, so a room reads
+/// the same way a file does.
+pub fn window(text: &str, line: Option<u32>, limit: Option<u32>) -> String {
+    if line.is_none() && limit.is_none() {
+        return text.to_string();
+    }
+    let start = line.unwrap_or(1).max(1) as usize - 1;
+    let lines: Vec<&str> = text.split_inclusive('\n').collect();
+    let end = match limit {
+        Some(n) => (start + n as usize).min(lines.len()),
+        None => lines.len(),
+    };
+    if start >= lines.len() {
+        return String::new();
+    }
+    lines[start..end].concat()
+}
+
+pub async fn read_file(
+    app: AppHandle,
+    repo: String,
+    chat: String,
+    files: Files,
+    req: ReadTextFileRequest,
+    responder: Responder<ReadTextFileResponse>,
+) -> Result<(), agent_client_protocol::Error> {
+    let text = match crate::agent::scratch::workspace_for(&app, &req.path) {
+        Some((ws, rel)) => from_room(&app, &repo, &chat, &files, "read", &ws, &rel, None).await,
+        None => std::fs::read_to_string(&req.path).ok(),
+    };
+    match text {
+        Some(t) => responder.respond(ReadTextFileResponse::new(window(&t, req.line, req.limit))),
+        None => responder
+            .respond_with_internal_error(format!("{} could not be read", req.path.display())),
+    }
+}
+
+pub async fn write_file(
+    app: AppHandle,
+    repo: String,
+    chat: String,
+    files: Files,
+    req: WriteTextFileRequest,
+    responder: Responder<WriteTextFileResponse>,
+) -> Result<(), agent_client_protocol::Error> {
+    let done = match crate::agent::scratch::workspace_for(&app, &req.path) {
+        Some((ws, rel)) => from_room(
+            &app,
+            &repo,
+            &chat,
+            &files,
+            "write",
+            &ws,
+            &rel,
+            Some(&req.content),
+        )
+        .await
+        .is_some(),
+        None => {
+            if let Some(parent) = req.path.parent() {
+                let _ = std::fs::create_dir_all(parent);
+            }
+            std::fs::write(&req.path, &req.content).is_ok()
+        }
+    };
+    if done {
+        responder.respond(WriteTextFileResponse::new())
+    } else {
+        responder
+            .respond_with_internal_error(format!("{} could not be written", req.path.display()))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -283,5 +436,37 @@ mod tests {
         assert_eq!(rx.await.unwrap(), Some(json!({ "question_0": "Refactor" })));
         // A stale answer to a question already gone is a no-op, not a panic.
         answer_ask(&a, "r::c::ask-2", Some(json!(null)));
+    }
+
+    /// Reads and writes share the contract too: an agent mid-Read when its
+    /// session is stopped gets a refusal rather than a hang.
+    #[tokio::test]
+    async fn cancelling_answers_every_outstanding_file() {
+        let f = files();
+        let (tx, rx) = oneshot::channel();
+        f.lock().unwrap().insert("r::c::fs-1".into(), tx);
+        cancel_files(&f);
+        assert_eq!(rx.await.unwrap(), None);
+        assert!(f.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn an_answer_reaches_the_file_that_asked_it() {
+        let f = files();
+        let (tx, rx) = oneshot::channel();
+        f.lock().unwrap().insert("r::c::fs-2".into(), tx);
+        answer_file(&f, "r::c::fs-2", Some("# Plan\n".into()));
+        assert_eq!(rx.await.unwrap(), Some("# Plan\n".into()));
+        answer_file(&f, "r::c::fs-2", None);
+    }
+
+    #[test]
+    fn a_window_is_one_based_and_bounded() {
+        let t = "a\nb\nc\nd";
+        assert_eq!(window(t, None, None), t);
+        assert_eq!(window(t, Some(2), Some(2)), "b\nc\n");
+        assert_eq!(window(t, Some(4), None), "d");
+        assert_eq!(window(t, Some(9), Some(1)), "");
+        assert_eq!(window(t, None, Some(1)), "a\n");
     }
 }
