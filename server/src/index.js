@@ -1,6 +1,7 @@
 /**
  * The workspace server: one process, one database, one websocket per open
- * document — and, since plans/public-plan-pages.md, the public reader too.
+ * document — a workspace being a tree document and one document per file in
+ * it — and, since plans/public-plan-pages.md, the public reader too.
  *
  * Two halves share the port. Everything the app talks to is under `/api`;
  * everything else is the reader — `/` and `/{id}` serve the app's own
@@ -15,7 +16,7 @@ import { resolve } from "node:path";
 import { WebSocketServer } from "ws";
 import { openDb } from "./db.js";
 import { makeAuth, httpError, isLogin } from "./auth.js";
-import { Rooms } from "./rooms.js";
+import { Rooms, FIRST_FILE, treeId } from "./rooms.js";
 
 export function startServer({
   port = Number(process.env.PORT ?? 8787),
@@ -98,14 +99,19 @@ export function startServer({
     const live = p.source === "workspace";
     const w = live ? await db.workspace(p.workspaceId) : null;
     if (live && !w) throw httpError(404, "this plan is not shared");
+    // A workspace page names one file in the room; `plan.md` is what pages
+    // made before folders name, and the file every workspace starts with.
+    const at = p.path || "plan.md";
+    const text = live ? await rooms.markdownAt(p.workspaceId, at) : p.markdown;
+    if (live && text === null) throw httpError(404, "this plan is not shared");
     return {
       id: p.id,
-      name: w ? w.name : p.name,
+      name: w ? (at === "plan.md" ? w.name : `${w.name} / ${at}`) : p.name,
       source: p.source,
       /** A live page is worth asking again for; a file's page is not. */
       live,
       publishedAt: p.publishedAt,
-      markdown: live ? await rooms.markdown(p.workspaceId) : p.markdown,
+      markdown: text,
     };
   };
 
@@ -186,7 +192,11 @@ export function startServer({
       const { name } = await body(req);
       const clean = String(name ?? "").trim().slice(0, 120);
       if (!clean) throw httpError(400, "a workspace needs a name");
-      return json(res, 201, await db.createWorkspace(clean, login));
+      const made = await db.createWorkspace(clean, login);
+      // A workspace is a folder from the moment it exists: the tree, and the
+      // one file in it, are written now rather than by whoever opens it first.
+      await rooms.seed(made.id);
+      return json(res, 201, made);
     }
     if ((seg = m(/^\/workspaces\/([\w-]+)$/)) && req.method === "GET") {
       return json(res, 200, (await mine(req, seg[1])).w);
@@ -198,13 +208,11 @@ export function startServer({
       await db.addMember(w.id, login.trim().toLowerCase());
       return json(res, 200, await db.workspace(w.id));
     }
-    if ((seg = m(/^\/workspaces\/([\w-]+)\/review$/)) && req.method === "POST") {
-      const { login, w } = await mine(req, seg[1]);
-      const { action } = await body(req);
-      const r = await db.review(w.id, action, login);
-      if (r.error) throw httpError(r.error, r.reason);
-      rooms.announceReview(w.id, r.review);
-      return json(res, 200, r.review);
+    // The tree, for a cold open: what the app draws before its socket is up,
+    // and what anything that is not the app reads instead of joining a room.
+    if ((seg = m(/^\/workspaces\/([\w-]+)\/tree$/)) && req.method === "GET") {
+      const { w } = await mine(req, seg[1]);
+      return json(res, 200, await rooms.tree(w.id));
     }
     if ((seg = m(/^\/workspaces\/([\w-]+)\/token$/)) && req.method === "POST") {
       const { login, w } = await mine(req, seg[1]);
@@ -216,7 +224,13 @@ export function startServer({
     // token. See plans/sharable-links.md.
     if ((seg = m(/^\/workspaces\/([\w-]+)\/share$/)) && req.method === "POST") {
       const { login, w } = await mine(req, seg[1]);
-      return json(res, 201, await db.createShareToken(w.id, login));
+      // A link names a file. The token is still the workspace's, so revoking
+      // one link is one link and revoking the workspace's is all of them.
+      const { path } = await body(req);
+      const want = String(path ?? "").trim() || FIRST_FILE;
+      const entry = (await rooms.tree(w.id)).find((e) => e.path === want && e.kind === "file");
+      if (!entry) throw httpError(404, `no file called ${want}`);
+      return json(res, 201, await db.createShareToken(w.id, login, want));
     }
     if ((seg = m(/^\/workspaces\/([\w-]+)\/share$/)) && req.method === "GET") {
       const { w } = await mine(req, seg[1]);
@@ -224,24 +238,27 @@ export function startServer({
     }
     if ((seg = m(/^\/workspaces\/([\w-]+)\/share\/revoke$/)) && req.method === "POST") {
       const { w } = await mine(req, seg[1]);
-      const { id } = await body(req);
+      const { id, all } = await body(req);
+      // Every link at once is what copying a plan out of the room asks for:
+      // the argument has moved to a repository, so the links into it stop.
+      if (all) return json(res, 200, { ok: true, revoked: await db.revokeShareTokens(w.id) });
       if (!(await db.revokeShareToken(w.id, String(id ?? "")))) throw httpError(404, "no such link");
       return json(res, 200, { ok: true });
     }
     if (req.method === "GET" && path === "/share/doc") {
       // The token is the address: the workspace id is never in the URL.
-      const id = await db.workspaceForShareToken(bearer(req));
+      const at = await db.shareTarget(bearer(req));
       // Revoked, expired, and never-minted answer alike.
-      if (!id) throw httpError(404, "this link is not a link any more");
-      const w = await db.workspace(id);
+      if (!at) throw httpError(404, "this link is not a link any more");
+      const w = await db.workspace(at.workspaceId);
       if (!w) throw httpError(404, "this link is not a link any more");
-      return json(res, 200, {
-        name: w.name,
-        // The chip's state and nothing more: who asked, who decided and who is
-        // in the room are not part of the document.
-        review: { state: w.review.state },
-        markdown: await rooms.markdown(id),
-      });
+      const markdown = await rooms.markdownAt(at.workspaceId, at.path);
+      // A link into a file that has since been deleted or renamed is as dead
+      // as a revoked one, and says so the same way.
+      if (markdown === null) throw httpError(404, "this link is not a link any more");
+      // The file and nothing more: who is in the room, and what else is in the
+      // tree, are not part of the document that was shared.
+      return json(res, 200, { name: w.name, path: at.path, markdown });
     }
     // --- published pages ---------------------------------------------------
     // A page is a plan someone published; its id is the whole of the secret,
@@ -265,7 +282,9 @@ export function startServer({
       }
       if (b.workspaceId) {
         const { w } = await mine(req, String(b.workspaceId));
-        return json(res, 201, await db.publishWorkspacePage(w.id, w.name, login));
+        const at = String(b.path ?? "plan.md").trim().slice(0, 500) || "plan.md";
+        const name = at === "plan.md" ? w.name : `${w.name} / ${at}`;
+        return json(res, 201, await db.publishWorkspacePage(w.id, at, name, login));
       }
       const repo = String(b.repo ?? "").trim().slice(0, 200);
       const filePath = String(b.path ?? "").trim().slice(0, 500);
@@ -286,36 +305,79 @@ export function startServer({
       // The old link's token, traded for the page its document now has. The
       // token is the authority here, exactly as it was for /share/doc.
       const { token } = await body(req);
-      const id = await db.workspaceForShareToken(String(token ?? ""));
-      const w = id ? await db.workspace(id) : null;
+      const target = await db.shareTarget(String(token ?? ""));
+      const w = target ? await db.workspace(target.workspaceId) : null;
       if (!w) throw httpError(404, "this link is not a link any more");
-      const page = await db.publishWorkspacePage(w.id, w.name, w.createdBy);
+      const name = target.path === "plan.md" ? w.name : `${w.name} / ${target.path}`;
+      const page = await db.publishWorkspacePage(w.id, target.path, name, w.createdBy);
       return json(res, 200, { id: page.id });
     }
     if ((seg = m(/^\/workspaces\/([\w-]+)\/page$/)) && req.method === "GET") {
       // Whether this document is shared, for the member looking at it — not a
       // listing of anyone's pages, just the state of this one.
       const { w } = await mine(req, seg[1]);
-      return json(res, 200, await db.workspacePage(w.id));
+      const at = new URL(req.url, "http://x").searchParams.get("path") || "plan.md";
+      return json(res, 200, await db.workspacePage(w.id, at));
     }
 
-    if ((seg = m(/^\/w\/([\w-]+)\/plan\.md$/)) && req.method === "GET") {
-      // Two doors: a member's session, or the per-workspace token that the
-      // factory holds in its secrets. Both are bearer tokens; neither is the
-      // URL.
+
+    /**
+     * The read endpoint: a workspace as a folder of files.
+     *
+     * Two doors, both bearer tokens and neither in the URL: a member's
+     * session, or the per-workspace token that the factory holds in its
+     * secrets. `/w/{id}/` lists the tree; `/w/{id}/{path}` answers with one
+     * file's markdown — `plan.md` included, which is what every caller
+     * written before folders is asking for.
+     */
+    if ((seg = m(/^\/w\/([\w-]+)(?:\/(.*))?$/)) && req.method === "GET") {
       const id = seg[1];
       const t = bearer(req);
       const viaToken = (await db.workspaceForReadToken(t)) === id;
       const login = viaToken ? null : await db.loginFor(t);
       if (!viaToken && !(login && (await db.isMember(id, login)))) throw httpError(404, "no such workspace");
+      const want = decodeURIComponent(seg[2] ?? "");
+      if (!want) {
+        const w = await db.workspace(id);
+        return json(res, 200, {
+          name: w.name,
+          files: (await rooms.tree(id)).map((e) => ({ path: e.path, kind: e.kind })),
+        });
+      }
+      const markdown = await rooms.markdownAt(id, want);
+      if (markdown === null) throw httpError(404, `no file called ${want}`);
       res.writeHead(200, { "Content-Type": "text/markdown; charset=utf-8" });
-      res.end(await rooms.markdown(id));
+      res.end(markdown);
       return;
     }
     throw httpError(404, "not found");
   }
 
-  // --- the live document -----------------------------------------------------
+  // --- the live documents ----------------------------------------------------
+  /**
+   * Which workspace a room belongs to, and what kind of document it is.
+   *
+   * A saved document says so itself, and an id that is a workspace's is that
+   * workspace's tree — the one room whose id is not its own, so that a client
+   * can open the tree knowing only the workspace and reach every other room
+   * through it.
+   *
+   * A file made a moment ago has neither: its id was minted by whoever
+   * created it — a round trip in the middle of a tree transaction would be a
+   * file that exists for one person before it exists for anyone — and nothing
+   * has been written to it, so there is no row. `workspace` in the query says
+   * which workspace it belongs to, and the membership check below is what
+   * authorises it. An id that *does* have a row is judged by that row, so
+   * naming your own workspace cannot reach anyone else's document.
+   */
+  const roomOf = async (id, workspaceId) => {
+    const d = await db.doc(id);
+    if (d) return { id, workspaceId: d.workspace_id, kind: d.kind };
+    if (await db.workspace(id)) return { id: treeId(id), workspaceId: id, kind: "tree" };
+    if (!workspaceId || !(await db.workspace(workspaceId))) return null;
+    return { id, workspaceId, kind: "file" };
+  };
+
   const wss = new WebSocketServer({ noServer: true });
   server.on("upgrade", (req, socket, head) => {
     void (async () => {
@@ -324,16 +386,17 @@ export function startServer({
       // shipped ask for; both reach the same room.
       const seg = url.pathname.match(/^(?:\/api)?\/ws\/([\w-]+)$/);
       const login = await db.loginFor(url.searchParams.get("token"));
+      const at = seg && login ? await roomOf(seg[1], url.searchParams.get("workspace")) : null;
       // Membership is checked before the socket exists: a stranger gets a
       // closed connection and nothing about the room, not even its emptiness.
-      if (!seg || !login || !(await db.isMember(seg[1], login))) {
+      // A document is reachable by whoever is in the workspace that owns it.
+      if (!at || !(await db.isMember(at.workspaceId, login))) {
         socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n");
         socket.destroy();
         return;
       }
-      const w = await db.workspace(seg[1]);
       wss.handleUpgrade(req, socket, head, (ws) => {
-        void rooms.join(seg[1], ws, w.review);
+        void rooms.join(at.id, at.workspaceId, at.kind, ws);
       });
     })().catch((e) => {
       console.error(e);

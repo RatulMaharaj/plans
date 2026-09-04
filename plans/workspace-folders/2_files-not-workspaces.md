@@ -1,5 +1,5 @@
 ---
-status: busy
+status: done
 ---
 # The read endpoint and share links reach files, not workspaces
 
@@ -33,16 +33,16 @@ state on the workspace with its author-cannot-approve rule.
 
 ## Implementation guide
 
-- [ ] `server/src/index.js` - `GET /w/:id/` and `GET /w/:id/*path`; share
+- [x] `server/src/index.js` - `GET /w/:id/` and `GET /w/:id/*path`; share
       links carry a path; review routes removed
-- [ ] `server/src/share.html` - render the named file; mermaid via one
+- [x] `server/src/share.html` - render the named file; mermaid via one
       script tag
-- [ ] `server/src/schema.js` + a migration - drop the review columns; share
+- [x] `server/src/db.js` + a migration - drop the review columns; share
       tokens gain a path
-- [ ] `src/App.tsx` - the workspace page head loses the review buttons and
+- [x] `src/App.tsx` - the workspace page head loses the review buttons and
       gains the file's status badge; Share names the open file; copy-out
       revokes the workspace's links
-- [ ] `e2e/workspace.spec.ts` - the read endpoint lists the tree and answers
+- [x] `e2e/workspace.spec.ts` - the read endpoint lists the tree and answers
       a path; a share link opens the named file; the old link shape still
       opens `plan.md`
 
@@ -51,6 +51,11 @@ state on the workspace with its author-cannot-approve rule.
 Roles beyond member, and the factory picking plans out of a workspace,
 which needs the mirror.
 
-## Open questions
+## Open questions, as built
 
-- Does a share link into a folder make sense, showing the tree?
+- **A share link names a file, not a folder.** Publishing a whole folder is a
+  different promise from publishing a document — every file added to it later
+  is published too, by a link nobody looked at again — and the sheet that
+  mints one is opened from the file that is on screen. The listing exists at
+  `GET /w/{id}/`, behind the workspace's own token, for anything that wants
+  the folder rather than a page.

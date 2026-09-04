@@ -16,6 +16,31 @@ import { randomBytes, createHash } from "node:crypto";
 import { migratePg, migratePglite } from "./migrate.js";
 
 /**
+ * What a database written by an older build is missing.
+ *
+ * Every statement is a no-op against a database `SCHEMA` just created, so the
+ * two run in order on every start and neither needs to know which case it is
+ * in. A workspace used to be one document keyed by the workspace's id and a
+ * review state on the row; it is now a tree of documents keyed by their own
+ * ids, and the review gate is gone — `status:` in the file says what it said.
+ * The `docs` rows written by the old build are given ids by `openDb` below,
+ * and the tree naming them is written by the server on first sight.
+ */
+const MIGRATIONS = [
+  "ALTER TABLE docs ADD COLUMN IF NOT EXISTS id TEXT",
+  "ALTER TABLE docs ADD COLUMN IF NOT EXISTS kind TEXT NOT NULL DEFAULT 'file'",
+  // The old primary key was the workspace, which is now one row per file.
+  "ALTER TABLE docs DROP CONSTRAINT IF EXISTS docs_pkey",
+  "CREATE UNIQUE INDEX IF NOT EXISTS docs_by_id ON docs (id)",
+  "CREATE INDEX IF NOT EXISTS docs_by_workspace ON docs (workspace_id)",
+  "ALTER TABLE workspaces DROP COLUMN IF EXISTS review_state",
+  "ALTER TABLE workspaces DROP COLUMN IF EXISTS review_requested_by",
+  "ALTER TABLE workspaces DROP COLUMN IF EXISTS review_decided_by",
+  "ALTER TABLE workspaces DROP COLUMN IF EXISTS review_at",
+  "ALTER TABLE share_tokens ADD COLUMN IF NOT EXISTS path TEXT",
+];
+
+/**
  * How long a share link lives without anyone thinking about it.
  *
  * Revocation answers the leaked link; this answers the *forgotten* one, since
@@ -71,12 +96,6 @@ export async function openDb(url = process.env.DATABASE_URL ?? "") {
     createdBy: w.created_by,
     createdAt: Number(w.created_at),
     members,
-    review: {
-      state: w.review_state,
-      requestedBy: w.review_requested_by,
-      decidedBy: w.review_decided_by,
-      at: w.review_at === null ? null : Number(w.review_at),
-    },
   });
   /** A page as everything above it speaks of one: a source, and a document. */
   const shapePage = (p) => ({
@@ -152,47 +171,33 @@ export async function openDb(url = process.env.DATABASE_URL ?? "") {
     isMember: async (id, login) =>
       !!(await one("SELECT 1 AS ok FROM members WHERE workspace_id = $1 AND login = $2", [id, login])),
 
-    // --- review ------------------------------------------------------------
+    // --- the documents -----------------------------------------------------
     /**
-     * The one rule the clients cannot be trusted with: whoever asked for the
-     * review cannot be the one who grants it.
+     * Which workspace a room belongs to, and whether it is that workspace's
+     * tree or one of its files. This is what the websocket's membership check
+     * is made of: a document is reachable by whoever is in the workspace that
+     * owns it, and by nobody else.
      */
-    async review(id, action, login) {
-      const w = await one("SELECT * FROM workspaces WHERE id = $1", [id]);
-      if (!w) return { error: 404 };
-      const set = (state, requestedBy, decidedBy) =>
-        c.query(
-          `UPDATE workspaces SET review_state = $1, review_requested_by = $2, review_decided_by = $3, review_at = $4
-           WHERE id = $5`,
-          [state, requestedBy, decidedBy, now(), id],
-        );
-      if (action === "request") {
-        await set("requested", login, null);
-      } else if (action === "approve" || action === "changes") {
-        if (w.review_state !== "requested") return { error: 409, reason: "no review is open" };
-        if (w.review_requested_by === login) {
-          return { error: 403, reason: "the author cannot approve their own plan" };
-        }
-        await set(action === "approve" ? "approved" : "changes", w.review_requested_by, login);
-      } else if (action === "clear") {
-        await set("none", null, null);
-      } else {
-        return { error: 400, reason: `unknown action ${action}` };
-      }
-      return { review: (await this.workspace(id)).review };
-    },
-
-    // --- the document ------------------------------------------------------
+    doc: (id) => one("SELECT id, workspace_id, kind FROM docs WHERE id = $1", [id]),
+    /** Every document of a workspace, oldest first; `kind` narrows it. */
+    docsFor: (workspaceId, kind = null) =>
+      c.query(
+        `SELECT id, workspace_id, kind FROM docs
+         WHERE workspace_id = $1 AND ($2::text IS NULL OR kind = $2)
+         ORDER BY updated_at`,
+        [workspaceId, kind],
+      ),
     async loadDoc(id) {
-      const row = await one("SELECT state FROM docs WHERE workspace_id = $1", [id]);
+      const row = await one("SELECT state FROM docs WHERE id = $1", [id]);
       return row ? new Uint8Array(row.state) : null;
     },
-    saveDoc: (id, state) =>
+    saveDoc: (id, workspaceId, kind, state) =>
       c.query(
-        `INSERT INTO docs (workspace_id, state, updated_at) VALUES ($1, $2, $3)
-         ON CONFLICT (workspace_id) DO UPDATE SET state = EXCLUDED.state, updated_at = EXCLUDED.updated_at`,
-        [id, Buffer.from(state), now()],
+        `INSERT INTO docs (id, workspace_id, kind, state, updated_at) VALUES ($1, $2, $3, $4, $5)
+         ON CONFLICT (id) DO UPDATE SET state = EXCLUDED.state, updated_at = EXCLUDED.updated_at`,
+        [id, workspaceId, kind, Buffer.from(state), now()],
       ),
+    dropDoc: (id) => c.query("DELETE FROM docs WHERE id = $1", [id]),
 
     // --- the read endpoint's key ------------------------------------------
     async createReadToken(id, login) {
@@ -219,16 +224,16 @@ export async function openDb(url = process.env.DATABASE_URL ?? "") {
      * should never have the other in it. The reasoning is in
      * plans/sharable-links.md.
      */
-    async createShareToken(workspaceId, login, ttl = SHARE_TTL) {
+    async createShareToken(workspaceId, login, path = "plan.md", ttl = SHARE_TTL) {
       const token = newToken();
       const id = newId();
       const at = now();
       await c.query(
-        `INSERT INTO share_tokens (id, token_hash, workspace_id, created_by, created_at, expires_at)
-         VALUES ($1, $2, $3, $4, $5, $6)`,
-        [id, hashToken(token), workspaceId, login, at, at + ttl],
+        `INSERT INTO share_tokens (id, token_hash, workspace_id, created_by, created_at, expires_at, path)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+        [id, hashToken(token), workspaceId, login, at, at + ttl, path],
       );
-      return { id, token, createdBy: login, createdAt: at, expiresAt: at + ttl };
+      return { id, token, path, createdBy: login, createdAt: at, expiresAt: at + ttl };
     },
     /**
      * The live links, newest first. A revoked or expired one is nobody's
@@ -237,13 +242,14 @@ export async function openDb(url = process.env.DATABASE_URL ?? "") {
      */
     async shareTokens(workspaceId) {
       const rows = await c.query(
-        `SELECT id, created_by, created_at, expires_at FROM share_tokens
+        `SELECT id, created_by, created_at, expires_at, path FROM share_tokens
          WHERE workspace_id = $1 AND revoked_at IS NULL AND expires_at > $2
          ORDER BY created_at DESC`,
         [workspaceId, now()],
       );
       return rows.map((r) => ({
         id: r.id,
+        path: r.path ?? "plan.md",
         createdBy: r.created_by,
         createdAt: Number(r.created_at),
         expiresAt: Number(r.expires_at),
@@ -294,20 +300,20 @@ export async function openDb(url = process.env.DATABASE_URL ?? "") {
      * URL. That is also what lets an old `/share#token` link resolve to a
      * page whether or not anyone has pressed Share.
      */
-    async publishWorkspacePage(workspaceId, name, login) {
-      const live = await this.workspacePage(workspaceId);
+    async publishWorkspacePage(workspaceId, path, name, login) {
+      const live = await this.workspacePage(workspaceId, path);
       if (live) return live;
       const id = randomBytes(24).toString("base64url");
       // The partial unique index on live workspace pages is the arbiter: a
       // second publisher racing this one loses the insert and is handed the
       // page the winner made, so both share the same URL.
       const rows = await c.query(
-        `INSERT INTO pages (id, workspace_id, markdown, name, published_by, published_at)
-         VALUES ($1, $2, '', $3, $4, $5)
+        `INSERT INTO pages (id, workspace_id, path, markdown, name, published_by, published_at)
+         VALUES ($1, $2, $3, '', $4, $5, $6)
          ON CONFLICT DO NOTHING RETURNING id`,
-        [id, workspaceId, name, login, now()],
+        [id, workspaceId, path, name, login, now()],
       );
-      return rows.length > 0 ? this.page(id) : this.workspacePage(workspaceId);
+      return rows.length > 0 ? this.page(id) : this.workspacePage(workspaceId, path);
     },
     /** The same page, with what the file says now. Null if it is not live. */
     async republishPage(id, markdown, name) {
@@ -324,11 +330,21 @@ export async function openDb(url = process.env.DATABASE_URL ?? "") {
       const r = await one("SELECT * FROM pages WHERE id = $1 AND revoked_at IS NULL", [id]);
       return r ? shapePage(r) : null;
     },
-    async workspacePage(workspaceId) {
-      const r = await one("SELECT * FROM pages WHERE workspace_id = $1 AND revoked_at IS NULL", [
-        workspaceId,
-      ]);
+    async workspacePage(workspaceId, path) {
+      const r = await one(
+        "SELECT * FROM pages WHERE workspace_id = $1 AND path = $2 AND revoked_at IS NULL",
+        [workspaceId, path],
+      );
       return r ? shapePage(r) : null;
+    },
+    /** Kill every live link into a workspace at once: what copying out costs. */
+    async revokeShareTokens(workspaceId) {
+      const rows = await c.query(
+        `UPDATE share_tokens SET revoked_at = $1
+         WHERE workspace_id = $2 AND revoked_at IS NULL RETURNING id`,
+        [now(), workspaceId],
+      );
+      return rows.length;
     },
     /** Stop sharing. A timestamp, so the address stays dead for good. */
     async revokePage(id) {
@@ -351,6 +367,17 @@ export async function openDb(url = process.env.DATABASE_URL ?? "") {
           )
         )?.workspace_id ?? null
       );
+      return rows.length;
+    },
+    /** Revoked, expired, or never minted here: all three answer `null`. */
+    async shareTarget(token) {
+      if (!token) return null;
+      const row = await one(
+        `SELECT workspace_id, path FROM share_tokens
+         WHERE token_hash = $1 AND revoked_at IS NULL AND expires_at > $2`,
+        [hashToken(token), now()],
+      );
+      return row ? { workspaceId: row.workspace_id, path: row.path ?? "plan.md" } : null;
     },
   };
 }

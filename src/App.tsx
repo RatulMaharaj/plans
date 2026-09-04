@@ -66,13 +66,18 @@ import {
   configured as workspacesConfigured,
   openRoom,
   token as workspaceToken,
+  tree as wsTree,
+  treeEntries,
+  treeMap,
+  treeRoomId,
   workspace,
   WorkspaceError,
   type Account,
   type Room,
   type Workspace,
+  type WorkspaceEntry,
 } from "./workspace";
-import { Workspaces, reviewLabel, reviewTone } from "./Workspaces";
+import { Workspaces } from "./Workspaces";
 import { shareKey, sharedPages, saveSharedPages, type SharedPages } from "./shared";
 import { ShareSheet } from "./ShareSheet";
 import { SignInSheet } from "./SignInSheet";
@@ -153,17 +158,71 @@ type Tab = { repo: string; path: string; view?: View };
 const MEMORY = "\u0000memory";
 
 /**
- * A workspace document rides the memory rails.
+ * A workspace's files ride the memory rails.
  *
- * Its repository is `MEMORY`, so every write path already refuses it, no tab
- * for it is restored on launch, and closing it is closing it; what marks it
- * as a workspace rather than the release notes is the path, which carries
- * the workspace's id behind a prefix nothing on disk can have. The text the
- * editor shows comes from the room, not from `memoryDocs`.
+ * Their repository is `MEMORY`, so every write path already refuses them, no
+ * tab for one is restored on launch, and closing it is closing it; what marks
+ * a buffer as a workspace's rather than the release notes is the path, which
+ * reads `<prefix><workspace id>/<path in the workspace>` behind a prefix
+ * nothing on disk can have. The text the editor shows comes from that file's
+ * room, not from `memoryDocs`.
+ *
+ * The prefix and the id alone, with no path, is what a workspace is called in
+ * the file tree — where a repository's absolute path stands.
  */
 const WS_PREFIX = "\u0000ws/";
-const wsIdOf = (path: string | null | undefined) =>
-  path && path.startsWith(WS_PREFIX) ? path.slice(WS_PREFIX.length) : null;
+/** The workspace a buffer path or a tree heading belongs to, or null. */
+const wsIdOf = (path: string | null | undefined) => {
+  if (!path || !path.startsWith(WS_PREFIX)) return null;
+  const rest = path.slice(WS_PREFIX.length);
+  const at = rest.indexOf("/");
+  return at === -1 ? rest : rest.slice(0, at);
+};
+/** The path within the workspace; "" for the heading itself. */
+const wsFileOf = (path: string | null | undefined) => {
+  if (!path || !path.startsWith(WS_PREFIX)) return "";
+  const rest = path.slice(WS_PREFIX.length);
+  const at = rest.indexOf("/");
+  return at === -1 ? "" : rest.slice(at + 1);
+};
+/** What a workspace is called in the tree, where a repository's path stands. */
+const wsShelfPath = (id: string) => `${WS_PREFIX}${id}`;
+/** What one of its files is called as a buffer. */
+const wsBufferPath = (id: string, path: string) => `${WS_PREFIX}${id}/${path}`;
+/**
+ * The file every workspace starts with, and the one the read endpoint and
+ * every share link minted before workspaces were folders already name.
+ */
+const FIRST_WS_FILE = "plan.md";
+/**
+ * Wait for a room's first sync, or for a moment, whichever comes first.
+ *
+ * An unsynced room's document is empty for a reason that is not "it is
+ * empty", and acting on that emptiness is how a file that exists is reported
+ * missing. The timeout is because a room that never syncs must not be a
+ * click that never returns: the caller then acts on what it has, which is
+ * exactly what it would have done before.
+ */
+function settled(room: Room, ms = 4000): Promise<void> {
+  if (room.synced) return Promise.resolve();
+  return new Promise((resolve) => {
+    const stop = room.onSynced(() => {
+      clearTimeout(timer);
+      stop();
+      resolve();
+    });
+    const timer = setTimeout(() => {
+      stop();
+      resolve();
+    }, ms);
+  });
+}
+
+/** A file name as a heading: "auth-plan.md" is a document called "Auth plan". */
+const titleOf = (name: string) => {
+  const bare = name.replace(/\.(md|markdown)$/i, "").replace(/[-_]+/g, " ").trim();
+  return bare ? bare[0].toUpperCase() + bare.slice(1) : name;
+};
 
 /**
  * How often the settings file is checked for an outside edit.
@@ -444,12 +503,25 @@ export default function App() {
    * the rail is on screen always — so the picker asks rather than the rail.
    */
   const [wantBranches, setWantBranches] = useState(false);
-  /** Every folder in a repository, for the sheets that place a file. */
+  /**
+   * Every folder in a repository — or in a workspace — for the sheets that
+   * place a file. A workspace's are in its tree rather than on any disk, so
+   * they come from `wsTrees`, which is declared with the rest of the
+   * workspace state below and read here through a ref.
+   */
+  const wsTreesRef = useRef<Record<string, WorkspaceEntry[]>>({});
   const foldersIn = useCallback(
     (repo: string) => {
-      const seen = new Set<string>(emptyDirs[repo] ?? []);
-      for (const f of filesByRepo[repo] ?? []) {
-        const parts = f.relPath.split("/");
+      const id = wsIdOf(repo);
+      const entries = id ? (wsTreesRef.current[id] ?? []) : null;
+      const seen = new Set<string>(
+        entries ? entries.filter((e) => e.kind === "folder").map((e) => e.path) : (emptyDirs[repo] ?? []),
+      );
+      const files = entries
+        ? entries.filter((e) => e.kind === "file").map((e) => e.path)
+        : (filesByRepo[repo] ?? []).map((f) => f.relPath);
+      for (const relPath of files) {
+        const parts = relPath.split("/");
         for (let i = 1; i < parts.length; i++) seen.add(parts.slice(0, i).join("/"));
       }
       return [...seen].sort();
@@ -544,15 +616,27 @@ export default function App() {
   const [account, setAccount] = useState<Account | null>(null);
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
   const [signingIn, setSigningIn] = useState(false);
-  /** Open rooms by workspace id: one socket per document, for as long as its
-   *  tab is open. Not state — a room is a live object, not a render input. */
+  /**
+   * Open rooms by document id: one socket per document, for as long as it is
+   * being looked at. A workspace's tree is the room whose id is the
+   * workspace's own, and every file in it is a room of its own. Not state — a
+   * room is a live object, not a render input.
+   */
   const rooms = useRef(new Map<string, Room>());
+  /** Each workspace's tree, as the sidebar draws it. */
+  const [wsTrees, setWsTrees] = useState<Record<string, WorkspaceEntry[]>>({});
+  wsTreesRef.current = wsTrees;
   /** Bumped when a room's status changes, so the chrome re-reads it. */
   const [, setRoomTick] = useState(0);
   /** A workspace being named, invited to, or copied out. */
   const [wsNaming, setWsNaming] = useState(false);
   const [wsInviting, setWsInviting] = useState<string | null>(null);
-  const [wsCopying, setWsCopying] = useState<null | { id: string; repo: string; dir: string }>(null);
+  const [wsCopying, setWsCopying] = useState<null | {
+    id: string;
+    path: string;
+    repo: string;
+    dir: string;
+  }>(null);
   /** Whether the share sheet is open for whatever the page is showing. */
   const [sharing, setSharing] = useState(false);
   /**
@@ -565,6 +649,8 @@ export default function App() {
   const openNotesRef = useRef<
     ((seen: string | null, running: string) => Promise<void>) | null
   >(null);
+  /** Closing a tab is defined below what a workspace's delete needs it for. */
+  const closeTabRef = useRef<((repo: string, path: string) => Promise<void>) | null>(null);
   /** What is actually running, which is not always what was bundled with. */
   const [appVersion, setAppVersion] = useState(RELEASE_VERSION);
 
@@ -2030,11 +2116,13 @@ export default function App() {
     if (!activePath) return null;
     const ws = wsIdOf(activePath);
     if (ws) {
+      const file = wsFileOf(activePath);
       return {
         kind: "workspace" as const,
-        key: shareKey("workspace", ws),
+        key: shareKey("workspace", `${ws}/${file}`),
         id: ws,
-        name: workspaces.find((w) => w.id === ws)?.name ?? "this document",
+        path: file,
+        name: file.split("/").pop() ?? file,
       };
     }
     if (!activeRepoOrPath) return null;
@@ -2075,7 +2163,7 @@ export default function App() {
     try {
       const page =
         shareTarget.kind === "workspace"
-          ? await workspace.pages.publishWorkspace(shareTarget.id)
+          ? await workspace.pages.publishWorkspace(shareTarget.id, shareTarget.path)
           : await workspace.pages.publishFile(
               shareTarget.repo,
               shareTarget.path,
@@ -3001,10 +3089,26 @@ export default function App() {
     [flush],
   );
 
-  /** Ask the server which rooms are ours; nothing, when signed out. */
+  /**
+   * Ask the server which workspaces are ours, and what is in each one.
+   *
+   * The tree comes over HTTP rather than from a socket: the sidebar draws
+   * every workspace's folders, and a socket into each of them to draw a list
+   * would be a room joined for every workspace you are a member of. A tree
+   * whose room *is* open is left alone — the room is the truth then, and this
+   * answer is already older than it.
+   */
   const refreshWorkspaces = useCallback(async () => {
     try {
-      setWorkspaces(await workspace.list());
+      const list = await workspace.list();
+      setWorkspaces(list);
+      await Promise.all(
+        list.map(async (w) => {
+          if (rooms.current.has(treeRoomId(w.id))) return;
+          const entries = await workspace.tree(w.id).catch(() => null);
+          if (entries) setWsTrees((prev) => ({ ...prev, [w.id]: entries }));
+        }),
+      );
     } catch (e) {
       trace("workspace list failed", { error: String(e) });
     }
@@ -3030,32 +3134,135 @@ export default function App() {
     return () => window.removeEventListener("focus", onFocus);
   }, [account, refreshWorkspaces]);
 
+  /** Who we are to everyone else in a room: a name and a cursor colour. */
+  const presence = useCallback(
+    () =>
+      account
+        ? { name: account.name ?? account.login, color: colorFor(account.login) }
+        : null,
+    [account],
+  );
+
   /**
-   * Open a workspace's document as a buffer.
+   * A workspace's tree room, opened and kept for as long as it is in use.
    *
-   * The room is opened first and kept for as long as the tab is; the buffer
-   * is a memory buffer whose text the editor takes from the room rather than
-   * from what is passed here. The name is the template for an empty document,
-   * which is all a new workspace has.
+   * The tree is one Yjs document per workspace holding path → `{ kind, doc }`,
+   * so creating, renaming, moving and deleting are transactions on a map that
+   * everyone is looking at. Opening it is what makes the sidebar live; before
+   * it is open the sidebar draws what `refreshWorkspaces` last fetched.
    */
-  const openWorkspace = useCallback(
-    async (ws: Workspace) => {
-      if (!account) return;
-      let room = rooms.current.get(ws.id);
+  const openTree = useCallback(
+    async (id: string): Promise<Room | null> => {
+      const open = rooms.current.get(treeRoomId(id));
+      if (open) return open;
+      const me = presence();
+      if (!me) return null;
+      const session = await workspaceToken();
+      if (!session) return null;
+      // Two openings raced the token: the first to finish is the room.
+      const again = rooms.current.get(treeRoomId(id));
+      if (again) return again;
+      const room = openRoom(treeRoomId(id), id, session, me);
+      rooms.current.set(treeRoomId(id), room);
+      const draw = () => setWsTrees((prev) => ({ ...prev, [id]: treeEntries(room) }));
+      treeMap(room).observe(draw);
+      room.onSynced(draw);
+      room.onStatus(() => setRoomTick((n) => n + 1));
+      return room;
+    },
+    [presence],
+  );
+
+  /** Close a workspace's rooms — its tree, and every file of it that is open. */
+  const closeWorkspace = useCallback((id: string) => {
+    for (const [key, room] of [...rooms.current]) {
+      if (room.workspaceId !== id) continue;
+      room.close();
+      rooms.current.delete(key);
+    }
+  }, []);
+
+  /**
+   * Open one file of a workspace as a buffer.
+   *
+   * Its room is opened first and kept for as long as the tab is; the buffer is
+   * a memory buffer whose text the editor takes from the room rather than from
+   * what is passed here. What is passed is the template for a document nobody
+   * has typed into yet, which is all a new file has.
+   *
+   * `named` is for the caller who knows the workspace's name before the list
+   * this reads does — the one that just created it.
+   */
+  const openWorkspaceFile = useCallback(
+    async (id: string, path: string, named?: string) => {
+      const me = presence();
+      if (!me) return;
+      const tree = await openTree(id);
+      if (!tree) return;
+      // An empty tree is "not synced yet" until the server says otherwise, so
+      // a file opened the instant the room was made is not mistaken for one
+      // the workspace does not have.
+      await settled(tree);
+      const entry = treeMap(tree).get(path);
+      if (!entry || entry.kind !== "file" || !entry.doc) {
+        notify(`${path} is not a file in this workspace`, "error");
+        return;
+      }
+      const docId = entry.doc;
+      let room = rooms.current.get(docId);
       track("workspace_opened", { fresh: !room, workspaces: workspaces.length });
       if (!room) {
         const session = await workspaceToken();
         if (!session) return;
-        room = openRoom(ws.id, session, { name: account.name ?? account.login, color: colorFor(account.login) });
-        rooms.current.set(ws.id, room);
-        room.onReview((review) =>
-          setWorkspaces((prev) => prev.map((w) => (w.id === ws.id ? { ...w, review } : w))),
-        );
+        room = openRoom(docId, id, session, me);
+        rooms.current.set(docId, room);
         room.onStatus(() => setRoomTick((n) => n + 1));
+        /*
+         * The file's `status:` belongs in the tree as well as in the file.
+         *
+         * The tree is what draws fifty status dots without opening fifty
+         * rooms, so whoever has a file open keeps its entry honest. The path
+         * is looked up by document id rather than captured, because a rename
+         * moves the key and this must follow it.
+         */
+        const meta = room.doc.getMap<string>("meta");
+        meta.observe(() => {
+          const at = rooms.current.get(treeRoomId(id));
+          if (!at) return;
+          const here = treeEntries(at).find((e) => e.doc === docId);
+          if (!here) return;
+          const split = splitFrontmatter(meta.get("markdown") ?? "");
+          wsTree.setStatus(at, here.path, matterValue(split.matter ?? "", "status"));
+        });
       }
-      await openMemory(`${WS_PREFIX}${ws.id}`, `# ${ws.name}\n`);
+      // A workspace's first file is the workspace: `plan.md` in "Roadmap"
+      // opens headed "Roadmap", which is what the room was called when a
+      // workspace was one document. Anything else is titled after itself.
+      const heading =
+        path === FIRST_WS_FILE
+          ? (named ?? workspaces.find((w) => w.id === id)?.name ?? "Plan")
+          : titleOf(path.split("/").pop() ?? path);
+      await openMemory(wsBufferPath(id, path), `# ${heading}\n`);
     },
-    [account, openMemory, workspaces.length],
+    [presence, openTree, openMemory, notify, workspaces],
+  );
+
+  /**
+   * Reopen a tab, whatever kind of buffer it is.
+   *
+   * Every place that steps between tabs — the strip, ⌃Tab, what fills the gap
+   * when one closes — goes through here, so a workspace file is reopened
+   * through its room rather than from `memoryDocs`, which holds only the
+   * template it was seeded with.
+   */
+  const reopenTab = useCallback(
+    async (repo: string, path: string) => {
+      const id = wsIdOf(path);
+      if (id) return openWorkspaceFile(id, wsFileOf(path));
+      if (repo === MEMORY) return openMemory(path, memoryDocs.current.get(path) ?? "");
+      return openFile(repo, path, false, true);
+    },
+    [openWorkspaceFile, openMemory, openFile],
   );
 
   /** Sign out: the session goes from the server and the keychain, and every
@@ -3070,6 +3277,7 @@ export default function App() {
     track("signed_out");
     setAccount(null);
     setWorkspaces([]);
+    setWsTrees({});
     setTabs((prev) => prev.filter((t) => !wsIdOf(t.path)));
     if (wsIdOf(activePath)) {
       setActivePath(null);
@@ -3078,7 +3286,7 @@ export default function App() {
     }
   }, [account, activePath]);
 
-  /** A new room with only us in it, opened straight away. */
+  /** A new folder with only us in it, opened at its first file. */
   const makeWorkspace = useCallback(
     async (name: string) => {
       setWsNaming(false);
@@ -3086,12 +3294,13 @@ export default function App() {
         const ws = await workspace.create(name);
         track("workspace_created", { workspaces: workspaces.length + 1 });
         setWorkspaces((prev) => [ws, ...prev]);
-        await openWorkspace(ws);
+        setExpanded((prev) => new Set(prev).add(`${wsShelfPath(ws.id)}::`));
+        await openWorkspaceFile(ws.id, FIRST_WS_FILE, ws.name);
       } catch (e) {
         notify(String(e), "error");
       }
     },
-    [openWorkspace, notify, workspaces.length],
+    [openWorkspaceFile, notify, workspaces.length],
   );
 
   const inviteTo = useCallback(
@@ -3109,62 +3318,267 @@ export default function App() {
     [notify],
   );
 
-  /** Request, approve, or ask for changes. The server holds the author rule. */
-  const reviewAct = useCallback(
-    async (id: string, action: "request" | "approve" | "changes" | "clear") => {
-      try {
-        const review = await workspace.review(id, action);
-        track("workspace_review", { action });
-        setWorkspaces((prev) => prev.map((w) => (w.id === id ? { ...w, review } : w)));
-      } catch (e) {
-        notify(String(e), "error");
-      }
-    },
-    [notify],
-  );
-
   /**
-   * The bridge out of the room: the document, as markdown, into a repository.
+   * The bridge out of the room: one file, as markdown, into a repository.
    *
-   * A snapshot, not a move — the room stays, and the file begins an ordinary
-   * git life. The review's outcome goes into the frontmatter on the way out:
-   * an approved plan lands `ready` with `approved-by:` saying who, which is
-   * the point at which history, not the server, is what makes it tamper-
-   * evident.
+   * A snapshot, not a move — the workspace keeps its copy, and the file begins
+   * an ordinary git life. What used to be stamped here was the review's
+   * outcome; the gate is gone and `status:` in the file's own frontmatter is
+   * what says where it stands, so the text goes out exactly as it reads.
+   *
+   * The file's page, if it has one, is stopped on the way out. A page is a
+   * window onto a document that is now somewhere else, and the moment
+   * something is a file in a repository, the repository's own rules about who
+   * reads it are the ones that should be deciding.
    */
   const copyWorkspaceOut = useCallback(
-    async (id: string, repoPath: string, relPath: string) => {
+    async (id: string, path: string, repoPath: string, relPath: string) => {
       setWsCopying(null);
-      const ws = workspaces.find((w) => w.id === id);
-      const room = rooms.current.get(id);
+      const docId = (wsTrees[id] ?? []).find((e) => e.path === path)?.doc;
+      const room = docId ? rooms.current.get(docId) : undefined;
       htmlBridge.collect?.();
-      const text =
+      const out =
         mainWriteMarkdown.current?.() ??
         room?.doc.getMap<string>("meta").get("markdown") ??
         "";
-      let out = text;
-      if (ws?.review.state === "approved" && ws.review.decidedBy) {
-        const split = splitFrontmatter(text);
-        let matter = split.matter ?? "";
-        matter = setMatterValue(matter, "status", "ready");
-        matter = setMatterValue(matter, "approved-by", ws.review.decidedBy);
-        out = joinFrontmatter(matter, split.body, split);
-      }
       try {
         await api.createFile(repoPath, relPath, out);
         localStorage.setItem(
           `plans.newPlanDir::${repoPath}`,
           relPath.includes("/") ? relPath.slice(0, relPath.lastIndexOf("/")) : "",
         );
+        const live = await workspace.pages.forWorkspace(id, path).catch(() => null);
+        if (live) {
+          await workspace.pages.stop(live.id).catch(() => undefined);
+          rememberPage(shareKey("workspace", `${id}/${path}`), null);
+        }
         await refreshFiles();
         await openFile(repoPath, relPath);
         void refreshStatus();
-        notify(`Copied to ${relPath}`);
+        notify(
+          live
+            ? `Copied to ${relPath} — its page is no longer shared`
+            : `Copied to ${relPath}`,
+        );
       } catch (e) {
         notify(String(e), "error");
       }
     },
-    [workspaces, refreshFiles, openFile, refreshStatus, notify],
+    [wsTrees, refreshFiles, openFile, refreshStatus, notify],
+  );
+
+  // --- a workspace's tree, edited the way a repository's is -------------------
+
+  /** The tree room, or a complaint: every edit below goes through this. */
+  const wsRoomFor = useCallback(
+    async (id: string): Promise<Room | null> => {
+      const room = await openTree(id);
+      if (!room) {
+        notify("Sign in to change this workspace", "error");
+        return null;
+      }
+      await settled(room);
+      return room;
+    },
+    [openTree, notify],
+  );
+
+  /** A new file in a workspace folder, opened once the tree carries it. */
+  const wsNewFile = useCallback(
+    (id: string, dir: string) => {
+      setAsking({
+        title: "New file",
+        placeholder: "plan.md",
+        note: dir ? `In ${dir}` : "At the workspace root",
+        confirm: "Create",
+        run: (name) => {
+          const bare = name.replace(/\//g, "-").trim();
+          if (!bare) return;
+          const file = bare.endsWith(".md") || bare.endsWith(".markdown") ? bare : `${bare}.md`;
+          const path = dir ? `${dir}/${file}` : file;
+          void (async () => {
+            const room = await wsRoomFor(id);
+            if (!room) return;
+            if (treeMap(room).has(path)) {
+              notify(`${path} is already here`, "error");
+              return;
+            }
+            wsTree.addFile(room, path);
+            track("workspace_file_created");
+            await openWorkspaceFile(id, path);
+          })();
+        },
+      });
+    },
+    [wsRoomFor, openWorkspaceFile, notify],
+  );
+
+  /**
+   * A folder, which the tree holds in its own right.
+   *
+   * Explicitly, not as a prefix of some file's path the way git does it: a
+   * folder you make and then cannot see until you put something in it is a
+   * folder that vanished, and the tree already draws empty ones for disk.
+   */
+  const wsNewFolder = useCallback(
+    (id: string, dir: string) => {
+      setAsking({
+        title: "New folder",
+        placeholder: "notes",
+        note: dir ? `Inside ${dir}` : "At the workspace root",
+        confirm: "Create",
+        run: (name) => {
+          const clean = name.trim().replace(/^\/+|\/+$/g, "");
+          if (!clean) return;
+          const path = dir ? `${dir}/${clean}` : clean;
+          void (async () => {
+            const room = await wsRoomFor(id);
+            if (!room) return;
+            wsTree.addFolder(room, path);
+            setExpanded((prev) => {
+              const shelf = wsShelfPath(id);
+              const next = new Set(prev).add(`${shelf}::`);
+              const parts = path.split("/");
+              for (let i = 1; i <= parts.length; i++) {
+                next.add(`${shelf}::${parts.slice(0, i).join("/")}`);
+              }
+              return next;
+            });
+          })();
+        },
+      });
+    },
+    [wsRoomFor],
+  );
+
+  /**
+   * Follow a workspace path that has moved: tabs, and the open buffer.
+   *
+   * The document id does not change, so anyone with the file open is still
+   * editing the same document — what changes is what it is called, which is
+   * the tab's name and the buffer's key.
+   */
+  const wsFollow = useCallback(
+    (id: string, from: string, to: string) => {
+      const rewrite = (path: string) => {
+        if (wsIdOf(path) !== id) return path;
+        const file = wsFileOf(path);
+        if (file !== from && !file.startsWith(`${from}/`)) return path;
+        return wsBufferPath(id, `${to}${file.slice(from.length)}`);
+      };
+      setTabs((prev) => prev.map((t) => ({ repo: t.repo, path: rewrite(t.path) })));
+      setActivePath((prev) => (prev ? rewrite(prev) : prev));
+    },
+    [],
+  );
+
+  /**
+   * Follow a move someone else made.
+   *
+   * `wsFollow` runs for the hand that renamed; everyone else learns of it
+   * from the tree. A document keeps its id across a rename, so each open
+   * workspace tab remembers the id it is showing, and when its path is gone
+   * from the tree the id says where the file went.
+   */
+  const wsTabDocs = useRef(new Map<string, string>());
+  useEffect(() => {
+    for (const [id, entries] of Object.entries(wsTrees)) {
+      const byPath = new Map<string, string>();
+      const byDoc = new Map<string, string>();
+      for (const e of entries) {
+        if (e.kind !== "file" || !e.doc) continue;
+        byPath.set(e.path, e.doc);
+        byDoc.set(e.doc, e.path);
+      }
+      for (const t of tabs) {
+        if (wsIdOf(t.path) !== id) continue;
+        const file = wsFileOf(t.path);
+        const doc = byPath.get(file);
+        if (doc) {
+          wsTabDocs.current.set(t.path, doc);
+          continue;
+        }
+        const known = wsTabDocs.current.get(t.path);
+        const now = known ? byDoc.get(known) : undefined;
+        if (!known || !now || now === file) continue;
+        wsTabDocs.current.delete(t.path);
+        wsTabDocs.current.set(wsBufferPath(id, now), known);
+        wsFollow(id, file, now);
+      }
+    }
+  }, [wsTrees, tabs, wsFollow]);
+
+  /** Rename in place: a name, not a path — moving has its own sheet. */
+  const wsRename = useCallback(
+    (id: string, path: string) => {
+      const dir = path.includes("/") ? path.slice(0, path.lastIndexOf("/")) : "";
+      const name = path.split("/").pop() ?? path;
+      setAsking({
+        title: "Rename",
+        placeholder: name,
+        initial: name,
+        note: dir ? `In ${dir}` : "At the workspace root",
+        confirm: "Rename",
+        run: (next) => {
+          const bare = next.replace(/\//g, "-").trim();
+          if (!bare) return;
+          const named = bare.endsWith(".md") || bare.endsWith(".markdown") ? bare : `${bare}.md`;
+          const to = dir ? `${dir}/${named}` : named;
+          if (to === path) return;
+          void (async () => {
+            const room = await wsRoomFor(id);
+            if (!room) return;
+            wsTree.move(room, path, to);
+            wsFollow(id, path, to);
+          })();
+        },
+      });
+    },
+    [wsRoomFor, wsFollow],
+  );
+
+  /** Move a file or a folder into another folder of the same workspace. */
+  const wsMove = useCallback(
+    (id: string, from: string, dir: string) => {
+      const name = from.split("/").pop() ?? from;
+      const to = dir ? `${dir}/${name}` : name;
+      if (to === from) return;
+      void (async () => {
+        const room = await wsRoomFor(id);
+        if (!room) return;
+        wsTree.move(room, from, to);
+        wsFollow(id, from, to);
+      })();
+    },
+    [wsRoomFor, wsFollow],
+  );
+
+  /**
+   * Delete a file, or a folder and everything in it.
+   *
+   * The tree stops naming it and every open tab for it closes. The documents
+   * themselves are left where they are rather than destroyed: a delete that
+   * two people disagreed about should be recoverable, and nothing reaches a
+   * document the tree does not name.
+   */
+  const wsDelete = useCallback(
+    (id: string, path: string, kind: "file" | "folder") => {
+      void (async () => {
+        const what =
+          kind === "folder"
+            ? `Delete ${path} and everything in it? Everyone in this workspace loses it.`
+            : `Delete ${path}? Everyone in this workspace loses it.`;
+        if (!(await confirmed(what, { ok: "Delete" }))) return;
+        const room = await wsRoomFor(id);
+        if (!room) return;
+        wsTree.remove(room, path);
+        const under = (p: string) =>
+          wsIdOf(p) === id &&
+          (wsFileOf(p) === path || wsFileOf(p).startsWith(`${path}/`));
+        for (const t of tabs.filter((x) => under(x.path))) await closeTabRef.current?.(t.repo, t.path);
+      })();
+    },
+    [wsRoomFor, tabs],
   );
 
   /**
@@ -3217,11 +3631,9 @@ export default function App() {
       const i = tabs.findIndex((t) => t.repo === activeRepoPath && t.path === activePath);
       const next = tabs[(i + step + tabs.length) % tabs.length];
       if (!next) return;
-      void (next.repo === MEMORY
-        ? openMemory(next.path, memoryDocs.current.get(next.path) ?? "")
-        : openFile(next.repo, next.path, false, true));
+      void reopenTab(next.repo, next.path);
     },
-    [tabs, activeRepoPath, activePath, openFile, openMemory, paneFocus, split, splitTabs, openSplitFile],
+    [tabs, activeRepoPath, activePath, reopenTab, paneFocus, split, splitTabs, openSplitFile],
   );
 
   /** Close a buffer and step to whichever tab was next to it. */
@@ -3235,11 +3647,19 @@ export default function App() {
       // Closing a memory buffer is how you throw it away; there is nowhere
       // else its text exists.
       if (repo === MEMORY) memoryDocs.current.delete(path);
-      // A workspace's text is on the server; what closes here is the line.
+      /*
+       * A workspace file's text is on the server; what closes here is the
+       * line. The workspace's tree room stays open — the sidebar is drawing
+       * it, and it is one socket for the whole folder rather than one per
+       * file — until the last of its files is closed and its heading is shut.
+       */
       const wsId = wsIdOf(path);
       if (wsId) {
-        rooms.current.get(wsId)?.close();
-        rooms.current.delete(wsId);
+        const docId = (wsTrees[wsId] ?? []).find((e) => e.path === wsFileOf(path))?.doc;
+        if (docId) {
+          rooms.current.get(docId)?.close();
+          rooms.current.delete(docId);
+        }
       }
       if (repo !== activeRepoPath || path !== activePath) return;
       const next = rest[Math.min(i, rest.length - 1)];
@@ -3247,17 +3667,16 @@ export default function App() {
       setMatterOpen(false);
       if (next) {
         // Direct: this is the main pane's own bookkeeping, wherever focus is.
-        await (next.repo === MEMORY
-          ? openMemory(next.path, memoryDocs.current.get(next.path) ?? "")
-          : openFile(next.repo, next.path, false, true));
+        await reopenTab(next.repo, next.path);
       } else {
         setActivePath(null);
         setContent("");
         setMatter(null);
       }
     },
-    [tabs, flush, activeRepoPath, activePath, openFile, openMemory],
+    [tabs, flush, activeRepoPath, activePath, reopenTab, wsTrees],
   );
+  closeTabRef.current = closeTab;
 
   /**
    * A file dropped on the editor's far edge — the pointing way to ⌘\.
@@ -3845,7 +4264,6 @@ export default function App() {
   );
   const deleteOne = useCallback((r: string, f: string) => void deleteFile(r, f), [deleteFile]);
   const deleteDirOne = useCallback((r: string, f: string) => void deleteDir(r, f), [deleteDir]);
-  const openOne = useCallback((r: string, f: string) => void openFile(r, f), [openFile]);
 
   /**
    * Rename, which is also how a file moves: the answer is a path, so typing a
@@ -4557,6 +4975,154 @@ export default function App() {
     return out;
   }, [filesByRepo, settings.showCompleted]);
 
+  /*
+   * The shelf the tree draws: the repositories, and then the workspaces.
+   *
+   * A workspace stands where a repository's absolute path stands, holds a
+   * `PlanFile` per file in its tree, and declares its folders the way a
+   * repository declares the ones on disk that have no markdown in them yet.
+   * Everything below this is the tree's ordinary machinery, working on a
+   * folder that happens to live on a server. `shownRepos` itself is left
+   * alone: the settings page, the name sheets and the copy-out sheet all mean
+   * "somewhere on disk" by it, and they are all still right.
+   */
+  const wsShelf = useMemo(
+    () =>
+      workspaces.map((w) => ({
+        path: wsShelfPath(w.id),
+        name: w.name,
+        branch: "workspace",
+        planDirs: [],
+        workspace: true as const,
+      })),
+    [workspaces],
+  );
+  const wsShelfPaths = useMemo(() => new Set(wsShelf.map((s) => s.path)), [wsShelf]);
+  const shelf = useMemo(() => [...shownRepos, ...wsShelf], [shownRepos, wsShelf]);
+  const shelfFiles = useMemo(() => {
+    const out: Record<string, PlanFile[]> = { ...shownByRepo };
+    for (const w of workspaces) {
+      out[wsShelfPath(w.id)] = (wsTrees[w.id] ?? [])
+        .filter((e) => e.kind === "file")
+        .map((e) => ({
+          relPath: e.path,
+          name: e.path.split("/").pop() ?? e.path,
+          dir: e.path.includes("/") ? e.path.slice(0, e.path.lastIndexOf("/")) : "",
+          // Nothing on disk, so nothing has a modification time; the tree only
+          // uses it to notice a poll that changed nothing.
+          modified: 0,
+          status: e.status ?? null,
+        }));
+    }
+    return out;
+  }, [shownByRepo, workspaces, wsTrees]);
+  const shelfDirs = useMemo(() => {
+    const out: Record<string, string[]> = { ...treeDirs };
+    for (const w of workspaces) {
+      out[wsShelfPath(w.id)] = (wsTrees[w.id] ?? [])
+        .filter((e) => e.kind === "folder")
+        .map((e) => e.path);
+    }
+    return out;
+  }, [treeDirs, workspaces, wsTrees]);
+
+  /*
+   * One set of handlers for both kinds of heading.
+   *
+   * The tree asks the same questions of a workspace as of a repository — open
+   * this, make a file here, rename that — and each of these answers with the
+   * server or with the disk depending on which heading the row is under.
+   * Stable, because the tree is memoised and a new closure defeats that.
+   */
+  const shelfOpen = useCallback(
+    (repo: string, path: string) => {
+      const id = wsIdOf(repo);
+      if (id) void openWorkspaceFile(id, path);
+      else void openFile(repo, path);
+    },
+    [openWorkspaceFile, openFile],
+  );
+  const shelfNewFile = useCallback(
+    (repo: string, dir: string, templateFile?: string) => {
+      const id = wsIdOf(repo);
+      if (id) wsNewFile(id, dir);
+      else newFileIn(repo, dir, templateFile);
+    },
+    [wsNewFile, newFileIn],
+  );
+  const shelfNewFolder = useCallback(
+    (repo: string, dir: string) => {
+      const id = wsIdOf(repo);
+      if (id) wsNewFolder(id, dir);
+      else newFolderIn(repo, dir);
+    },
+    [wsNewFolder, newFolderIn],
+  );
+  const shelfRename = useCallback(
+    (repo: string, path: string) => {
+      const id = wsIdOf(repo);
+      if (id) wsRename(id, path);
+      else renameFile(repo, path);
+    },
+    [wsRename, renameFile],
+  );
+  const shelfMove = useCallback(
+    (repo: string, path: string, dir: string) => {
+      const id = wsIdOf(repo);
+      if (id) wsMove(id, path, dir);
+      else moveTo(repo, path, dir);
+    },
+    [wsMove, moveTo],
+  );
+  const shelfDelete = useCallback(
+    (repo: string, path: string) => {
+      const id = wsIdOf(repo);
+      if (id) wsDelete(id, path, "file");
+      else deleteOne(repo, path);
+    },
+    [wsDelete, deleteOne],
+  );
+  const shelfDeleteDir = useCallback(
+    (repo: string, path: string) => {
+      const id = wsIdOf(repo);
+      if (id) wsDelete(id, path, "folder");
+      else deleteDirOne(repo, path);
+    },
+    [wsDelete, deleteDirOne],
+  );
+  /**
+   * Opening a workspace's heading is what puts a socket into its tree, and
+   * shutting it again is what takes it out — as long as nothing of that
+   * workspace is still open. One socket per folder you are looking at, rather
+   * than one per workspace you happen to be a member of.
+   */
+  const shelfToggle = useCallback(
+    (key: string) => {
+      const repo = key.slice(0, key.lastIndexOf("::"));
+      const id = wsIdOf(repo);
+      if (id && key.endsWith("::")) {
+        if (!expanded.has(key)) void openTree(id);
+        else if (!tabs.some((t) => wsIdOf(t.path) === id)) closeWorkspace(id);
+      }
+      toggleNode(key);
+    },
+    [expanded, tabs, openTree, closeWorkspace, toggleNode],
+  );
+
+  /** The room behind the open buffer, when the open buffer is a workspace's. */
+  const activeWsRoom = useMemo(() => {
+    const id = wsIdOf(activePath);
+    if (!id) return undefined;
+    // By path, or — for the beat between someone else renaming the file and
+    // the buffer's path following — by the document the tab was showing.
+    // Without that beat covered the editor remounts twice and drops focus.
+    const docId =
+      (wsTrees[id] ?? []).find((e) => e.path === wsFileOf(activePath))?.doc ??
+      (activePath ? wsTabDocs.current.get(activePath) : undefined);
+    return docId ? rooms.current.get(docId) : undefined;
+    // `roomTick` is the signal that a room's line changed; the map is a ref.
+  }, [activePath, wsTrees]);
+
   const allFiles = useMemo(
     () =>
       shownRepos.flatMap((r) =>
@@ -4826,14 +5392,21 @@ export default function App() {
 
           <div className="entries">
             <FileTree
-              repos={shownRepos}
-              filesByRepo={shownByRepo}
+              repos={shelf}
+              workspaces={wsShelfPaths}
+              filesByRepo={shelfFiles}
               marks={liveMarks}
-              activeRepoPath={settingsOpen ? null : activeRepoPath}
-              activePath={activePath}
+              activeRepoPath={
+                settingsOpen
+                  ? null
+                  : wsIdOf(activePath)
+                    ? wsShelfPath(wsIdOf(activePath)!)
+                    : activeRepoPath
+              }
+              activePath={wsIdOf(activePath) ? wsFileOf(activePath) : activePath}
               expanded={expanded}
-              onToggle={toggleNode}
-              onOpen={openOne}
+              onToggle={shelfToggle}
+              onOpen={shelfOpen}
               onForgetRepo={forgetRepo}
               onRenameRepo={renameRepo}
               onReorderRepo={reorderRepo}
@@ -4843,19 +5416,19 @@ export default function App() {
               onStage={stageOne}
               onUnstage={unstageOne}
               onDiscard={discardOne}
-              onDelete={deleteOne}
-              onDeleteDir={deleteDirOne}
+              onDelete={shelfDelete}
+              onDeleteDir={shelfDeleteDir}
               onReveal={revealOne}
               onTerminal={terminalOne}
               onOpenSplit={openInSplit}
               onHandOff={chat === false ? undefined : (repo, path, kind) => void handOff(kind, repo, path)}
-              onNewFile={newFileIn}
+              onNewFile={shelfNewFile}
               templates={templates}
-              onNewFolder={newFolderIn}
-              onMove={moveTo}
+              onNewFolder={shelfNewFolder}
+              onMove={shelfMove}
               onCopy={(from, path, toRepo, dir) => void copyTo(from, path, toRepo, dir)}
-              emptyDirs={treeDirs}
-              onRename={renameFile}
+              emptyDirs={shelfDirs}
+              onRename={shelfRename}
               onMoveTo={(repo, path) => setMoving({ repo, path })}
               onSetOpen={setOpen}
             />
@@ -4864,10 +5437,7 @@ export default function App() {
           {workspacesConfigured() && (
             <Workspaces
               account={account}
-              workspaces={workspaces}
-              activeId={settingsOpen ? null : wsIdOf(activePath)}
-              live={new Set([...rooms.current].filter(([, r]) => r.status === "open").map(([id]) => id))}
-              onOpen={(ws) => void openWorkspace(ws)}
+              count={workspaces.length}
               onNew={() => setWsNaming(true)}
               onSignIn={() => setSigningIn(true)}
             />
@@ -4963,9 +5533,13 @@ export default function App() {
                   {tabs.map((t) => {
                     const on = t.repo === activeRepoPath && t.path === activePath;
                     const mark = liveMarks.get(`${t.repo}::${t.path}`) ?? "clean";
-                    const name = wsIdOf(t.path)
-                      ? (workspaces.find((w) => w.id === wsIdOf(t.path))?.name ?? "Workspace")
-                      : (t.path.split("/").pop() ?? t.path);
+                    // A workspace file reads as its own name, like any other;
+                    // which workspace it is in is the tooltip's business.
+                    const shown = wsIdOf(t.path) ? wsFileOf(t.path) : t.path;
+                    const name = shown.split("/").pop() ?? shown;
+                    const where = wsIdOf(t.path)
+                      ? `${workspaces.find((w) => w.id === wsIdOf(t.path))?.name ?? "workspace"} / ${shown}`
+                      : t.path;
                     // Changed on disk since we read it. Says so rather than
                     // acting: opening the tab re-reads the file anyway.
                     const moved = outside.has(`${t.repo}::${t.path}`);
@@ -4980,12 +5554,8 @@ export default function App() {
                           className="tab-name"
                           role="tab"
                           aria-selected={on}
-                          title={moved ? `${t.path} — changed on disk` : t.path}
-                          onClick={() =>
-                            void (t.repo === MEMORY
-                              ? openMemory(t.path, memoryDocs.current.get(t.path) ?? "")
-                              : openFile(t.repo, t.path))
-                          }
+                          title={moved ? `${t.path} — changed on disk` : where}
+                          onClick={() => void reopenTab(t.repo, t.path)}
                           onAuxClick={(e) => {
                             if (e.button === 1) void closeTab(t.repo, t.path);
                           }}
@@ -5021,7 +5591,7 @@ export default function App() {
               <div className={`page-head ${zenOn ? "hushed" : ""}`}>
                 <span className="page-path">
                   {wsIdOf(activePath)
-                    ? `workspace · ${workspaces.find((w) => w.id === wsIdOf(activePath))?.name ?? ""}`
+                    ? `${workspaces.find((w) => w.id === wsIdOf(activePath))?.name ?? "workspace"} · ${wsFileOf(activePath)}`
                     : (activePath ?? "")}
                 </span>
                 {activePath && (
@@ -5046,18 +5616,20 @@ export default function App() {
                         {sharedPageId ? "Shared" : "Share…"}
                       </button>
                     )}
-                    {/* A workspace's chrome: where the review stands, the
-                        moves available to this person, and the way out. The
-                        author rule is the server's; the buttons only avoid
-                        offering what it will refuse. */}
+                    {/* A workspace file's chrome: where the line is, where the
+                        file says it stands, and the moves out of the room.
+                        There is no review gate any more — `status:` in the
+                        file is what it used to say, and it travels with the
+                        file wherever the file goes. */}
                     {wsIdOf(activePath) &&
                       (() => {
                         const id = wsIdOf(activePath)!;
+                        const file = wsFileOf(activePath);
                         const ws = workspaces.find((w) => w.id === id);
-                        const room = rooms.current.get(id);
                         if (!ws) return null;
-                        const r = ws.review;
-                        const mine = r.requestedBy === account?.login;
+                        const docId = (wsTrees[id] ?? []).find((e) => e.path === file)?.doc;
+                        const room = docId ? rooms.current.get(docId) : undefined;
+                        const status = (wsTrees[id] ?? []).find((e) => e.path === file)?.status;
                         return (
                           <>
                             {room && room.status !== "open" && (
@@ -5065,43 +5637,15 @@ export default function App() {
                                 {room.status === "connecting" ? "connecting…" : "offline"}
                               </span>
                             )}
-                            {r.state !== "none" && (
+                            {status && (
                               <span
-                                className={`status-badge tone-${reviewTone(r.state)}`}
-                                title={
-                                  r.state === "requested"
-                                    ? `Review requested by ${r.requestedBy}`
-                                    : `${reviewLabel(r.state)} by ${r.decidedBy}`
-                                }
-                                data-testid="review-state"
+                                className={`status-badge tone-${statusTone(status)}`}
+                                title="status: from this file's frontmatter"
+                                data-testid="ws-status"
                               >
-                                {reviewLabel(r.state)}
+                                {status}
                               </span>
                             )}
-                            {r.state === "none" || r.state === "changes" ? (
-                              <button className="rail-btn" onClick={() => void reviewAct(id, "request")}>
-                                Request review
-                              </button>
-                            ) : r.state === "requested" ? (
-                              <>
-                                <button
-                                  className="rail-btn"
-                                  onClick={() => void reviewAct(id, "approve")}
-                                  disabled={mine}
-                                  title={mine ? "You asked for this review; someone else approves it" : "Approve this plan"}
-                                >
-                                  Approve
-                                </button>
-                                <button
-                                  className="rail-btn"
-                                  onClick={() => void reviewAct(id, "changes")}
-                                  disabled={mine}
-                                  title={mine ? "You asked for this review" : "Send it back"}
-                                >
-                                  Request changes
-                                </button>
-                              </>
-                            ) : null}
                             <button
                               className="rail-btn"
                               onClick={() => setWsInviting(id)}
@@ -5115,11 +5659,12 @@ export default function App() {
                                 onClick={() =>
                                   setWsCopying({
                                     id,
+                                    path: file,
                                     repo: activeRepo?.path ?? shownRepos[0].path,
                                     dir: lastPlanDir(activeRepo?.path ?? shownRepos[0].path) ?? "",
                                   })
                                 }
-                                title="Write this document into a repository as a file"
+                                title="Write this file into a repository, where git can see it"
                               >
                                 Copy to repository…
                               </button>
@@ -5286,11 +5831,12 @@ export default function App() {
                     }}
                   >
                     <Editor
-                      /* A workspace is its own editor: the collab plugin is
-                         bound at construction, and a different room is a
-                         different document rather than a swap. */
-                      key={wsIdOf(activePath) ?? "file"}
-                      room={wsIdOf(activePath) ? rooms.current.get(wsIdOf(activePath)!) : undefined}
+                      /* A workspace file is its own editor: the collab plugin
+                         is bound at construction, and a different room is a
+                         different document rather than a swap. One editor per
+                         file room, keyed by the document the room carries. */
+                      key={activeWsRoom?.id ?? "file"}
+                      room={activeWsRoom}
                       markdownRef={mainWriteMarkdown}
                       docKey={docKey}
                       repo={activeRepo?.path ?? ""}
@@ -5593,7 +6139,7 @@ export default function App() {
           onMove={(dir) => {
             const at = moving;
             setMoving(null);
-            moveTo(at.repo, at.path, dir);
+            shelfMove(at.repo, at.path, dir);
           }}
         />
       )}
@@ -5615,7 +6161,7 @@ export default function App() {
         <TextPrompt
           title="New workspace"
           placeholder="What is being argued"
-          note="A room with you in it. Invite others from its page."
+          note="A folder of files with you in it. Invite others from its page."
           confirm="Create"
           onCancel={() => setWsNaming(false)}
           onSubmit={(name) => void makeWorkspace(name)}
@@ -5649,7 +6195,7 @@ export default function App() {
         <NameSheet
           label="Copy to repository"
           confirm="Copy"
-          initial={workspaces.find((w) => w.id === wsCopying.id)?.name ?? ""}
+          initial={titleOf(wsCopying.path.split("/").pop() ?? wsCopying.path)}
           nameOf={(title) => `${slugOf(title)}.md`}
           dir={wsCopying.dir}
           repo={wsCopying.repo}
@@ -5662,7 +6208,9 @@ export default function App() {
           })()}
           onDirChange={(dir) => setWsCopying({ ...wsCopying, dir })}
           onCancel={() => setWsCopying(null)}
-          onCreate={(relPath) => void copyWorkspaceOut(wsCopying.id, wsCopying.repo, relPath)}
+          onCreate={(relPath) =>
+            void copyWorkspaceOut(wsCopying.id, wsCopying.path, wsCopying.repo, relPath)
+          }
         />
       )}
 
