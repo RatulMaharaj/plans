@@ -1,5 +1,63 @@
 # looped-plans
 
+## 0.11.0
+
+### Minor Changes
+
+- 96ab088: The agent chat is back in a workspace. Each workspace gets a scratch folder
+  under the app's cache directory, written from the shared documents and kept
+  current as people type, and the agent is started there. Its reads and writes
+  under that folder are answered by the app from the shared document rather
+  than the disk: a read is what was typed a moment ago, and a write lands in
+  everyone's editor - through the one on screen, or through an editor nobody
+  sees for a file nobody has open. A file the agent writes that the workspace
+  does not have yet is created in the tree, folders and all.
+- 8006793: Looped Plans builds for Linux. The release carries an x86_64 AppImage and a
+  `.deb` beside the macOS and Windows bundles, from the same tag and with the
+  same update feed, so an installed AppImage updates itself the way a Mac copy
+  does. It was aimed at Arch under Hyprland: on Wayland with the NVIDIA driver
+  the app turns WebKitGTK's DMA-BUF renderer off before the window opens
+  (`PLANS_WEBKIT_SAFE=1` forces it), the workspace sign-in falls back to a
+  0600 file when there is no keyring daemon to hold it, "Open in terminal"
+  honours `$TERMINAL` and knows ghostty, alacritty, kitty, foot and wezterm,
+  the `plans` command installs to `~/.local/bin`, and the monospace stacks
+  carry JetBrains Mono and DejaVu Sans Mono. An AUR `PKGBUILD` template lives
+  under `packaging/aur/`. Flatpak, Snap and ARM are not in this release.
+- 631f649: Looped Plans builds for Windows. The release carries an x64 installer beside
+  the macOS one, from the same tag and with the same update feed, so a Windows
+  copy updates the way a Mac one does. On Windows the agents resolve through
+  PATHEXT the way the shell would, git and npm run without a console window
+  flashing, "Open in terminal" opens Windows Terminal where it is installed,
+  and shortcuts are spelled Ctrl+Shift+O rather than ⌘⇧O. The `plans` command
+  line and tmux sessions stay macOS-only for now, and the installer is not yet
+  code-signed, so SmartScreen asks once. Repositories under WSL (`\\wsl$\...`)
+  are not supported in this release.
+
+### Patch Changes
+
+- 118e80d: A round of fixes: the repositories you open are kept in `settings.json`, so
+  the installed app and one run from source show the same list; Source edits a
+  workspace file, through the shared document; a repository file dropped on a
+  workspace becomes a shared copy of it; the Git button and panel stay out of
+  a workspace; a diff no longer adds a third button to the view switch; the
+  faces sit beside the file's name; and the agent adapter is pinned to a
+  version that knows this month's models.
+- 3452689: The model picker says which model an alias means today — "Fable 5.1", not
+  "Fable" — so the day an alias moves to a new model, it shows. The agent
+  accepts only the aliases it lists, so exact ids are not a choice the app can
+  send; naming the resolution is the honest version of pinning.
+- 64ca83f: A new chat shows the model and effort pickers before it has said anything,
+  drawn from what the agent advertised last time, and a choice made there is
+  the one its session starts with — the first message goes to the model you
+  picked, not to the default and then to yours.
+- d4a5563: A comment in a workspace is signed with your account's login, the handle
+  the server knows you by, and the card draws each turn with the face and
+  colour that person's cursor wears. Typing `@` in the comment or reply field
+  completes to a member. A repository file keeps signing with git's name, and
+  the new-comment prompt says which of the two will sign. On a shared page the
+  handles keep their colours and there are no faces, since the page never
+  carries the member list.
+
 ## 0.10.0
 
 ### Minor Changes
