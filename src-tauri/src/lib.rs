@@ -33,8 +33,10 @@ fn safe_join(repo: &str, rel: &str) -> R<PathBuf> {
 /// a prompt can turn into a second command. Failure carries the process's own
 /// stderr, because that is always more useful than anything we would invent.
 pub(crate) fn exec(bin: &str, args: &[&str]) -> R<String> {
-    let out = Command::new(bin)
-        .args(args)
+    let mut cmd = Command::new(bin);
+    cmd.args(args);
+    no_console(&mut cmd);
+    let out = cmd
         .output()
         .map_err(|e| format!("failed to run {bin}: {e}"))?;
     if out.status.success() {
@@ -48,6 +50,32 @@ pub(crate) fn exec(bin: &str, args: &[&str]) -> R<String> {
         })
     }
 }
+
+/// Keep a child process from opening a console window of its own.
+///
+/// On Windows a GUI-subsystem app that spawns a console-subsystem child —
+/// git.exe, cmd.exe, npm.cmd — gets a console window popped for each one.
+/// The app polls git every few seconds, so without this flag it strobes.
+/// One function, applied at the few places that build a `Command`, rather
+/// than a `#[cfg]` at each; elsewhere it does nothing.
+pub(crate) fn no_console(cmd: &mut Command) {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = cmd;
+    }
+}
+
+/// `CREATE_NO_WINDOW` and `CREATE_NEW_CONSOLE` from `processthreadsapi.h`.
+/// Two constants are not worth a crate.
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+#[cfg(windows)]
+const CREATE_NEW_CONSOLE: u32 = 0x0000_0010;
 
 fn git(repo: &str, args: &[&str]) -> R<String> {
     let mut argv = vec!["-C", repo];
@@ -1178,11 +1206,25 @@ fn open_in_terminal(repo: String) -> R<()> {
     }
     #[cfg(target_os = "windows")]
     {
-        exec(
-            "cmd",
-            &["/C", "start", "cmd", "/K", &format!("cd /d {path}")],
-        )
-        .map(|_| ())
+        // Windows Terminal first, where it is installed; a plain console
+        // otherwise. Neither gets the path as text: `wt` takes it as its own
+        // argument and `cmd` inherits it as a working directory, so a space
+        // or an `&` in `C:\Users\First Last\` never meets a shell. Spawned
+        // rather than run to completion — a terminal is expected to outlive
+        // this call — and the fallback asks for a console of its own, since
+        // this process has none to hand down.
+        use std::os::windows::process::CommandExt;
+        let wt = Command::new("wt").args(["-d", path.as_ref()]).spawn();
+        if wt.is_ok() {
+            return Ok(());
+        }
+        Command::new("cmd")
+            .arg("/K")
+            .current_dir(path.as_ref())
+            .creation_flags(CREATE_NEW_CONSOLE)
+            .spawn()
+            .map(|_| ())
+            .map_err(|e| format!("failed to open a terminal: {e}"))
     }
 }
 
@@ -1230,8 +1272,18 @@ const BIN_DIRS: [&str; 2] = ["/opt/homebrew/bin", "/usr/local/bin"];
 /// The version is in the script's own comment, so a script left by an older
 /// copy of the app reads as installed-but-stale rather than as absent. The
 /// caller can then offer "Update" instead of claiming nothing is there.
+///
+/// On Windows there is nothing to find: the script is a `#!/bin/sh` file in
+/// Homebrew's bin, and every line of that is macOS. The honest Windows shape
+/// — a `plans.cmd` in a per-user directory, put on the PATH through the
+/// registry — is a different mechanism with its own failure modes, and it
+/// gets its own plan. Until then Settings hides the control, the way the
+/// tmux feature hides on a machine without tmux.
 #[tauri::command]
 fn cli_status() -> Option<CliStatus> {
+    if cfg!(windows) {
+        return None;
+    }
     for dir in BIN_DIRS {
         let dest = Path::new(dir).join("plans");
         if let Ok(text) = std::fs::read_to_string(&dest) {
@@ -1250,6 +1302,9 @@ fn cli_status() -> Option<CliStatus> {
 /// caught by the single-instance plugin and forwarded to the open window.
 #[tauri::command]
 fn install_cli() -> R<String> {
+    if cfg!(windows) {
+        return Err("the plans command is not available on Windows yet".into());
+    }
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
     let script = format!(
         "#!/bin/sh\n# Installed by Looped Plans ({}). Opens a repository in the app.\n\"{}\" \"$@\" >/dev/null 2>&1 &\n",

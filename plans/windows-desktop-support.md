@@ -1,7 +1,16 @@
 ---
-status: ready
+status: done
 ---
 # Windows desktop support
+
+> Everything that builds on a Mac is built and checked here: the Rust
+> compiles for both hosts, the workflow parses, the specs pass. What no CI
+> covers is the binary itself running on Windows, so one pass on a real
+> machine is still owed before the first Windows release is published; the
+> checklist for it is in `RELEASES.md`, under *Windows*. Also of note: the
+> Rust could only be cross-checked in part from macOS, because `ring` (pulled
+> in by the updater plugin) needs Windows C headers to build. The Windows-only
+> blocks were type-checked for `x86_64-pc-windows-msvc` on their own.
 
 The tempting version of this plan is one line: add a Windows job to the
 release workflow. Tauri builds for Windows, and the codebase has clearly been
@@ -178,51 +187,52 @@ actually offered. Small, but it is the first thing a Windows user meets.
 
 ## Open questions
 
-- **x64 only, or ARM too?** Windows-on-ARM is real now (every Snapdragon
-  laptop), and `latest.json` keys platforms by arch. x64 first — the runner
-  exists, the audience mostly is — but the decision shapes whether the build
-  job grows a matrix later. The macOS answer was a universal binary; Windows
-  has no equivalent single-download trick.
-  - For now just x64
-- **How does the ACP spawn behave with a `.cmd` shim?** `AcpAgent::new(cfg)`
-  gets an absolute program (`session.rs:70`); whether the underlying spawn
-  tolerates a `.cmd` (which needs `cmd /C`) or requires the `.exe` shim
-  decides how much of `resolve` needs to know about extensions. Answerable
-  only on a real machine.
+- ~~x64 only, or ARM too?~~ Decided: x64 only. The runner exists and the
+  audience mostly is; a second target is a second job and a second feed
+  entry when someone needs it.
+- ~~How does the ACP spawn behave with a `.cmd` shim?~~ Decided from the
+  code rather than a machine: the SDK spawns through `std::process::Command`,
+  which runs a `.bat`/`.cmd` through `cmd.exe` on its own when it sees the
+  extension, so either shim works as `argv[0]`. `resolve` prefers the `.exe`
+  anyway, because it spawns without a `cmd.exe` in between. The SDK already
+  sets `CREATE_NO_WINDOW` on the agent process, so nothing was owed there.
+  Confirming the whole path on a real machine is on the smoke checklist.
 - **Long paths.** `safe_join`-based file operations may meet `MAX_PATH` on
   deep repositories; Rust's std handles `\\?\` prefixes in most but not all
-  APIs, and `canonicalize` (`lib.rs:1210`) returns the prefixed form, which
-  then travels into the frontend as a display string. Does a `\\?\C:\...`
-  path ever surface in the UI, and does git accept it back?
-- **Where does e2e stand?** Playwright drives the web build against
-  `e2e/fake-backend.ts`, so nothing Windows-shaped is covered by CI. Is a
-  manual smoke checklist enough for v1 (probably), and what is on it —
-  agents, git polling, the updater, drag-drop?
-  - I think that’s okay for now
-- **WSL repositories.** A Windows user's repos often live in
-  `\\wsl$\Ubuntu\home\...`. UNC paths through `safe_join`, git, and the
-  file watcher are a distinct project; deciding *not* to support them in v1
-  should be a sentence in the release notes, not a surprise.
-  - Yeah no support in v1 is fine I think?
+  APIs, and `canonicalize` returns the prefixed form, which then travels into
+  the frontend as a display string. Does a `\\?\C:\...` path ever surface
+  in the UI, and does git accept it back? Left open; it is the kind of thing
+  the smoke pass will show or not.
+  - Answer:
+- ~~Where does e2e stand?~~ Decided: a manual smoke checklist is enough for
+  v1. It lives in `RELEASES.md`: install, open a repo, an agent turn, the
+  terminal, an update.
+- ~~WSL repositories.~~ Decided: not in v1. UNC paths through `safe_join`,
+  git and the file watcher are a distinct project, and the release notes say
+  so.
 
 ## Next
 
-- [ ] Portable `resolve`: `std::env::split_paths`, PATHEXT candidates,
-  `login_path` → `None` on Windows (`discover.rs:26-59`)
-- [ ] `CREATE_NO_WINDOW` on `exec` (`lib.rs:36`), `agent_install`
-  (`discover.rs:310`), and the agent spawn if reachable
-- [ ] Quote the path in the Windows terminal branch (`lib.rs:1183`); try
-  `wt` first
-- [ ] Hide the `plans` CLI install on Windows instead of failing it
-  (`lib.rs:1234`, `lib.rs:1252`)
-- [ ] Audit the meta+ctrl binding (`App.tsx:4902`) and the font fallback
-  stack on Windows
-- [ ] `build-windows` job in `release.yml`: NSIS target, updater signing via
-  the existing key, artifacts uploaded beside the macOS ones
-- [ ] `verify-windows`: `.exe` + `.sig` present, `latest.json` gained a
-  `windows-x86_64` entry; keep the macOS verify untouched
+- [x] Portable `resolve`: `std::env::split_paths`, PATHEXT candidates,
+      `login_path` → `None` on Windows (`discover.rs`)
+- [x] `CREATE_NO_WINDOW` on `exec` and `agent_install` through one
+      `no_console` helper (`lib.rs`); the agent spawn already had it in the
+      SDK
+- [x] The Windows terminal branch tries `wt -d` first and falls back to
+      `cmd /K` with the repository as its working directory, so the path is
+      never shell text at all (`lib.rs`)
+- [x] Hide the `plans` CLI install on Windows instead of failing it
+      (`lib.rs`, `SettingsPage.tsx`)
+- [x] Audit the meta+ctrl binding and the font fallback stack on Windows:
+      the spare modifier is Alt there, the sheet spells keys the Windows way,
+      and the mono stacks carry Cascadia Mono and Consolas (`keys.ts`,
+      `App.tsx`, `fonts.ts`, `platform.ts`)
+- [x] `build-windows` job in `release.yml`: NSIS target, updater signing via
+      the existing key, artifacts uploaded beside the macOS ones
+- [x] `verify-windows`: `.exe` + `.sig` present, `latest.json` gained a
+      `windows-x86_64` entry; the macOS verify is untouched
 - [ ] One end-to-end pass on a real Windows machine: install, open a repo,
-  run an agent turn, take an update
-- [ ] `RELEASES.md` Windows section; site download button and its analytics
-  event stop saying macOS
-
+      run an agent turn, take an update. Needs a Windows machine; the
+      checklist is in `RELEASES.md`.
+- [x] `RELEASES.md` Windows section; site download button and its analytics
+      event stop saying macOS

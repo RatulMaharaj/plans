@@ -19,7 +19,10 @@ export const MONO = `"Space Mono", ui-monospace, SFMono-Regular, monospace`;
  * Monospaced faces for the chrome and for code blocks.
  *
  * Only Space Mono is vendored; the rest are faces macOS already has, so none of
- * these need the network either.
+ * these need the network either. Each stack carries a Windows face behind the
+ * Mac one — Cascadia Mono where it exists, Consolas everywhere — so that on a
+ * machine without SF Mono or Menlo the choice still lands on a monospace
+ * that was designed as one, rather than on Courier New.
  */
 export type MonoChoice = { id: string; label: string; note: string; stack: string };
 
@@ -34,7 +37,7 @@ export const MONO_FONTS: MonoChoice[] = [
     id: "system",
     label: "SF Mono",
     note: "The system monospace",
-    stack: `ui-monospace, SFMono-Regular, "SF Mono", monospace`,
+    stack: `ui-monospace, SFMono-Regular, "SF Mono", "Cascadia Mono", Consolas, monospace`,
   },
   {
     id: "menlo",
@@ -46,7 +49,7 @@ export const MONO_FONTS: MonoChoice[] = [
     id: "monaco",
     label: "Monaco",
     note: "Narrow, old Mac terminal",
-    stack: `Monaco, Menlo, monospace`,
+    stack: `Monaco, Menlo, Consolas, monospace`,
   },
   {
     id: "courier",

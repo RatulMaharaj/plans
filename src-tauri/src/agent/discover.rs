@@ -6,6 +6,7 @@
 use serde::Serialize;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+#[cfg(unix)]
 use std::sync::OnceLock;
 
 /// The PATH a login shell would have, found once and remembered.
@@ -21,8 +22,10 @@ use std::sync::OnceLock;
 /// Asking the login shell is the only honest way to know: the PATH is
 /// assembled by the user's own dotfiles, and guessing a list of directories
 /// would be wrong for the next person.
+#[cfg(unix)]
 static SHELL_PATH: OnceLock<Option<String>> = OnceLock::new();
 
+#[cfg(unix)]
 pub fn login_path() -> Option<&'static str> {
     SHELL_PATH
         .get_or_init(|| {
@@ -40,6 +43,62 @@ pub fn login_path() -> Option<&'static str> {
         .as_deref()
 }
 
+/// Windows has no login shell to ask, and no need for one: a GUI process
+/// starts with the same user PATH a terminal gets, so the fallback `resolve`
+/// takes — this process's own PATH — is already the right answer. `None`
+/// here is what makes it take that fallback.
+#[cfg(windows)]
+pub fn login_path() -> Option<&'static str> {
+    None
+}
+
+/// The file names that could be `name` on this platform, most preferred first.
+///
+/// On Unix a command is one file. On Windows it is one of several: npm puts
+/// both a `claude-agent-acp.exe` shim and a `claude-agent-acp.cmd` wrapper on
+/// the PATH, and the extensionless file does not exist. The list is
+/// `PATHEXT`, the same one the shell walks, except that `.exe` is moved to
+/// the front and `.cmd` right behind it: a real executable spawns directly,
+/// and a `.cmd` needs `cmd.exe` to run it — which Rust's `Command` arranges
+/// on its own when it sees the extension, so either result works as
+/// `argv[0]`, and the `.exe` is just the shorter road. A name that already
+/// carries an extension is looked up as written.
+///
+/// `pathext` is a parameter rather than read here so the Windows shape can be
+/// tested on any machine.
+fn candidates(name: &str, pathext: Option<&str>) -> Vec<String> {
+    let Some(pathext) = pathext else {
+        return vec![name.to_string()];
+    };
+    if Path::new(name).extension().is_some() {
+        return vec![name.to_string()];
+    }
+    let mut exts: Vec<String> = pathext
+        .split(';')
+        .filter(|e| !e.is_empty())
+        .map(|e| e.to_ascii_lowercase())
+        .collect();
+    for (i, want) in [".exe", ".cmd"].iter().enumerate() {
+        if let Some(at) = exts.iter().position(|e| e == want) {
+            let e = exts.remove(at);
+            exts.insert(i.min(exts.len()), e);
+        } else {
+            exts.insert(i.min(exts.len()), (*want).to_string());
+        }
+    }
+    exts.iter().map(|e| format!("{name}{e}")).collect()
+}
+
+#[cfg(windows)]
+fn platform_pathext() -> Option<String> {
+    Some(std::env::var("PATHEXT").unwrap_or_else(|_| ".EXE;.CMD;.BAT;.COM".into()))
+}
+
+#[cfg(not(windows))]
+fn platform_pathext() -> Option<String> {
+    None
+}
+
 /// The binary to run for `name`, as an absolute path where one can be found.
 ///
 /// Resolved rather than passed through so a failure is "not installed" rather
@@ -49,10 +108,16 @@ pub fn resolve(name: &str) -> Option<PathBuf> {
     let dirs = login_path()
         .map(String::from)
         .or_else(|| std::env::var("PATH").ok())?;
-    for dir in dirs.split(':').filter(|d| !d.is_empty()) {
-        let p = Path::new(dir).join(name);
-        if p.is_file() {
-            return Some(p);
+    let pathext = platform_pathext();
+    let names = candidates(name, pathext.as_deref());
+    // `split_paths` knows the separator — `:` here, `;` on Windows — and
+    // hands back the entries as paths, which is what they were all along.
+    for dir in std::env::split_paths(&dirs).filter(|d| !d.as_os_str().is_empty()) {
+        for n in &names {
+            let p = dir.join(n);
+            if p.is_file() {
+                return Some(p);
+            }
         }
     }
     None
@@ -236,6 +301,21 @@ mod tests {
     use super::*;
 
     #[test]
+    fn on_windows_a_name_is_looked_up_with_its_extensions() {
+        // npm installs both a `.cmd` and an `.exe` shim; the `.exe` spawns
+        // without a `cmd.exe` in between, so it goes first whatever order
+        // PATHEXT lists them in. The rest of PATHEXT keeps its order, and
+        // a name that already carries an extension is left alone.
+        let got = candidates("npx", Some(".COM;.EXE;.BAT;.CMD;.JS"));
+        assert_eq!(got, ["npx.exe", "npx.cmd", "npx.com", "npx.bat", "npx.js"]);
+        assert_eq!(candidates("npx", Some("")), ["npx.exe", "npx.cmd"]);
+        assert_eq!(candidates("git.exe", Some(".EXE;.CMD")), ["git.exe"]);
+        // Unix: one file, as written.
+        assert_eq!(candidates("npx", None), ["npx"]);
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn a_binary_outside_this_process_path_is_still_found() {
         // The point of `resolve`: a GUI app's PATH is not the shell's, so the
         // lookup goes through the login shell. `sh` is on every PATH there is,
@@ -307,8 +387,10 @@ pub fn agent_install(id: String) -> Result<String, String> {
     let k = find(&id).ok_or("no such agent")?;
     let package = k.package.ok_or("this agent is not installed through npm")?;
     let npm = resolve("npm").ok_or("npm is not on the PATH your shell gives this app")?;
-    let out = Command::new(npm)
-        .args(["install", "-g", package])
+    let mut cmd = Command::new(npm);
+    cmd.args(["install", "-g", package]);
+    crate::no_console(&mut cmd);
+    let out = cmd
         .output()
         .map_err(|e| format!("could not run npm: {e}"))?;
     if out.status.success() {

@@ -14,6 +14,8 @@
  * does not need.
  */
 
+import { IS_MAC } from "./platform";
+
 /**
  * "mod+shift+o" — lowercase parts joined by "+", the last part the key.
  * A space makes it a chord: "mod+k w" is ⌘K, then W, within `CHORD_MS`.
@@ -90,16 +92,73 @@ export const DEFAULT_KEYS: KeymapEntry[] = [
   { id: "split.swap", group: "Go", label: "Swap the panes", keys: "mod+k s" },
 ];
 
+// A Mac writes its modifiers as glyphs and runs them together; everywhere
+// else they are words joined with "+", which is how Windows itself writes
+// them in every menu.
+const GLYPH: Record<string, string> = IS_MAC
+  ? {
+      mod: "⌘",
+      ctrl: "⌃",
+      alt: "⌥",
+      shift: "⇧",
+      tab: "⇥",
+      backspace: "⌫",
+      escape: "esc",
+      arrowright: "→",
+      arrowleft: "←",
+      arrowup: "↑",
+      arrowdown: "↓",
+    }
+  : {
+      mod: "Ctrl",
+      ctrl: "Ctrl",
+      alt: "Alt",
+      shift: "Shift",
+      tab: "Tab",
+      backspace: "Backspace",
+      escape: "Esc",
+      arrowright: "→",
+      arrowleft: "←",
+      arrowup: "↑",
+      arrowdown: "↓",
+    };
+
+/**
+ * The modifier that rides on top of `mod` for the two "always" chords, ⌘⌃P
+ * and ⌘⌃B. On a Mac that is ⌃, the one modifier the page's own bindings never
+ * take. Windows has no such key: `mod` already *is* Ctrl there, and the
+ * Windows key is the system's own, so the spare modifier is Alt. `extraHeld`
+ * is the matcher's side of the same decision.
+ */
+export const EXTRA = IS_MAC ? "ctrl" : "alt";
+
+export function extraHeld(e: KeyboardEvent): boolean {
+  return IS_MAC ? e.ctrlKey : e.altKey;
+}
+
+/**
+ * The whole chord: the command key itself — ⌘, or Ctrl on Windows — and the
+ * extra one together. Stricter than `mod` plus `extraHeld`, because on a Mac
+ * `mod` also answers to a bare Ctrl, and ⌃P alone must not open the profiler.
+ */
+export function extraChord(e: KeyboardEvent): boolean {
+  return IS_MAC ? e.metaKey && e.ctrlKey : e.ctrlKey && e.altKey;
+}
+
 /**
  * The keys that stay hand-written, so the sheet can be honest about them.
  * Listed here for display only — nothing matches against these.
  */
 export const CONTEXTUAL_KEYS: { keys: string; label: string; note: string }[] = [
   { keys: "mod+p", label: "Palette — files", note: "⇧ for commands" },
-  { keys: "mod+ctrl+p", label: "Profiler", note: "" },
+  { keys: `mod+${EXTRA}+p`, label: "Profiler", note: "" },
   { keys: "mod+=", label: "Bigger text", note: "the tree when it has focus, the page otherwise" },
   { keys: "mod+-", label: "Smaller text", note: "same target as bigger" },
-  { keys: "mod+b", label: "File tree", note: "bold while writing; ⌘⌃B always toggles the tree" },
+  {
+    keys: "mod+b",
+    label: "File tree",
+    note: `bold while writing; ${renderKeys(`mod+${EXTRA}+b`)} always toggles the tree`,
+  },
   { keys: "mod+backspace", label: "Delete file", note: "only from the tree" },
   { keys: "escape", label: "Back out", note: "leaves the editor, then zen or settings" },
 ];
@@ -242,20 +301,6 @@ export function specFrom(e: KeyboardEvent): KeySpec | null {
   return parts.join("+");
 }
 
-const GLYPH: Record<string, string> = {
-  mod: "⌘",
-  ctrl: "⌃",
-  alt: "⌥",
-  shift: "⇧",
-  tab: "⇥",
-  backspace: "⌫",
-  escape: "esc",
-  arrowright: "→",
-  arrowleft: "←",
-  arrowup: "↑",
-  arrowdown: "↓",
-};
-
 /**
  * "mod+shift+o" → "⌘⇧O", the way the palette has always written them. A
  * chord's space becomes a joiner between its combos: "mod+k w" → "⌘K W".
@@ -268,7 +313,7 @@ export function renderKeys(keys: KeySpec): string {
         .toLowerCase()
         .split("+")
         .map((p) => GLYPH[p] ?? (p.length === 1 ? p.toUpperCase() : p.toUpperCase()))
-        .join(""),
+        .join(IS_MAC ? "" : "+"),
     )
     .join(" ");
 }

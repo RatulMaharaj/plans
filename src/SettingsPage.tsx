@@ -3,6 +3,7 @@ import { FONTS, MONO_FONTS } from "./fonts";
 import { THEMES } from "./theme";
 import { DEFAULTS, RANGES, type Settings } from "./settings";
 import type { AgentFound, CliStatus, RepoInfo } from "./api";
+import { IS_WINDOWS } from "./platform";
 import type { SkillState } from "./skill";
 
 type Props = {
@@ -678,24 +679,30 @@ export function SettingsPage({
           <button className="new-plan" onClick={onAddRepo}>
             Add a repository
           </button>
-          <div className="setting-row static">
-            <span className="setting-label">
-              Command line
-              <span className="setting-hint">
-                Puts a `plans` command on your PATH, so `plans .` in a terminal
-                opens that repository here.
+          {/* The `plans` script is a shell script in Homebrew's bin, which is
+              macOS through and through; on Windows the backend reports it as
+              absent, and there is no point offering a button that only
+              apologises. Hidden, the way tmux hides where it is not. */}
+          {!IS_WINDOWS && (
+            <div className="setting-row static">
+              <span className="setting-label">
+                Command line
+                <span className="setting-hint">
+                  Puts a `plans` command on your PATH, so `plans .` in a terminal
+                  opens that repository here.
+                </span>
               </span>
-            </span>
-            {cli?.current ? (
-              <span className="act done" title={cli.path}>
-                Installed
-              </span>
-            ) : (
-              <button className="act" onClick={onInstallCli} title={cli?.path}>
-                {cli ? "Update" : "Install"}
-              </button>
-            )}
-          </div>
+              {cli?.current ? (
+                <span className="act done" title={cli.path}>
+                  Installed
+                </span>
+              ) : (
+                <button className="act" onClick={onInstallCli} title={cli?.path}>
+                  {cli ? "Update" : "Install"}
+                </button>
+              )}
+            </div>
+          )}
         </Group>
 
         {/* ---- the file ------------------------------------------------- */}
